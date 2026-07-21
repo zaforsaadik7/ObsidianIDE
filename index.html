@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ObsidianIDE | Collaborative Development Substrate</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Google Material Symbols -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1" rel="stylesheet">
+    <!-- Tailwind CSS Play CDN fallback -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "surface-dim": "#131314",
+              "surface-dark": "#0A0A0B",
+              "surface-light": "#F4F4F6",
+              "surface-container": "#1f1f21",
+              "surface-container-low": "#1b1b1d",
+              "surface-container-high": "#2a2a2c",
+              "surface-container-lowest": "#0e0e10",
+              "surface-slate": "#1A1A1E",
+              "surface-tint": "#00dce5",
+              "primary-fixed-dim": "#00dce5",
+              "primary-container": "#00f5ff",
+              "primary": "#00f5ff",
+              "secondary": "#e0b6ff",
+              "secondary-container": "#6d11ad",
+              "neon-green": "#39FF14",
+              "outline-variant": "#3a494a",
+              "on-surface-variant": "#b9caca",
+              "on-surface": "#e4e2e4"
+            },
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+              headline: ['Geist', 'sans-serif']
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="bg-[#F4F4F6] dark:bg-[#0A0A0B] text-[#131314] dark:text-[#e4e2e4] font-sans min-h-screen selection:bg-primary-container selection:text-black">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

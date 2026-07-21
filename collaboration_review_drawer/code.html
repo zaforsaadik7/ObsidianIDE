@@ -1,0 +1,345 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;450;700&amp;family=Geist:wght@600;700&amp;display=swap" rel="stylesheet">
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-panel {
+            backdrop-filter: blur(12px);
+            background: rgba(26, 26, 30, 0.85);
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .ghost-track-border {
+            border-left: 1px solid rgba(0, 245, 255, 0.2);
+        }
+        .diff-remove {
+            background-color: rgba(255, 180, 171, 0.15);
+            text-decoration: line-through;
+            color: #ffb4ab;
+            padding: 0 2px;
+        }
+        .diff-add {
+            background-color: rgba(57, 255, 20, 0.1);
+            color: #39FF14;
+            padding: 0 2px;
+        }
+        .card-fade-out {
+            transition: opacity 300ms linear;
+            opacity: 0;
+            pointer-events: none;
+        }
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #353436;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #849495;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-dim": "#131314",
+                        "tertiary-fixed": "#ffdad8",
+                        "secondary-fixed-dim": "#e0b6ff",
+                        "surface-container-lowest": "#0e0e0f",
+                        "on-primary-container": "#006c71",
+                        "inverse-surface": "#e5e2e3",
+                        "primary-fixed": "#63f7ff",
+                        "background": "#131314",
+                        "tertiary-fixed-dim": "#ffb3b0",
+                        "on-primary": "#003739",
+                        "tertiary-container": "#ffd3d1",
+                        "on-secondary-fixed-variant": "#5a3776",
+                        "on-error": "#690005",
+                        "surface-tint": "#00dce5",
+                        "on-primary-fixed": "#002021",
+                        "tertiary": "#fff8f7",
+                        "on-secondary": "#42205e",
+                        "surface-bright": "#3a393a",
+                        "on-secondary-fixed": "#2c0648",
+                        "inverse-on-surface": "#313031",
+                        "on-error-container": "#ffdad6",
+                        "surface-variant": "#353436",
+                        "surface-container-highest": "#353436",
+                        "secondary-fixed": "#f2daff",
+                        "secondary-container": "#5a3776",
+                        "error-container": "#93000a",
+                        "surface-container-low": "#1c1b1c",
+                        "outline": "#849495",
+                        "on-secondary-container": "#cea5ed",
+                        "outline-variant": "#3a494a",
+                        "surface-container": "#201f20",
+                        "on-tertiary-fixed-variant": "#93001a",
+                        "inverse-primary": "#00696e",
+                        "surface": "#131314",
+                        "error": "#ffb4ab",
+                        "on-primary-fixed-variant": "#004f53",
+                        "on-tertiary-fixed": "#410006",
+                        "on-surface-variant": "#b9caca",
+                        "primary-fixed-dim": "#00dce5",
+                        "neon-green": "#39FF14",
+                        "surface-slate": "#1A1A1E",
+                        "primary-container": "#00f5ff",
+                        "ghost-track": "rgba(0, 245, 255, 0.2)",
+                        "on-tertiary-container": "#c50026",
+                        "surface-container-high": "#2a2a2b",
+                        "surface-dark": "#0A0A0B",
+                        "on-tertiary": "#68000f",
+                        "surface-light": "#F4F4F6",
+                        "secondary": "#e0b6ff",
+                        "primary": "#e9feff",
+                        "on-surface": "#e5e2e3",
+                        "on-background": "#e5e2e3"
+                    },
+                    "fontFamily": {
+                        "headline-sm": ["Geist"],
+                        "body-md": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "code-md": ["JetBrains Mono"],
+                        "body-lg": ["Inter"],
+                        "label-caps": ["JetBrains Mono"],
+                        "headline-md": ["Geist"],
+                        "headline-lg": ["Geist"]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-[#F4F4F6] dark:bg-[#0A0A0B] text-[#131314] dark:text-[#e4e2e4] font-body-md min-h-screen overflow-hidden">
+<!-- TopNavBar -->
+<header class="fixed top-0 w-full z-50 bg-surface-container border-b border-outline-variant flex justify-between items-center h-12 px-margin-mobile md:px-margin-desktop">
+<div class="flex items-center gap-4">
+<span class="font-label-caps text-label-caps tracking-widest text-primary">NEURAL_IDE</span>
+<div class="hidden md:flex items-center bg-surface-variant px-3 py-1 rounded-sm gap-2">
+<span class="material-symbols-outlined text-sm text-on-surface-variant">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-body-sm w-64 text-on-surface" placeholder="Search codebase..." type="text">
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button class="p-2 hover:bg-surface-variant transition-colors duration-150" onclick="toggleTheme()">
+<span class="material-symbols-outlined text-on-surface-variant dark:text-on-surface" id="theme-icon">light_mode</span>
+</button>
+<button class="p-2 hover:bg-surface-variant transition-colors duration-150">
+<span class="material-symbols-outlined text-on-surface-variant">account_circle</span>
+</button>
+</div>
+</header>
+<!-- SideNavBar -->
+<nav class="fixed left-0 top-12 h-[calc(100vh-48px-24px)] w-16 bg-surface-container-low border-r border-outline-variant flex flex-col items-center py-4 gap-4 z-40">
+<button class="w-10 h-10 flex items-center justify-center text-primary border-l-2 border-primary bg-ghost-track transition-colors duration-150">
+<span class="material-symbols-outlined">dashboard</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-variant transition-colors duration-150">
+<span class="material-symbols-outlined">person</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-variant transition-colors duration-150 mt-auto">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</nav>
+<!-- Main Workspace -->
+<main class="ml-16 mt-12 mb-6 h-[calc(100vh-72px)] flex">
+<!-- Editor Canvas -->
+<section class="flex-grow bg-surface-dark relative overflow-hidden p-8">
+<div class="max-w-3xl mx-auto opacity-40 select-none">
+<h1 class="font-headline-lg text-headline-lg mb-6">neural_core_v7.py</h1>
+<div class="space-y-4 font-code-md text-code-md text-on-surface-variant">
+<p class=""><span class="text-secondary">import</span> torch</p>
+<p class=""><span class="text-secondary">from</span> transformers <span class="text-secondary">import</span> AutoModel</p>
+<p>&nbsp;</p>
+<p class=""><span class="text-outline"># Initialize the neural bridge</span></p>
+<p class=""><span class="text-secondary">def</span> <span class="text-primary-container">bridge_synapse</span>(input_data):</p>
+<p class="pl-4">process_stream = torch.tensor(input_data)</p>
+<p class="pl-4">output = AutoModel.from_pretrained(<span class="text-neon-green">"neural-7b-v2"</span>)</p>
+<p class="pl-4"><span class="text-secondary">return</span> output(process_stream)</p>
+</div>
+</div>
+<!-- CollaborationReviewDrawer -->
+<aside class="fixed right-0 top-12 bottom-6 w-96 glass-panel z-50 flex flex-col transform transition-transform duration-300" id="review-drawer">
+<!-- Header -->
+<div class="p-4 border-b border-outline-variant flex items-center justify-between bg-surface-slate">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-fixed-dim">reviews</span>
+<h2 class="font-headline-sm text-headline-sm">Review Changes</h2>
+</div>
+<span class="bg-primary-fixed-dim text-on-primary-fixed text-[10px] font-bold px-1.5 py-0.5 rounded-sm badge-pending">4 Pending</span>
+</div>
+<!-- Linear Queue of Edits -->
+<div class="flex-grow overflow-y-auto p-4 space-y-6" id="review-queue">
+<!-- Review Card 1 -->
+<div class="review-card group" id="patch-1">
+<div class="flex items-center gap-3 mb-3">
+<div class="w-8 h-8 rounded-full bg-surface-variant border border-outline-variant overflow-hidden">
+<img alt="User" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEUUFYCs2CfRLSdR2QC67J9tkv6_WqacfBvrQxzZzvY7TfVE4w7RR89sZJZZMkf1ljFfr2WvjAKsfp4wUa-3WtN8NLMGRS2NqYh4RuRuRnK81B_J-UOj2DN7vISNzgAPl0YDmIrJp-fj1WbkKp_3U-S7VFu6oDFkW1HCDROamna-irzu-hUZ-OMdhA8pYQQ2Rm5u-wgfmOaSdDkxwF6q5V62QoMt6NMVTNtYoMZPgvbzQGPLfykuDT2eXkOF39QT8GLCTpxaKatwE">
+</div>
+<div>
+<p class="text-body-sm font-semibold text-primary">Felix Vance</p>
+<p class="text-[10px] text-on-surface-variant font-label-caps">2m ago • Patch #402</p>
+</div>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant p-3 font-code-md text-body-sm space-y-2 relative">
+<div class="ghost-track-border pl-3">
+<span class="text-outline">62:</span> <span class="diff-remove">"neural-7b-v2"</span>
+</div>
+<div class="ghost-track-border pl-3 border-neon-green border-l-2">
+<span class="text-outline">62:</span> <span class="diff-add">"neural-8b-ultra-stable"</span>
+</div>
+<p class="text-[11px] text-on-surface-variant mt-2 italic">"Updating to the latest stable release for better inference."</p>
+</div>
+<div class="flex mt-2 gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="flex-1 bg-surface-container-high hover:bg-neon-green/20 hover:text-neon-green text-[11px] font-label-caps py-2 transition-all border border-outline-variant" onclick="processAction('patch-1', 'approve')">Approve</button>
+<button class="flex-1 bg-surface-container-high hover:bg-error/20 hover:text-error text-[11px] font-label-caps py-2 transition-all border border-outline-variant" onclick="processAction('patch-1', 'reject')">Decline</button>
+</div>
+</div>
+<!-- Review Card 2 -->
+<div class="review-card group" id="patch-2">
+<div class="flex items-center gap-3 mb-3">
+<div class="w-8 h-8 rounded-full bg-surface-variant border border-outline-variant overflow-hidden">
+<img alt="User" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCxAkavgSEtHAroi_88ivvqzAr1fxwhrB6pHiBLE54PQgo-Sia74qlQepsj9vqnc5sW43H5xxovNLBzOsHA3fXm5b9FtbNuqlnC9qjvZLseeeRHYmCP3szHNEkQTaunMoIyQFv7VUMhHnXKqOcUZiarQi3RixUBSoBI6yyii6OFhJFXzEeI6xSXRI_iE5t-4F_v9etNKYZHRsg11jWQ7thM81owdqrQm9eZI1qiKIdruPUjuivDEPq-E6YFvCpsxZm4WciUQqcLEp0">
+</div>
+<div>
+<p class="text-body-sm font-semibold text-primary">Sarah Chen</p>
+<p class="text-[10px] text-on-surface-variant font-label-caps">15m ago • Patch #399</p>
+</div>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant p-3 font-code-md text-body-sm space-y-2">
+<div class="ghost-track-border pl-3">
+<span class="text-outline">12:</span> <span class="diff-remove">process_stream = torch.tensor(input_data)</span>
+</div>
+<div class="ghost-track-border pl-3 border-neon-green border-l-2">
+<span class="text-outline">12:</span> <span class="diff-add">process_stream = torch.as_tensor(input_data).to(device)</span>
+</div>
+</div>
+<div class="flex mt-2 gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="flex-1 bg-surface-container-high hover:bg-neon-green/20 hover:text-neon-green text-[11px] font-label-caps py-2 transition-all border border-outline-variant" onclick="processAction('patch-2', 'approve')">Approve</button>
+<button class="flex-1 bg-surface-container-high hover:bg-error/20 hover:text-error text-[11px] font-label-caps py-2 transition-all border border-outline-variant" onclick="processAction('patch-2', 'reject')">Decline</button>
+</div>
+</div>
+<!-- Review Card 3 -->
+<div class="review-card group" id="patch-3">
+<div class="flex items-center gap-3 mb-3">
+<div class="w-8 h-8 rounded-full bg-surface-variant border border-outline-variant overflow-hidden">
+<img alt="User" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAIHhDThFelvK8ZWmBN4RmlAGGHsxr6fk0jxOR47w2uYiU3lO_BOB08lxd-_ZnbNHGxKVOcHCVmUUd4zIRHKfERtA6A1eK-n5xLDeJTUnD100HrC_0OPJLzHm0kfZuZA3m3ey1-uz5TadYsU2Bdn9XaZm2IXj9abxYfgKQSzXurY7ADRN7tK2v7GhE-HQHMP-Dovgd4O9SuGXE8H2QbmFnA7GDETQhw5vfQ_NhuhYOR5OjTgL4vLgp3RGISdDZJN7mhgbpPGXH4pLA">
+</div>
+<div>
+<p class="text-body-sm font-semibold text-primary">Marcus Thorne</p>
+<p class="text-[10px] text-on-surface-variant font-label-caps">1h ago • Patch #395</p>
+</div>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant p-3 font-code-md text-body-sm space-y-2">
+<div class="ghost-track-border pl-3">
+<span class="text-outline">01:</span> <span class="diff-remove">import torch</span>
+</div>
+<div class="ghost-track-border pl-3 border-neon-green border-l-2">
+<span class="text-outline">01:</span> <span class="diff-add">import torch as pt</span>
+</div>
+</div>
+<div class="flex mt-2 gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="flex-1 bg-surface-container-high hover:bg-neon-green/20 hover:text-neon-green text-[11px] font-label-caps py-2 transition-all border border-outline-variant" onclick="processAction('patch-3', 'approve')">Approve</button>
+<button class="flex-1 bg-surface-container-high hover:bg-error/20 hover:text-error text-[11px] font-label-caps py-2 transition-all border border-outline-variant" onclick="processAction('patch-3', 'reject')">Decline</button>
+</div>
+</div>
+</div>
+<!-- Footer Summary -->
+<div class="p-4 bg-surface-container-low border-t border-outline-variant">
+<button class="w-full py-3 bg-primary text-on-primary font-label-caps text-[12px] hover:bg-neon-green transition-colors duration-150" onclick="resolveAll()">Approve All</button>
+</div>
+</aside>
+</section>
+<!-- Right Inspector Pane -->
+<aside class="w-12 bg-surface-container-low border-l border-outline-variant flex flex-col items-center py-4 gap-4">
+<button class="w-8 h-8 flex items-center justify-center text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[20px]">info</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center text-primary transition-colors">
+<span class="material-symbols-outlined text-[20px]">history</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[20px]">bug_report</span>
+</button>
+</aside>
+</main>
+<!-- Footer -->
+
+<script>
+    function toggleTheme() {
+        const html = document.documentElement;
+        const icon = document.getElementById('theme-icon');
+        if (html.classList.contains('dark')) {
+            html.classList.remove('dark');
+            icon.innerText = 'dark_mode';
+        } else {
+            html.classList.add('dark');
+            icon.innerText = 'light_mode';
+        }
+    }
+
+    function processAction(id, action) {
+        const card = document.getElementById(id);
+        if (!card) return;
+
+        // Visual feedback based on action
+        if (action === 'approve') {
+            card.querySelector('.bg-surface-container-lowest').classList.add('ring-1', 'ring-neon-green/30');
+        } else {
+            card.querySelector('.bg-surface-container-lowest').classList.add('ring-1', 'ring-error/30');
+        }
+
+        card.classList.add('card-fade-out');
+        
+        setTimeout(() => {
+            card.remove();
+            updateBadge();
+        }, 300);
+    }
+
+    function resolveAll() {
+        const cards = document.querySelectorAll('.review-card');
+        cards.forEach(card => {
+            card.classList.add('card-fade-out');
+        });
+        setTimeout(() => {
+            cards.forEach(card => card.remove());
+            updateBadge();
+        }, 300);
+    }
+
+    function updateBadge() {
+        const remaining = document.querySelectorAll('.review-card').length;
+        const badge = document.querySelector('.badge-pending');
+        if (badge) {
+            badge.innerText = `${remaining} PENDING`;
+            if (remaining === 0) {
+                badge.classList.remove('bg-primary-fixed-dim', 'text-on-primary-fixed');
+                badge.classList.add('bg-surface-variant', 'text-on-surface-variant');
+            }
+        }
+    }
+
+    // Drawer toggle logic
+    document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'r') {
+            const drawer = document.getElementById('review-drawer');
+            const isHidden = drawer.style.transform === 'translateX(100%)';
+            drawer.style.transform = isHidden ? 'translateX(0)' : 'translateX(100%)';
+        }
+    });
+</script>
+
+
+
+
+</body></html>

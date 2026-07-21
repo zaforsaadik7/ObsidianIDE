@@ -1,0 +1,290 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>NEURAL_IDE | Initialize Session</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;700&amp;family=Geist:wght@600;700&amp;display=swap" rel="stylesheet">
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-panel {
+            backdrop-filter: blur(12px);
+            background: rgba(26, 26, 30, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        html:not(.dark) .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+        input:focus {
+            outline: none;
+            box-shadow: none !important;
+        }
+        .ghost-track-resizing {
+            background: rgba(0, 245, 255, 0.2);
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "surface-dim": "#131314",
+                      "tertiary-fixed": "#ffdad8",
+                      "secondary-fixed-dim": "#e0b6ff",
+                      "surface-container-lowest": "#0e0e0f",
+                      "on-primary-container": "#006c71",
+                      "inverse-surface": "#e5e2e3",
+                      "primary-fixed": "#63f7ff",
+                      "background": "#131314",
+                      "tertiary-fixed-dim": "#ffb3b0",
+                      "on-primary": "#003739",
+                      "tertiary-container": "#ffd3d1",
+                      "on-secondary-fixed-variant": "#5a3776",
+                      "on-error": "#690005",
+                      "surface-tint": "#00dce5",
+                      "on-primary-fixed": "#002021",
+                      "tertiary": "#fff8f7",
+                      "on-secondary": "#42205e",
+                      "surface-bright": "#3a393a",
+                      "on-secondary-fixed": "#2c0648",
+                      "inverse-on-surface": "#313031",
+                      "on-error-container": "#ffdad6",
+                      "surface-variant": "#353436",
+                      "surface-container-highest": "#353436",
+                      "secondary-fixed": "#f2daff",
+                      "secondary-container": "#5a3776",
+                      "error-container": "#93000a",
+                      "surface-container-low": "#1c1b1c",
+                      "outline": "#849495",
+                      "on-secondary-container": "#cea5ed",
+                      "outline-variant": "#3a494a",
+                      "surface-container": "#201f20",
+                      "on-tertiary-fixed-variant": "#93001a",
+                      "inverse-primary": "#00696e",
+                      "surface": "#131314",
+                      "error": "#ffb4ab",
+                      "on-primary-fixed-variant": "#004f53",
+                      "on-tertiary-fixed": "#410006",
+                      "on-surface-variant": "#b9caca",
+                      "primary-fixed-dim": "#00dce5",
+                      "neon-green": "#39FF14",
+                      "surface-slate": "#1A1A1E",
+                      "primary-container": "#00f5ff",
+                      "ghost-track": "rgba(0, 245, 255, 0.2)",
+                      "on-tertiary-container": "#c50026",
+                      "surface-container-high": "#2a2a2b",
+                      "surface-dark": "#0A0A0B",
+                      "on-tertiary": "#68000f",
+                      "surface-light": "#F4F4F6",
+                      "secondary": "#e0b6ff",
+                      "primary": "#e9feff",
+                      "on-surface": "#e5e2e3",
+                      "on-background": "#e5e2e3"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "gutter": "16px",
+                      "margin-desktop": "32px",
+                      "pane-gap": "1px",
+                      "margin-mobile": "16px",
+                      "unit": "4px"
+              },
+              "fontFamily": {
+                      "headline-sm": ["Geist"],
+                      "body-md": ["Inter"],
+                      "body-sm": ["Inter"],
+                      "code-md": ["JetBrains Mono"],
+                      "body-lg": ["Inter"],
+                      "label-caps": ["JetBrains Mono"],
+                      "headline-md": ["Geist"],
+                      "headline-lg": ["Geist"]
+              },
+              "fontSize": {
+                      "headline-sm": ["18px", {"lineHeight": "1.4", "fontWeight": "600"}],
+                      "body-md": ["14px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                      "body-sm": ["12px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                      "code-md": ["14px", {"lineHeight": "1.5", "fontWeight": "450"}],
+                      "body-lg": ["16px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                      "label-caps": ["11px", {"lineHeight": "1", "letterSpacing": "0.08em", "fontWeight": "700"}],
+                      "headline-md": ["24px", {"lineHeight": "1.3", "fontWeight": "600"}],
+                      "headline-lg": ["32px", {"lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700"}]
+              }
+            },
+          },
+        }
+    </script>
+</head>
+<body class="bg-surface-dark dark:bg-surface-dark light:bg-surface-light text-on-surface dark:text-on-surface light:text-surface-dark font-body-md overflow-hidden h-screen flex flex-col selection:bg-primary-container selection:text-on-primary-container">
+<!-- TopNavBar -->
+<header class="fixed top-0 w-full z-50 bg-surface-container dark:bg-surface-container light:bg-surface-light border-b border-outline-variant flex justify-between items-center h-12 px-margin-mobile md:px-margin-desktop w-full transition-all duration-100 ease-linear">
+<div class="font-label-caps text-label-caps tracking-widest text-primary dark:text-primary light:text-inverse-primary">NEURAL_IDE</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined text-on-surface-variant hover:bg-surface-variant transition-colors duration-150 p-2 rounded" id="theme-toggle" onclick="toggleTheme()">dark_mode</button>
+<button class="material-symbols-outlined text-on-surface-variant hover:bg-surface-variant transition-colors duration-150 p-2 rounded">account_circle</button>
+</div>
+</header>
+<!-- Main Content: Centered Glass Card -->
+<main class="flex-1 flex items-center justify-center relative overflow-hidden px-margin-mobile">
+<!-- Auth Card Container -->
+<div class="w-full max-w-md z-10">
+<!-- Login Form -->
+<div class="glass-panel p-8 shadow-2xl flex flex-col gap-8 transition-opacity duration-300" id="login-form">
+<div class="space-y-2">
+<h1 class="font-headline-lg text-headline-lg text-primary dark:text-primary light:text-inverse-primary">Login</h1>
+<p class="font-code-md text-code-md text-on-surface-variant opacity-70">SYSTEM STATUS: RESTRICTED_ACCESS</p>
+</div>
+<div class="space-y-6">
+<div class="group">
+<label class="font-label-caps text-label-caps text-on-surface-variant block mb-2">EMAIL_IDENTIFIER</label>
+<input class="w-full bg-surface-slate dark:bg-surface-slate light:bg-white/50 border-b-2 border-outline-variant focus:border-primary-container p-3 font-code-md text-code-md transition-all duration-200" id="login-email" placeholder="USER@NEURAL.SYS" type="email">
+</div>
+<div class="group">
+<label class="font-label-caps text-label-caps text-on-surface-variant block mb-2">PASSPHRASE_KEY</label>
+<input class="w-full bg-surface-slate dark:bg-surface-slate light:bg-white/50 border-b-2 border-outline-variant focus:border-primary-container p-3 font-code-md text-code-md transition-all duration-200" id="login-password" placeholder="••••••••••••" type="password">
+<p class="hidden text-error text-[10px] mt-1 font-code-md" id="login-error">ERROR: INVALID_CREDENTIALS</p>
+</div>
+</div>
+<div class="flex flex-col gap-4">
+<button class="w-full py-4 bg-surface-variant text-on-surface font-label-caps text-label-caps tracking-widest disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-container hover:text-on-primary-container transition-colors duration-200 uppercase" disabled="" id="login-submit">Login</button>
+<button class="font-code-md text-code-md text-primary dark:text-primary light:text-inverse-primary hover:text-neon-green transition-colors text-center w-full" onclick="toggleAuth('register')">New here? Sign Up</button>
+</div>
+</div>
+<!-- Registration Form (Hidden by default) -->
+<div class="hidden glass-panel p-8 shadow-2xl flex-col gap-8 transition-opacity duration-300" id="register-form">
+<div class="space-y-2">
+<h1 class="font-headline-lg text-headline-lg text-primary dark:text-primary light:text-inverse-primary">CREATE_CREDENTIALS</h1>
+<p class="font-code-md text-code-md text-on-surface-variant opacity-70">NODE ENROLLMENT: PENDING</p>
+</div>
+<div class="space-y-6">
+<div class="group">
+<label class="font-label-caps text-label-caps text-on-surface-variant block mb-2">FULL_NAME</label>
+<input class="w-full bg-surface-slate dark:bg-surface-slate light:bg-white/50 border-b-2 border-outline-variant focus:border-primary-container p-3 font-code-md text-code-md transition-all duration-200" id="reg-name" placeholder="ARCHITECT NAME" type="text">
+</div>
+<div class="group">
+<label class="font-label-caps text-label-caps text-on-surface-variant block mb-2">EMAIL_IDENTIFIER</label>
+<input class="w-full bg-surface-slate dark:bg-surface-slate light:bg-white/50 border-b-2 border-outline-variant focus:border-primary-container p-3 font-code-md text-code-md transition-all duration-200" id="reg-email" placeholder="USER@NEURAL.SYS" type="email">
+</div>
+<div class="group">
+<label class="font-label-caps text-label-caps text-on-surface-variant block mb-2">NEW_PASSPHRASE</label>
+<input class="w-full bg-surface-slate dark:bg-surface-slate light:bg-white/50 border-b-2 border-outline-variant focus:border-primary-container p-3 font-code-md text-code-md transition-all duration-200" id="reg-password" placeholder="••••••••••••" type="password">
+</div>
+</div>
+<div class="flex flex-col gap-4">
+<button class="w-full py-4 bg-surface-variant text-on-surface font-label-caps text-label-caps tracking-widest disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-container hover:text-on-primary-container transition-colors duration-200 uppercase" disabled="" id="reg-submit">
+                    Confirm Identity
+                </button>
+<button class="font-code-md text-code-md text-primary dark:text-primary light:text-inverse-primary hover:text-neon-green transition-colors text-center w-full" onclick="toggleAuth('login')">
+                    Already have credentials? Login
+                </button>
+</div>
+</div>
+</div>
+<!-- Decorative Code Graphics Overlay -->
+<div class="absolute bottom-12 right-12 hidden md:block w-72 p-4 glass-panel border border-primary/20">
+<div class="flex items-center gap-2 mb-2">
+<span class="w-3 h-3 rounded-full bg-error"></span>
+<span class="w-3 h-3 rounded-full bg-secondary"></span>
+<span class="w-3 h-3 rounded-full bg-neon-green"></span>
+<span class="ml-auto font-label-caps text-[10px] text-on-surface-variant opacity-50">AUTH_KERNEL.LOG</span>
+</div>
+<pre class="font-code-md text-[10px] text-on-surface-variant opacity-80 leading-tight">&gt; Verifying handshake...
+&gt; RSA Key Accepted.
+&gt; Latency: 12ms
+&gt; Encryption: AES-256-GCM
+&gt; Session: NULL_UNDEFINED
+        </pre>
+</div>
+</main>
+<!-- Footer -->
+
+<script>
+    // Theme Toggle Function
+    function toggleTheme() {
+        const html = document.documentElement;
+        const toggleBtn = document.getElementById('theme-toggle');
+        if (html.classList.contains('dark')) {
+            html.classList.remove('dark');
+            if (toggleBtn) toggleBtn.textContent = 'light_mode';
+            localStorage.setItem('theme', 'light');
+        } else {
+            html.classList.add('dark');
+            if (toggleBtn) toggleBtn.textContent = 'dark_mode';
+            localStorage.setItem('theme', 'dark');
+        }
+    }
+
+    // Toggle between Login and Register Forms
+    function toggleAuth(type) {
+        const login = document.getElementById('login-form');
+        const register = document.getElementById('register-form');
+        
+        if (type === 'register') {
+            login.classList.add('hidden');
+            login.classList.remove('flex');
+            register.classList.remove('hidden');
+            register.classList.add('flex');
+        } else {
+            register.classList.add('hidden');
+            register.classList.remove('flex');
+            login.classList.remove('hidden');
+            login.classList.add('flex');
+        }
+    }
+
+    // Form Validation Logic
+    const forms = [
+        { email: 'login-email', pass: 'login-password', btn: 'login-submit' },
+        { name: 'reg-name', email: 'reg-email', pass: 'reg-password', btn: 'reg-submit' }
+    ];
+
+    forms.forEach(f => {
+        const inputs = [document.getElementById(f.email), document.getElementById(f.pass)];
+        if (f.name) inputs.push(document.getElementById(f.name));
+        const btn = document.getElementById(f.btn);
+
+        inputs.forEach(input => {
+            input.addEventListener('input', () => {
+                const allFilled = inputs.every(i => i.value.trim().length > 3);
+                if (allFilled) {
+                    btn.removeAttribute('disabled');
+                    btn.classList.replace('bg-surface-variant', 'bg-primary-container');
+                    btn.classList.replace('text-on-surface', 'text-on-primary-container');
+                } else {
+                    btn.setAttribute('disabled', 'true');
+                    btn.classList.replace('bg-primary-container', 'bg-surface-variant');
+                    btn.classList.replace('text-on-primary-container', 'text-on-surface');
+                }
+            });
+        });
+
+        // Submit Logic (Error display without animations)
+        btn.addEventListener('click', (e) => {
+            const passInput = document.getElementById(f.pass);
+            const errorMsg = document.getElementById('login-error');
+            
+            if (passInput.value === 'error') {
+                passInput.classList.add('border-error');
+                if(errorMsg) errorMsg.classList.remove('hidden');
+            } else {
+                passInput.classList.remove('border-error');
+                if(errorMsg) errorMsg.classList.add('hidden');
+                // Mock success
+                console.log("Auth verified.");
+            }
+        });
+    });
+</script>
+
+
+
+
+</body></html>

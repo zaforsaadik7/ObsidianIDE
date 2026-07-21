@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>NEURAL_IDE | Workspace Invitation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600&family=Geist:wght@400;600;700&display=swap" rel="stylesheet"/>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: { 
+                    colors: { 
+                        "surface-dark": "#0A0A0B", 
+                        "surface-container": "#1c1b1c", 
+                        "primary-fixed-dim": "#00dce5", 
+                        "on-surface-variant": "#b9caca",
+                        "primary": "#00f5ff"
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                        headline: ['Geist', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-[#F4F4F6] dark:bg-[#0A0A0B] text-[#131314] dark:text-white font-sans h-screen flex items-center justify-center p-4">
+
+    <div class="max-w-md w-full bg-white dark:bg-surface-container border border-[#3a494a] p-8 shadow-2xl">
+        <div class="text-center mb-8">
+            <span class="font-mono text-primary-fixed-dim tracking-widest text-xs uppercase">SECURE_INVITATION</span>
+            <h1 class="text-2xl font-bold font-headline mt-2">Workspace Access Granted</h1>
+        </div>
+        
+        <div class="bg-gray-100 dark:bg-[#131314] border border-[#3a494a] p-4 text-sm font-mono mb-6">
+            <p class="text-on-surface-variant mb-2">> Target_Repository: <span class="text-black dark:text-white">QUANTUM_LATTICE_01</span></p>
+            <p class="text-on-surface-variant mb-2">> Sent_By: <span class="text-black dark:text-white">Md. Emam Zafor Saadik</span></p>
+            <p class="text-on-surface-variant">> Assigned_Role: <span class="text-primary-fixed-dim uppercase">Reviewer</span></p>
+        </div>
+
+        <div class="flex flex-col gap-3">
+            <button onclick="window.location.href='../advanced_ide_quantum_lattice/code.html'" class="w-full bg-primary text-black font-mono font-bold py-3 hover:bg-[#39FF14] transition-colors">
+                ACCEPT & ENTER WORKSPACE
+            </button>
+            <button onclick="window.location.href='../authentication_login_register/code.html'" class="w-full border border-[#3a494a] text-on-surface-variant font-mono py-3 hover:text-black dark:hover:text-white transition-colors">
+                CREATE ACCOUNT TO JOIN
+            </button>
+        </div>
+    </div>
+
+</body>
+</html>

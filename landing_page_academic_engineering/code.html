@@ -1,0 +1,314 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>NEURAL_IDE | Distributed Cloud Workspaces</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;family=Inter:wght@400;500;600&amp;family=Geist:wght@400;600;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "surface-dim": "#131314",
+                    "tertiary-fixed": "#ffdad8",
+                    "secondary-fixed-dim": "#e0b6ff",
+                    "surface-container-lowest": "#0e0e0f",
+                    "on-primary-container": "#006c71",
+                    "inverse-surface": "#e5e2e3",
+                    "primary-fixed": "#63f7ff",
+                    "background": "#131314",
+                    "tertiary-fixed-dim": "#ffb3b0",
+                    "on-primary": "#003739",
+                    "tertiary-container": "#ffd3d1",
+                    "on-secondary-fixed-variant": "#5a3776",
+                    "on-error": "#690005",
+                    "surface-tint": "#00dce5",
+                    "on-primary-fixed": "#002021",
+                    "tertiary": "#fff8f7",
+                    "on-secondary": "#42205e",
+                    "surface-bright": "#3a393a",
+                    "on-secondary-fixed": "#2c0648",
+                    "inverse-on-surface": "#313031",
+                    "on-error-container": "#ffdad6",
+                    "surface-variant": "#353436",
+                    "surface-container-highest": "#353436",
+                    "secondary-fixed": "#f2daff",
+                    "secondary-container": "#5a3776",
+                    "error-container": "#93000a",
+                    "surface-container-low": "#1c1b1c",
+                    "outline": "#849495",
+                    "on-secondary-container": "#cea5ed",
+                    "outline-variant": "#3a494a",
+                    "surface-container": "#201f20",
+                    "on-tertiary-fixed-variant": "#93001a",
+                    "inverse-primary": "#00696e",
+                    "surface": "#131314",
+                    "error": "#ffb4ab",
+                    "on-primary-fixed-variant": "#004f53",
+                    "on-tertiary-fixed": "#410006",
+                    "on-surface-variant": "#b9caca",
+                    "primary-fixed-dim": "#00dce5",
+                    "neon-green": "#39FF14",
+                    "surface-slate": "#1A1A1E",
+                    "primary-container": "#00f5ff",
+                    "ghost-track": "rgba(0, 245, 255, 0.2)",
+                    "on-tertiary-container": "#c50026",
+                    "surface-container-high": "#2a2a2b",
+                    "surface-dark": "#0A0A0B",
+                    "on-tertiary": "#68000f",
+                    "surface-light": "#F4F4F6",
+                    "secondary": "#e0b6ff",
+                    "primary": "#e9feff",
+                    "on-surface": "#e5e2e3",
+                    "on-background": "#e5e2e3"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "gutter": "16px",
+                    "margin-desktop": "32px",
+                    "pane-gap": "1px",
+                    "margin-mobile": "16px",
+                    "unit": "4px"
+            },
+            "fontFamily": {
+                    "headline-sm": ["Geist"],
+                    "body-md": ["Inter"],
+                    "body-sm": ["Inter"],
+                    "code-md": ["JetBrains Mono"],
+                    "body-lg": ["Inter"],
+                    "label-caps": ["JetBrains Mono"],
+                    "headline-md": ["Geist"],
+                    "headline-lg": ["Geist"]
+            },
+            "fontSize": {
+                    "headline-sm": ["18px", {"lineHeight": "1.4", "fontWeight": "600"}],
+                    "body-md": ["14px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                    "body-sm": ["12px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                    "code-md": ["14px", {"lineHeight": "1.5", "fontWeight": "450"}],
+                    "body-lg": ["16px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                    "label-caps": ["11px", {"lineHeight": "1", "letterSpacing": "0.08em", "fontWeight": "700"}],
+                    "headline-md": ["24px", {"lineHeight": "1.3", "fontWeight": "600"}],
+                    "headline-lg": ["32px", {"lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        @keyframes staggerUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .stagger-item {
+            opacity: 0;
+            animation: staggerUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .stagger-1 { animation-delay: 0.1s; }
+        .stagger-2 { animation-delay: 0.2s; }
+        .stagger-3 { animation-delay: 0.3s; }
+        .stagger-4 { animation-delay: 0.4s; }
+
+        .glass-panel {
+            background: rgba(26, 26, 30, 0.4);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .terminal-glow {
+            box-shadow: 0 0 20px rgba(0, 245, 255, 0.1);
+        }
+
+        /* Material Symbols weight correction */
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-white dark:bg-[#0A0A0B] text-[#1c1b1c] dark:text-[#e5e2e3] font-body-md selection:bg-primary-container selection:text-on-primary-container overflow-x-hidden">
+<!-- TopNavBar -->
+<nav class="bg-surface-container dark:bg-surface-container fixed top-0 w-full z-50 border-b border-outline-variant dark:border-outline-variant flex justify-between items-center h-12 px-margin-mobile md:px-margin-desktop w-full">
+<div class="flex items-center gap-4">
+<span class="font-label-caps text-label-caps tracking-widest text-primary dark:text-primary-fixed-dim">NEURAL_IDE</span>
+<div class="hidden md:flex gap-1">
+<div class="px-3 py-1 font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-variant transition-colors duration-150 cursor-pointer">DOCS</div>
+<div class="px-3 py-1 font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-variant transition-colors duration-150 cursor-pointer">PRICING</div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button class="px-4 py-1.5 font-label-caps text-label-caps text-primary hover:bg-surface-variant transition-colors duration-150 border border-outline-variant">SIGN_IN</button>
+<button class="px-4 py-1.5 font-label-caps text-label-caps bg-primary-fixed-dim text-on-primary hover:bg-neon-green transition-colors duration-150">SIGN_UP</button>
+<div class="ml-2 flex gap-1">
+<span class="material-symbols-outlined p-1 cursor-pointer text-on-surface-variant hover:bg-surface-variant transition-colors duration-150" data-icon="light_mode" onclick="toggleTheme()">light_mode</span>
+<span class="material-symbols-outlined p-1 cursor-pointer text-on-surface-variant hover:bg-surface-variant transition-colors duration-150" data-icon="account_circle">account_circle</span>
+</div>
+</div>
+</nav>
+<!-- Main Content -->
+<main class="min-h-screen pt-12 flex flex-col items-center">
+<!-- Hero Section -->
+<section class="w-full max-w-7xl px-margin-mobile md:px-margin-desktop py-16 md:py-32 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+<!-- Left: Headline & CTA -->
+<div class="flex flex-col gap-8 stagger-item stagger-1 animate-in">
+<div class="flex flex-col gap-4">
+<span class="font-label-caps text-label-caps text-primary tracking-[0.2em] border-l-2 border-primary pl-4">System Status: Active</span>
+<h1 class="font-headline-lg text-headline-lg lg:text-[48px] lg:leading-[1.1] text-on-surface max-w-md">Distributed Cloud Workspaces for <span class="text-primary-fixed-dim">Academic Engineering</span>.</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-sm">
+                        High-density, low-latency development environments engineered for rigorous research and industrial-scale collaborative computing.
+                    </p>
+</div>
+<div class="flex flex-wrap gap-4">
+<button class="px-8 py-3 bg-surface-container-highest border border-primary-fixed-dim text-primary-fixed-dim font-label-caps text-label-caps hover:bg-primary-fixed-dim hover:text-on-primary transition-all duration-300 relative group overflow-hidden" id="primary-cta">
+<span class="relative z-10">Get Started</span>
+<div class="absolute inset-0 bg-neon-green opacity-0 group-hover:opacity-10 transition-opacity"></div>
+</button>
+<button class="px-8 py-3 bg-transparent border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:border-on-surface transition-colors duration-150">View Features</button>
+</div>
+<!-- Stats/Benchmarks Row -->
+<div class="flex gap-8 border-t border-outline-variant pt-8 mt-4">
+<div class="flex flex-col">
+<span class="font-label-caps text-[10px] text-on-surface-variant">LATENCY</span>
+<span class="font-code-md text-code-md text-neon-green">12ms avg</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-caps text-[10px] text-on-surface-variant">UPTIME</span>
+<span class="font-code-md text-code-md text-neon-green">99.998%</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-caps text-[10px] text-on-surface-variant">THROUGHPUT</span>
+<span class="font-code-md text-code-md text-neon-green">10Gb/s</span>
+</div>
+</div>
+</div>
+<!-- Right: Code Editor Graphic -->
+<div class="relative stagger-item stagger-2 flex justify-center items-center animate-in">
+<div class="glass-panel w-full aspect-[4/3] rounded-none terminal-glow overflow-hidden flex flex-col shadow-2xl relative z-10">
+<!-- Terminal Header -->
+<div class="h-8 bg-surface-container-high flex items-center px-4 justify-between border-b border-outline-variant">
+<div class="flex gap-1.5">
+<div class="w-2.5 h-2.5 rounded-full bg-outline-variant"></div>
+<div class="w-2.5 h-2.5 rounded-full bg-outline-variant"></div>
+<div class="w-2.5 h-2.5 rounded-full bg-outline-variant"></div>
+</div>
+<span class="font-code-md text-[10px] text-on-surface-variant opacity-60">neural_ide — main_kernel.rs</span>
+<div class="w-8"></div>
+</div>
+<!-- Terminal Body -->
+<div class="flex-1 p-6 font-code-md text-code-md leading-relaxed overflow-hidden">
+<div class="flex gap-4">
+<span class="text-on-surface-variant opacity-30 select-none">01</span>
+<span class="text-secondary"><span class="text-primary-fixed-dim">use</span> std::distributed::compute;</span>
+</div>
+<div class="flex gap-4">
+<span class="text-on-surface-variant opacity-30 select-none">02</span>
+<span></span>
+</div>
+<div class="flex gap-4">
+<span class="text-on-surface-variant opacity-30 select-none">03</span>
+<span class=""><span class="text-primary-fixed-dim">fn</span> <span class="text-neon-green">initialize_node</span>(config: &amp;Config) -&gt; Result {</span>
+</div>
+<div class="flex gap-4">
+<span class="text-on-surface-variant opacity-30 select-none">04</span>
+<span class="pl-4"> <span class="text-on-surface-variant opacity-50">// Calibrating quantum-safe encryption</span></span>
+</div>
+<div class="flex gap-4">
+<span class="text-on-surface-variant opacity-30 select-none">05</span>
+<span class="pl-4">    let network = compute::sync_cluster(config)?;</span>
+</div>
+<div class="flex gap-4">
+<span class="text-on-surface-variant opacity-30 select-none">06</span>
+<span class="pl-4">    network.handshake(<span class="text-tertiary-fixed-dim">"0xDEADBEEF"</span>);</span>
+</div>
+<div class="flex gap-4">
+<span class="text-on-surface-variant opacity-30 select-none">07</span>
+<span class="pl-4"> <span class="text-primary-fixed-dim">Ok</span>(network)</span>
+</div>
+<div class="flex gap-4">
+<span class="text-on-surface-variant opacity-30 select-none">08</span>
+<span class="">}</span>
+</div>
+<!-- Floating Overlay Card (Glassmorphism) -->
+<div class="absolute bottom-12 right-12 glass-panel p-4 flex flex-col gap-3 max-w-[200px] border border-primary-fixed-dim/30">
+<div class="flex justify-between items-center border-b border-outline-variant pb-2">
+<span class="font-label-caps text-[9px] text-primary">NODE_STATUS</span>
+<div class="w-1.5 h-1.5 rounded-full bg-neon-green"></div>
+</div>
+<div class="flex flex-col">
+<span class="font-code-md text-[10px] text-on-surface">MEMORY_USAGE</span>
+<div class="w-full h-1 bg-surface-container-highest mt-1">
+<div class="h-full bg-primary-fixed-dim w-[64%]"></div>
+</div>
+</div>
+<div class="flex flex-col">
+<span class="font-code-md text-[10px] text-on-surface">CONCURRENCY</span>
+<span class="font-code-md text-[12px] text-neon-green">8,192 THREADS</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Background Decorative Element -->
+<div class="absolute -top-12 -right-12 w-64 h-64 bg-primary-fixed-dim opacity-[0.03] blur-[100px] pointer-events-none"></div>
+<div class="absolute -bottom-12 -left-12 w-64 h-64 bg-neon-green opacity-[0.03] blur-[100px] pointer-events-none"></div>
+</div>
+</section>
+<!-- Secondary Info Section (Bento Lite) -->
+<section class="w-full max-w-7xl px-margin-mobile md:px-margin-desktop py-24 border-t border-outline-variant">
+<div class="grid grid-cols-1 md:grid-cols-3 gap-1">
+<div class="stagger-item stagger-3 bg-surface-container-low p-8 border border-outline-variant/30 flex flex-col gap-4 animate-in">
+<span class="material-symbols-outlined text-primary text-3xl" data-icon="terminal">terminal</span>
+<h3 class="font-headline-sm text-headline-sm">Universal Compiler</h3>
+<p class="font-body-md text-on-surface-variant">Native support for LLVM-based languages with integrated cross-compilation toolchains for ARM, x86, and RISC-V.</p>
+</div>
+<div class="stagger-item stagger-3 bg-surface-container-low p-8 border border-outline-variant/30 flex flex-col gap-4 animate-in">
+<span class="material-symbols-outlined text-primary text-3xl" data-icon="hub">hub</span>
+<h3 class="font-headline-sm text-headline-sm">Mesh Collaboration</h3>
+<p class="font-body-md text-on-surface-variant">P2P environment sharing with zero-latency synchronization using the NEURAL sync protocol.</p>
+</div>
+<div class="stagger-item stagger-3 bg-surface-container-low p-8 border border-outline-variant/30 flex flex-col gap-4 animate-in">
+<span class="material-symbols-outlined text-primary text-3xl" data-icon="shield">shield</span>
+<h3 class="font-headline-sm text-headline-sm">Hardened Sandbox</h3>
+<p class="font-body-md text-on-surface-variant">Every workspace runs in an air-gapped container with kernel-level isolation and encrypted I/O.</p>
+</div>
+</div>
+</section>
+</main>
+<!-- Footer -->
+
+<script>
+        function toggleTheme() {
+            const html = document.documentElement;
+            if (html.classList.contains('dark')) {
+                html.classList.remove('dark');
+                localStorage.setItem('theme', 'light');
+            } else {
+                html.classList.add('dark');
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+
+        // Simple observer for staggering animation
+        const observerOptions = {
+            threshold: 0.1
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('animate-in');
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.stagger-item').forEach(item => observer.observe(item));
+    </script>
+
+
+
+
+</body></html>
