@@ -1440,6 +1440,19 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Production build `npm run build` compiled cleanly with **0 errors in 9.72s**.
   - Backend server verified active and responding normally.
 
+### 116. Production Root Route SPA Frontend Serving Resolution (v64)
+* **Problem / Bug**:
+  - When opening the deployed Render URL (`https://obsidianide.onrender.com`), the page returned a raw JSON response (`{ status: "ONLINE", system: "ObsidianIDE Express REST API Engine" }`) instead of loading the React IDE Web App.
+* **Root Cause**:
+  - `server/index.js` had a top-level `app.get('/')` route handler that intercepted root URL requests and returned JSON before the static asset middleware and SPA fallback could serve `dist/index.html`.
+* **Solution Implemented**:
+  1. Moved the backend JSON status response to `GET /api`.
+  2. Configured Express to serve `dist/` static assets and return `dist/index.html` for all non-API client routes (`/`, `/dashboard`, `/ide/:id`, `/auth`, etc.).
+  3. Added Vite environment variable build defaults into `Dockerfile` to guarantee Firebase credentials are baked into client bundles during Docker image builds.
+* **QA & Verification**:
+  - Pushed to `origin/main`. Render automatically re-built and deployed the React frontend.
+  - Production build `npm run build` compiled with **0 errors in 10.29s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
