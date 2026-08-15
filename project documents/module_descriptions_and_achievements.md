@@ -272,4 +272,284 @@ Module 10 optimizes production build assets and prepares ObsidianIDE for product
 * **Academic Defense Ready**: Fully documented architecture, database schemas, and feature walkthroughs for university evaluation.
 
 ---
+
+## 💻 Module 11: Interactive Multi-Language Terminal Engine
+
+### 📌 Overview & Purpose
+Module 11 replaces legacy static output viewers with a full-duplex interactive terminal supporting true interactive execution (stdin/stdout), live keystrokes, and multi-language compilation pipelines.
+
+### ⚙️ Technical Implementations
+* **Duplex WebSocket Terminal (`server/routes/terminalRoutes.js`)**:
+  * Real-time WebSocket connection on `/ws/terminal` connecting browser xterm.js sessions directly to sandboxed child process runtimes.
+* **Multi-Language Execution Pipelines**:
+  * **C / C++**: MinGW GCC/G++ automatic compilation and interactive std::cin execution.
+  * **Java**: Oracle Java 23 compilation and execution.
+  * **C#**: Microsoft Visual C# compiler (`csc.exe`) pipeline.
+  * **Python**: Unbuffered interactive streaming (`python -u`).
+  * **Bash & Node.js**: Direct shell execution.
+* **Integrated Terminal UI (`InteractiveTerminal.jsx`)**:
+  * FitAddon integration, auto-resizing, and Ctrl+C interrupt signals.
+
+### 🏆 Key Achievements
+* **100% Interactive Multi-Language Execution**: Live keystrokes and stdin prompts work seamlessly just like VS Code.
+
+---
+
+## 🎨 Module 12: Monaco Multi-Language Syntax Highlighting & Theme Sync
+
+### 📌 Overview & Purpose
+Module 12 synchronizes editor syntax tokenization and dark mode palettes across all supported programming languages.
+
+### ⚙️ Technical Implementations
+* **Comprehensive Language Token Mappings (`MonacoEditorCanvas.jsx`)**:
+  * Mapped `.cpp`, `.cc`, `.cxx`, `.hpp`, `.h`, `.c`, `.java`, `.cs`, `.sh`, `.ps1`, `.go`, `.sql`, `.yaml`, `.xml`, `.md`.
+* **Obsidian-Dark Monaco Theme**:
+  * Registered custom high-contrast dark theme with coral directives (`#F43F5E`), bright purple keywords (`#C084FC`), emerald strings (`#34D399`), cyan types (`#38BDF8`), and yellow numbers (`#FDE68A`).
+  * Unified editor background and gutters to `#07080B` matching the IDE substrate.
+
+### 🏆 Key Achievements
+* **Sleek, Unified Aesthetics**: High-contrast syntax highlighting on a seamless dark palette with zero white background glitches.
+
+---
+
+## 🛡️ Module 13: Terminal Security Guards, Identity & Authorization Matrix
+
+### 📌 Overview & Purpose
+Module 13 enforces security boundaries in the terminal environment, preventing unauthorized access to central system credentials and database secrets.
+
+### ⚙️ Technical Implementations
+* **Identity Commands**:
+  * `whoami`: Displays verified session user, repository, and isolation status.
+  * `auth` / `permissions`: Displays active authorization matrix and granted privileges.
+* **Credential Guard**:
+  * Intercepts and blocks commands attempting to inspect `.env`, database credentials, or server files with `[AUTHORIZATION REQUIRED]` alerts.
+* **Elevated Commands**: `sudo` / `admin` developer credential validation.
+
+### 🏆 Key Achievements
+* **Robust Sandbox Isolation**: Guaranteed zero credential leakage from the interactive web terminal.
+
+---
+
+## 📁 Module 14: VS Code-Grade File Management, 3-Dot Contextual Menus & Owner ZIP Archiving
+
+### 📌 Overview & Purpose
+Module 14 provides comprehensive file/folder management in the top File menu and Directory Explorer.
+
+### ⚙️ Technical Implementations
+* **Top File Menu (`IDEWorkspacePage.jsx`)**:
+  * New File (`Ctrl+N`), New Folder (`Ctrl+Shift+N`), Save & Sync (`Ctrl+S`), Save As (`Ctrl+Shift+S`), and Owner-only ZIP download.
+* **Owner-Only ZIP Archiving (`src/utils/fileExporter.js`)**:
+  * Packages all repository files preserving folder hierarchies into a `.zip` archive via `JSZip` for Project Owners.
+* **Directory Explorer 3-Dot Menus (`FileExplorer.jsx`)**:
+  * **Files**: Multi-format export (Original, `.txt`, `.md`, `.doc`), Cut, Copy, Copy Relative Path, Copy Full Path, Rename, Delete.
+  * **Folders**: New File in Folder, New Subfolder, Paste into Folder, Cut Folder, Copy Folder, Copy Relative Path, Copy Full Path, Rename Folder, Delete Folder.
+  * **Header**: New File at root, New Folder at root, Collapse/Expand all.
+
+### 🏆 Key Achievements
+* **Full File Lifecycle Management**: 100% feature-complete file manipulation and export capabilities matching professional desktop IDEs.
+
+---
+
+## 🤖 Module 15: Real-Time Inline AI Suggestions & Suggestive Writing Engine
+
+### 📌 Overview & Purpose
+Module 15 upgrades the developer experience by eliminating static diagnostic modals in favor of seamless, real-time inline ghost text completions (GitHub Copilot style) and interactive suggestive writing (`Ctrl+I`).
+
+### ⚙️ Technical Implementations
+* **Monaco Inline Completions (`MonacoEditorCanvas.jsx`)**:
+  * Implemented `monaco.languages.registerInlineCompletionsProvider` to predict and display ghost text completions as the developer types.
+  * Pressing **`Tab`** instantly accepts and inserts the inline suggestion into the active buffer.
+* **Inline Suggestive Writing Widget (`Ctrl+I`)**:
+  * Floating glassmorphism prompt widget allowing developers to prompt the AI to generate algorithms, boilerplate, or refactorings on the fly.
+  * One-click "Accept & Insert Code" (`Enter`/`Tab`) with live syntax preview.
+* **Server-Side AI Completion Endpoints (`server/index.js`)**:
+  * `POST /api/ai/inline-suggest`: Predicts next code tokens/lines using Gemini AI with smart local heuristics.
+  * `POST /api/ai/suggestive-write`: Generates complete code functions or structures based on natural language instructions.
+* **Integrated Terminal Dedication (`IDEWorkspacePage.jsx`)**:
+  * Cleaned up the bottom drawer to be 100% dedicated to the full-duplex interactive terminal.
+
+### 🏆 Key Achievements
+* **Zero-Interruption AI Workflow**: Code completions and suggestive writing happen directly in the editor flow with zero modal popups or distractions.
+
+---
+
+## 📐 Module 16: View Menu Live Sandbox Integration & 3-Partition Splitter Resizing
+
+### 📌 Overview & Purpose
+Module 16 moves the Live Sandbox into the View menu (opening only when requested) and implements smooth draggable partition splitters across the entire 3-pane IDE layout.
+
+### ⚙️ Technical Implementations
+* **View Menu Live Sandbox Toggle (`IDEWorkspacePage.jsx`)**:
+  * Added on-demand Live Sandbox trigger with live toggle badge `[✓ ON / OFF]`.
+  * Added dedicated `onClose` dismiss button (`✕`) on the sandbox header.
+* **Draggable 3-Partition Resizing System**:
+  * **Left Splitter**: Drag to resize File Explorer (`160px` to `480px`).
+  * **Center Partition**: Monaco Editor dynamically expands to fill all available space (`flex-1`).
+  * **Right Splitter**: Drag to resize Live Sandbox / AI Chat (`220px` to `750px`).
+  * Persists custom partition widths to `localStorage` (`obsidian_pane_left_width`, `obsidian_pane_right_width`).
+* **Live Sandbox Verification**:
+  * Tested live rendering for HTML webpages and React JSX interactive components.
+
+### 🏆 Key Achievements
+* **Fluid Workspace Customization**: Developers have complete flexibility to resize partitions or collapse the sandbox to maximize code canvas space.
+
+---
+
+## ⚛️ Module 17: In-Browser React Transpiler & Scope Binding Engine
+
+### 📌 Overview & Purpose
+Module 17 enhances the Live Sandbox to support seamless, real-time React JSX/TSX compilation and interactive component rendering directly inside the browser sandbox.
+
+### ⚙️ Technical Implementations
+* **Global React Hooks Binding (`SandboxPreview.jsx`)**:
+  * Bound standard hooks (`useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `useReducer`) to the iframe execution scope so stripped imports do not cause scope reference errors.
+* **JSON-Safe Code Injection**:
+  * Sanitized and safely injected React JSX code via `JSON.stringify()`, preventing backticks and template string collisions with outer HTML scripts.
+* **Babel Standalone Execution & Error Boundary**:
+  * Executed `Babel.transform()` with `presets: ['react', 'env']` and added an in-browser error boundary card providing actionable syntax notices if user code has errors.
+
+### 🏆 Key Achievements
+* **Instant React Prototyping**: Complete interactive React components mount and render live with zero external build tools or bundler overhead.
+
+---
+
+## 📦 Module 18: Local File/Folder/ZIP Import & Drag-Move Tree Reorganization
+
+### 📌 Overview & Purpose
+Module 18 introduces project ingestion tools (individual files, complete folder project trees, and ZIP archives with pre-import constraint validation) and an interactive drag-and-drop file tree organizer.
+
+### ⚙️ Technical Implementations
+* **Local Ingestion Engine (`fileImporter.js`)**:
+  * Extracted and parsed multi-file inputs, folder directories with `webkitRelativePath`, and ZIP archives using `JSZip`.
+  * Built pre-import constraint analyzer evaluating payload sizes, total file counts, and large file safety thresholds.
+* **Pre-Import Safety Modal (`ImportAnalysisModal.jsx`)**:
+  * Rendered glassmorphism confirmation modal displaying destination path, incoming file tree, total payload size, and safety warnings.
+* **Moveable Drag-and-Drop File Tree (`FileExplorer.jsx`)**:
+  * Implemented HTML5 draggable rows with cyan glowing dropzones and dedicated "Drop to Project Root" dropzone.
+  * Enforced circular move prevention (cannot drop a folder into itself or its descendant).
+* **Database Synchronization (`IDEWorkspacePage.jsx` & `server/routes/projectRoutes.js`)**:
+  * Updated file path mappings and synchronized all imports and moves with `projects/${projectId}` in Firebase Firestore and backend `/api/projects/update-files`.
+
+### 🏆 Key Achievements
+* **Frictionless Project Ingestion & Organization**: Developers can import local projects or drag-and-drop reorganize their codebase in real time.
+
+---
+
+## 🛡️ Module 19: Role-Based Personal DB Isolation & Owner-Gated Master Merge Engine
+
+### 📌 Overview & Purpose
+Module 19 enforces a governance model where collaborator modifications are saved exclusively to the collaborator's personal database drafts (`users/${uid}/projects/${projectId}`) and packaged as proposal patches, ensuring the canonical master project repository (`projects/${projectId}`) remains untouched until the Project Owner reviews and approves them.
+
+### ⚙️ Technical Implementations
+* **Collaborator Database Isolation (`IDEWorkspacePage.jsx`)**:
+  * Gated all Save, Save & Sync, Create File, Create Folder, Delete, Move, and Batch Import operations behind `isProjectOwner`.
+  * For non-owners, writes state directly to `users/${uid}/projects/${projectId}` in Firestore and creates proposal patches for Owner review.
+* **PR-Grade Review Drawer (`ReviewDrawer.jsx`)**:
+  * Enhanced Review Drawer to support all proposal types: `MODIFY_FILE` (code diffs), `CREATE_FILE` (new files), `DELETE_FILE` (deletions), `MOVE_ITEM` / `RENAME_FILE` (reorganization), and `IMPORT_BATCH` (multi-file archive packages).
+  * Included interactive manifest inspectors and 1-click Approve & Merge or Reject actions.
+* **Atomic Master Repository Merge (`projectRoutes.js`)**:
+  * Extended backend `/api/projects/resolve-patch` to atomically merge approved patches into the master `project_files` array.
+* **Automated QA Test Suite (`test_role_based_save_and_review.js`)**:
+  * Built and executed full-suite tests verifying collaborator isolation, proposal staging, Owner approval, master merge, and rejection workflows with 100% pass rate.
+
+### 🏆 Key Achievements
+* **Zero Unintended Master Repository Overwrites**: Complete isolation ensures repository integrity while providing seamless collaborative peer review.
+
+---
+
+## 🐙 Module 20: GitHub App Manifest Integration & 1-Click Code Push Engine
+
+### 📌 Overview & Purpose
+Module 20 equips ObsidianIDE with professional GitHub cloud integration, allowing developers to connect their GitHub account via the GitHub App Manifest flow, create repositories, and push complete project codebases directly to GitHub in a single click.
+
+### ⚙️ Technical Implementations
+* **GitHub App Manifest Handshake (`server/routes/githubRoutes.js`)**:
+  * Generated dynamic App Manifests with explicit `callback_urls` and `setup_url` arrays, adhering to GitHub's latest security requirements.
+  * Handled OAuth code-to-token exchanges, installation redirects (`/apps/{slug}/installations/new`), and user profile synchronization.
+* **Empty Repository Push Engine**:
+  * Built an intelligent fallback mechanism: when pushing to an empty or newly created GitHub repository where no Git tree exists, automatically switches to GitHub Contents API (`PUT /repos/{owner}/{repo}/contents/{path}`) to create the initial commit and `main` branch cleanly.
+* **1-Click Export UI (`ExportToGitHubModal.jsx` & `ConnectGitHubPage.jsx`)**:
+  * Built an interactive export modal allowing developers to name their repository, configure visibility (public/private), customize commit messages, and push multi-file workspaces.
+
+### 🏆 Key Achievements
+* **Seamless Git Cloud Synchronization**: Developers can export entire cloud IDE workspaces to GitHub repositories with zero CLI setup or manual token handling.
+
+---
+
+## 👤 Module 21: Developer Profile Avatar Persistence & Real-Time Storage Telemetry
+
+### 📌 Overview & Purpose
+Module 21 refines developer identity management and system resource monitoring, ensuring profile pictures persist across auth sessions and storage telemetry dynamically reflects accurate workspace file byte counts.
+
+### ⚙️ Technical Implementations
+* **Persistent Base64 Avatar Storage (`ProfilePage.jsx` & `AuthContext.jsx`)**:
+  * Uploaded image files are encoded as Base64 and written atomically to Client Firestore (`users/${cleanDocId}`) under `info.avatarUrl` and synced via `PUT /api/users/profile`.
+  * `AuthContext.jsx` restores `avatarUrl` on startup, preventing image loss during logout/refresh cycles.
+* **Dynamic Storage Quota Engine (`ProfilePage.jsx`)**:
+  * Replaced static placeholders (`0.42 MB`) with a dynamic file size calculator that iterates through all user project files and sums their exact UTF-8 byte sizes using `new Blob([content]).size`.
+  * Dynamically queries all projects where the user is an owner or collaborator, accurately displaying real-time project counts (`PROJECTS_PORTFOLIO`).
+
+### 🏆 Key Achievements
+* **Persistent Identity & Accurate Quota Telemetry**: Developers enjoy stable avatar retention and real-time visibility into their cloud storage consumption.
+
+---
+
+## 🤖 Module 22: Agentic AI Assistant Gemini Engine, Dynamic Discovery & Codebase Vision
+
+### 📌 Overview & Purpose
+Module 22 elevates the built-in AI Assistant into a fully agentic, whole-codebase development partner powered by dynamic Google Gemini model discovery, multi-session chat history, and `@` file mention autocomplete.
+
+### ⚙️ Technical Implementations
+* **Dynamic Model Discovery (`server/routes/aiAgentRoutes.js`)**:
+  * Built `GET /api/ai-agent/models` which pings `https://generativelanguage.googleapis.com/v1beta/models` live with the user's API key.
+  * Automatically filters for models supporting `generateContent`, eliminating deprecated/404 models (`gemini-1.5-flash`, etc.) and populating the dropdown with verified active models (`gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3-flash-preview`, etc.).
+  * Built `POST /api/ai-agent/validate-key` for instant in-vault validation.
+* **Whole-Codebase Context Vision (`server/routes/aiAgentRoutes.js`)**:
+  * Formats the complete project file tree and full source code of all workspace files into the system prompt, providing the AI with total architectural context.
+  * Applies `[⭐ USER MENTIONED FILE]` tags to files explicitly referenced by the user.
+* **Interactive UI Enhancements (`AgenticAIChatSidebar.jsx`)**:
+  * Multi-session chat history persisted in `localStorage` with `+ New Chat` and conversation drawer.
+  * Interactive floating `@` mention file picker with full keyboard navigation (Up/Down/Enter/Tab/Escape) and click insertion.
+  * Unrestricted API Key Vault supporting free copy-pasting.
+
+### 🏆 Key Achievements
+* **True Whole-Project AI Assistance**: The AI understands inter-file dependencies and reasons across the entire repository structure.
+
+---
+
+## ⚡ Module 23: Agentic AI File Modification Engine & Monaco Editor Live Sync
+
+### 📌 Overview & Purpose
+Module 23 bridges the gap between AI code generation and workspace execution, ensuring AI-proposed file edits are applied accurately to workspace files and immediately reflected on the Monaco Editor canvas.
+
+### ⚙️ Technical Implementations
+* **Flexible File Path Resolution (`IDEWorkspacePage.jsx`)**:
+  * Upgraded `handleApplyAIModifications` to support exact path, stripped path, base fileName, and relative suffix matching (`src/main.py` matches `main.py`).
+  * Directly mutates `files`, `activeFile`, `openFiles` tabs, `currentContent`, and `savedContent`, persisting edits to Firestore and Express server.
+* **Monaco Editor Dynamic Canvas Synchronization (`MonacoEditorCanvas.jsx`)**:
+  * Added a dedicated `useEffect` hook in `MonacoEditorCanvas.jsx` to synchronize `editor.setValue()` whenever external `currentContent` changes, preserving cursor positions.
+* **Visual Action Feedback (`AgenticAIChatSidebar.jsx`)**:
+  * Button transitions to `✅ EDITS APPLIED TO WORKSPACE` in emerald green upon clicking.
+  * Added a `⚡ Apply All` button when multiple files are proposed for editing.
+
+### 🏆 Key Achievements
+* **1-Click AI Code Application**: Proposed refactorings, algorithmic additions, or bug fixes are applied to workspace buffers and editor canvases instantly.
+
+---
+
+## 🧭 Module 24: Universal Top-Level Brand Navigation & Routing Optimization
+
+### 📌 Overview & Purpose
+Module 24 refines application-wide brand navigation, guaranteeing that clicking the ObsidianIDE brand logo returns the user to the Dashboard from any view.
+
+### ⚙️ Technical Implementations
+* **Universal Link Wrapping (`IDEWorkspacePage.jsx`, `Header.jsx`, `TermsPage.jsx`)**:
+  * Wrapped the ObsidianIDE brand logo and icon with React Router `<Link to="/dashboard">` and navigation fallback.
+  * Unified styling across headers with gradient icon badges, smooth hover transitions, and clean accessible markup.
+
+### 🏆 Key Achievements
+* **Intuitive Top-Level Navigation**: Consistent, instant navigation back to the workspace launcher from any page in the application.
+
+---
+
 *Document compiled and verified for BUBT CSE SDP 4 Project Defense.*

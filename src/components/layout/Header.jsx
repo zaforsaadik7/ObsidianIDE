@@ -1,48 +1,43 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ThemeToggle } from './ThemeToggle';
 import { useAuth } from '../../context/AuthContext';
 
 export const Header = () => {
   const { currentUser, userProfile } = useAuth();
   const navigate = useNavigate();
 
+  const avatarUrl = userProfile?.info?.avatarUrl || userProfile?.avatarUrl || currentUser?.photoURL || '';
+
   return (
     <header className="fixed top-0 left-0 w-full z-[200] flex justify-between items-center px-6 h-12 bg-surface-container-low/80 dark:bg-surface-dark/80 backdrop-blur-xl border-b border-outline-variant shadow-sm transition-colors duration-150">
       <div className="flex items-center gap-6">
         <Link 
           to="/dashboard" 
-          className="text-xl font-bold text-surface-tint tracking-tighter hover:opacity-90 transition-opacity font-headline"
+          className="flex items-center gap-2.5 text-xl font-bold text-surface-tint tracking-tighter hover:opacity-90 transition-opacity font-headline group no-underline"
+          title="Return to Dashboard"
         >
-          ObsidianIDE
-        </Link>
-        
-        {currentUser && (
-          <div className="relative hidden md:flex items-center">
-            <span className="material-symbols-outlined absolute left-3 text-on-surface-variant text-sm">
-              search
-            </span>
-            <input 
-              className="h-7 pl-8 pr-4 text-xs bg-surface-slate text-on-surface w-56 placeholder:text-on-surface-variant/40 focus:outline-none focus:border-b-2 focus:border-surface-tint border-b border-transparent transition-colors font-mono"
-              placeholder="Lookup global workspaces..." 
-              type="text"
-            />
+          <div className="w-7 h-7 rounded bg-gradient-to-br from-cyan-400 to-purple-600 flex items-center justify-center shadow-[0_0_10px_rgba(0,220,229,0.3)] group-hover:scale-105 transition-transform">
+            <span className="material-symbols-outlined text-black text-base font-bold">code_blocks</span>
           </div>
-        )}
+          <span>ObsidianIDE</span>
+        </Link>
       </div>
 
       <div className="flex items-center gap-4">
-        <ThemeToggle />
 
         {currentUser ? (
           <div 
             onClick={() => navigate('/profile')} 
-            className="w-7 h-7 bg-surface-container-highest border border-outline-variant overflow-hidden cursor-pointer hover:border-surface-tint transition-colors flex items-center justify-center rounded-sm"
-            title={userProfile?.displayName || currentUser.email}
+            className="w-8 h-8 bg-surface-container-highest border border-outline-variant overflow-hidden cursor-pointer hover:border-surface-tint transition-colors flex items-center justify-center rounded-md p-0.5 shadow-sm"
+            title={userProfile?.info?.fullName || userProfile?.displayName || currentUser.email}
           >
-            <span className="material-symbols-outlined text-surface-tint text-lg">
-              account_circle
-            </span>
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="User Avatar" className="w-full h-full object-cover rounded-sm" />
+            ) : (
+              <span className="material-symbols-outlined text-surface-tint text-lg">
+                account_circle
+              </span>
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-3 text-xs font-mono">

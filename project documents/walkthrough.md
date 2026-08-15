@@ -76,19 +76,67 @@ ObsidianIDE is built following a clean, linear, high-performance architecture:
 
 ### Module 10: Final Deployment & BUBT Academic Presentation (`100% COMPLETE`)
 * Optimized Rollup manual chunks code-splitting in [vite.config.js](file:///f:/SDP%204/vite.config.js).
-* Verified clean production build (`dist/`) compiling in **2.35s with 0 errors**.
+* Verified clean production build (`dist/`) compiling cleanly with 0 errors.
+
+### Module 11: Real-Time Interactive Multi-Language Terminal Engine (`100% COMPLETE`)
+* Built WebSocket terminal engine (`/ws/terminal`) supporting live stdin/stdout and multi-language compilation (C, C++, Java, C#, Python, Node.js, Bash).
+* Integrated `@xterm/xterm` with FitAddon in [InteractiveTerminal.jsx](file:///f:/SDP%204/src/components/ide/InteractiveTerminal.jsx) with Ctrl+C interrupt signals.
+
+### Module 12: Monaco Multi-Language Syntax Highlighting & Theme Sync (`100% COMPLETE`)
+* Mapped file extensions for 15+ languages and registered custom `obsidian-dark` theme with high-contrast color tokens and `#07080B` background.
+
+### Module 13: Terminal Identity, Permissions & System Credential Protection (`100% COMPLETE`)
+* Implemented `whoami` and `auth`/`permissions` commands with security boundary guards blocking unauthorized inspection of `.env`, server configs, and database keys.
+
+### Module 14: VS Code File Operations, 3-Dot Menus & Owner ZIP Archiving (`100% COMPLETE`)
+* Implemented top File menu (New File, New Folder, Save, Save As, Owner-Only ZIP download), 3-dot contextual menus on files (export as .txt/.md/.doc/original, cut, copy, rename, delete) and folders.
+
+### Module 15: Real-Time Inline AI Suggestions & Suggestive Writing Engine (`100% COMPLETE`)
+* Registered Monaco inline completions provider for real-time ghost text with `Tab` accept and interactive AI suggestive writing prompt widget (`Ctrl+I` / `Cmd+I`).
+
+### Module 16: Live Sandbox View Menu Toggle & 3-Partition Splitter Resizing (`100% COMPLETE`)
+* Moved Live Sandbox to View menu with state toggle and close action; implemented draggable cyan glow splitters allowing full resizing for left explorer, center editor, and right sandbox/chat.
+
+### Module 17: In-Browser React Transpiler & Scope Binding Engine (`100% COMPLETE`)
+* Fixed React blank screen in SandboxPreview by binding standard React hooks globally, encoding JSX with `JSON.stringify`, and adding reliable Babel transpilation.
+
+### Module 18: Local File/Folder/ZIP Import & Drag-Move Tree Reorganization (`100% COMPLETE`)
+* Added full file/folder/ZIP import with constraint validation modal and enabled cursor grab-and-drag file moving across folders and root level with automatic path remapping.
+
+### Module 19: Role-Based Personal DB Isolation & Owner-Gated Master Merge Engine (`100% COMPLETE`)
+* Enforced strict isolation where collaborator edits save exclusively to the collaborator's personal database record and submit proposal patches for Owner review, while Master repository commits require Owner approval.
+
+### Module 20: GitHub App Manifest Integration & 1-Click Code Push Engine (`100% COMPLETE`)
+* Built GitHub App Manifest flow, OAuth token exchange, and automatic push to GitHub repositories with intelligent fallback to GitHub Contents API for uninitialized / empty repositories.
+
+### Module 21: Developer Profile Avatar Persistence & Real-Time Storage Telemetry (`100% COMPLETE`)
+* Persisted Base64 profile avatars in Firestore (`users/${cleanDocId}`) across login sessions and dynamically computed real-time project storage byte sizes.
+
+### Module 22: Agentic AI Assistant Gemini Engine, Dynamic Discovery & Codebase Vision (`100% COMPLETE`)
+* Built dynamic model discovery querying Google Gemini API live for active models (`gemini-3.6-flash`, etc.), formatted the whole codebase into system prompt context, added multi-session chat history drawer, and implemented floating `@` mention file autocomplete picker.
+
+### Module 23: Agentic AI File Modification Engine & Monaco Editor Live Sync (`100% COMPLETE`)
+* Enabled flexible path/suffix matching (`src/main.py` vs `main.py`), added Monaco buffer sync `useEffect`, and provided visual confirmation (`✅ EDITS APPLIED TO WORKSPACE`) with `⚡ Apply All`.
+
+### Module 24: Universal Top-Level Brand Navigation & Routing Optimization (`100% COMPLETE`)
+* Standardized ObsidianIDE brand logo across all application headers with `<Link to="/dashboard">` for guaranteed 1-click return to the central workspace dashboard.
 
 ---
 
 ## 🛠️ Implemented Architectural Optimizations Checklist
 
-- [x] **Optimization 1 (Multi-File Template Seeding)**: Seeds 3–4 starter files (`src/main.rs`, `Cargo.toml`, etc.) on project creation (`server/routes/fileRoutes.js`).
+- [x] **Optimization 1 (Multi-File Template Seeding)**: Seeds starter files on project creation (`server/routes/fileRoutes.js`).
 - [x] **Optimization 2 (Inline Edit Profile Modal)**: Inline modal overlay allowing developers to update display name, student ID, and designation (`src/pages/ProfilePage.jsx`).
 - [x] **Optimization 3 (Reviewer Save Interception)**: Reviewer save actions automatically submit deltas to `pending_patches` queue (`src/pages/IDEWorkspacePage.jsx`).
-- [x] **Optimization 4 (Notification Pulse Badge)**: Glowing purple pulse dot (`animate-pulse shadow`) on header Review Actions button when patches exist (`src/pages/IDEWorkspacePage.jsx`).
-- [x] **Optimization 5 (Direct Invite Link Copying)**: Quick `INVITE` buttons on cards and IDE toolbar that copy `/invite/{projectId}` straight to clipboard (`src/components/dashboard/ProjectCard.jsx`).
-- [x] **Optimization 6 (Chat History & Key Persistence)**: Persists AI chat thread into `localStorage` per `projectId` (`obsidian_ai_chat_${projectId}`) and stores custom API keys securely (`src/components/ide/AgenticAIChatSidebar.jsx`).
-- [x] **Optimization 7 (Rollup Manual Chunks Code-Splitting)**: Configured `manualChunks` in `vite.config.js` (`monaco-vendor`, `firebase-vendor`, `react-vendor`), reducing build time to 2.35s with 0 chunk size warnings.
+- [x] **Optimization 4 (Notification Pulse Badge)**: Glowing purple pulse dot on header Review Actions button when patches exist (`src/pages/IDEWorkspacePage.jsx`).
+- [x] **Optimization 5 (Direct Invite Link Copying)**: Quick `INVITE` buttons on cards and IDE toolbar that copy `/invite/{projectId}` straight to clipboard.
+- [x] **Optimization 6 (Multi-Session Chat History & Key Persistence)**: Persists AI chat sessions in `localStorage` per `projectId` and stores custom API keys securely.
+- [x] **Optimization 7 (Rollup Manual Chunks Code-Splitting)**: Configured `manualChunks` in `vite.config.js` (`monaco-vendor`, `firebase-vendor`, `react-vendor`), producing clean production builds.
+- [x] **Optimization 8 (Multi-Language Sandbox Terminal)**: Real-time compiler pipelines for C, C++, Java, C#, Python, Node.js, and Bash (`server/routes/terminalRoutes.js`).
+- [x] **Optimization 9 (GitHub App Manifest 1-Click Push)**: Direct export and code commit push to GitHub repositories (`server/routes/githubRoutes.js`).
+- [x] **Optimization 10 (Dynamic Whole-Codebase AI Vision & @-Mentions)**: Real-time Gemini API integration, active model filtering, whole project context, and `@` file picker autocomplete (`server/routes/aiAgentRoutes.js`, `AgenticAIChatSidebar.jsx`).
+- [x] **Optimization 11 (Instant AI Code Application & Monaco Sync)**: 1-click application of AI-generated edits into workspace files and Monaco editor buffers (`IDEWorkspacePage.jsx`, `MonacoEditorCanvas.jsx`).
+- [x] **Optimization 12 (Universal Dashboard Logo Routing)**: 1-click navigation to Dashboard via brand logo links across all pages (`IDEWorkspacePage.jsx`, `Header.jsx`, `TermsPage.jsx`).
 
 ---
 
@@ -122,5 +170,6 @@ npm run build
 When presenting **ObsidianIDE** to the faculty defense board at BUBT:
 
 1. **Highlight Flat File Path Mapping**: Explain how storing files as flat relative path strings (`filePath: "src/utils/parser.rs"`) in Cloud Firestore eliminates recursive database subcollection reads, guaranteeing fast operations while preserving free Firebase Spark quotas.
-2. **Demonstrate Linear Patch Collaboration**: Show how project `OWNER`s retain complete merge authority while `REVIEWER`s submit text deltas into a clean review drawer.
-3. **Demonstrate Agentic AI Integration**: Open the top-right **AI Assistant** drawer, show the masked password API key vault, select `Gemini 1.5 Flash`, and demonstrate how the agent uses project file manifest context to generate refactored code and apply it directly to the editor canvas with one click!
+2. **Demonstrate Linear Patch Collaboration & Governance**: Show how project `OWNER`s retain complete merge authority while `EDITOR`s/`REVIEWER`s submit changes safely without overwriting master code.
+3. **Demonstrate GitHub App 1-Click Cloud Push**: Show how an entire multi-file workspace can be pushed directly to GitHub, automatically initializing new repositories or updating existing branches.
+4. **Demonstrate Dynamic Agentic AI Assistant**: Open the top-right **AI Assistant** drawer, test an API key, select an active Gemini model, type `@` to reference a file, ask the AI to refactor code across the repository, and click **"APPLY EDITS TO WORKSPACE"** to watch the code and Monaco editor update live!

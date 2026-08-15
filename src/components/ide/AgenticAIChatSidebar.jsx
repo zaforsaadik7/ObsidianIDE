@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../../context/AuthContext';
 
 export const AgenticAIChatSidebar = ({ 
   isOpen, 
@@ -7,91 +8,340 @@ export const AgenticAIChatSidebar = ({
   currentContent, 
   files = [], 
   onApplyModifications,
-  projectId = 'default-project'
+  projectId = 'default-project',
+  width = 420
 }) => {
-  const storageKey = `obsidian_ai_chat_${projectId}`;
+  const { currentUser } = useAuth();
+  const sessionsStorageKey = `obsidian_ai_sessions_${projectId}`;
 
-  const defaultMessages = [
-    {
-      sender: 'ai',
-      text: 'Hello! I am your **Agentic AI Coding Assistant**. I have full context awareness of all files in this project. Ask me to refactor code, generate functions, or fix bugs across your workspace!',
-      modifications: []
-    }
-  ];
-
-  const [messages, setMessages] = useState(() => {
-    try {
-      const saved = localStorage.getItem(storageKey);
-      return saved ? JSON.parse(saved) : defaultMessages;
-    } catch (e) {
-      return defaultMessages;
-    }
+  const createNewSession = (title = 'New Conversation') => ({
+    id: 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    title,
+    messages: [
+      {
+        sender: 'ai',
+        text: 'Hello! I am your **Antigravity Agentic AI Assistant**. I have complete vision over all project files in this workspace.\n\nAsk me to refactor code, implement new features, or type `@` to reference specific files!',
+        modifications: []
+      }
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   });
 
-  const [inputPrompt, setInputPrompt] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
-  const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('obsidian_ai_key') || '');
-  const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-
-  // Sync chat history to localStorage whenever messages change
-  useEffect(() => {
+  // ── Multi-Session Chat History State ──
+  const [sessions, setSessions] = useState(() => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(messages));
-    } catch (e) {
-      console.warn("Failed to persist chat history to localStorage:", e);
-    }
-  }, [messages, storageKey]);
-
-  // Save API key securely in localStorage when updated
-  const handleSaveApiKey = () => {
-    try {
-      if (userApiKey) {
-        localStorage.setItem('obsidian_ai_key', userApiKey);
-      } else {
-        localStorage.removeItem('obsidian_ai_key');
+      const saved = localStorage.getItem(sessionsStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch (e) {}
+    return [createNewSession('Initial Session')];
+  });
+
+  const [activeSessionId, setActiveSessionId] = useState(() => {
+    return sessions[0]?.id || 'session_default';
+  });
+
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
+
+  // Active Session helper
+  const currentSession = sessions.find(s => s.id === activeSessionId) || sessions[0] || createNewSession();
+  const messages = currentSession.messages || [];
+
+  // Persist sessions to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(sessionsStorageKey, JSON.stringify(sessions));
+    } catch (e) {
+      console.warn('Storage quota notice for AI sessions:', e);
+    }
+  }, [sessions, sessionsStorageKey]);
+
+  // ── Dynamic Model Discovery State ──
+  const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('obsidian_ai_key') || '');
+  const [availableModels, setAvailableModels] = useState([
+    { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', description: 'Next-Gen Fast Code Model' },
+    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', description: 'High-Speed Intelligence' },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Preview Model' },
+    { id: 'gemini-flash-lite-latest', name: 'Gemini Flash Lite', description: 'Lightweight Low-Latency' }
+  ]);
+  const [selectedModel, setSelectedModel] = useState('gemini-3.6-flash');
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [hasValidApiKey, setHasValidApiKey] = useState(Boolean(userApiKey));
+
+  // Fetch verified workable models dynamically from API
+  const fetchAvailableModels = async (keyToUse) => {
+    setIsLoadingModels(true);
+    try {
+      const key = (keyToUse !== undefined ? keyToUse : userApiKey).trim();
+      const res = await fetch(`/api/ai-agent/models?apiKey=${encodeURIComponent(key)}`);
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.models) && data.models.length > 0) {
+        setAvailableModels(data.models);
+        setHasValidApiKey(Boolean(data.hasKey));
+        // Keep selected model if valid, else pick first working model
+        if (!data.models.some(m => m.id === selectedModel)) {
+          setSelectedModel(data.models[0].id);
+        }
+      }
+    } catch (err) {
+      console.warn('Model discovery notice:', err);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAvailableModels(userApiKey);
+  }, []);
+
+  // ── Prompt & Mentions State ──
+  const [inputPrompt, setInputPrompt] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [appliedModIds, setAppliedModIds] = useState(new Set());
+  const [mentionQuery, setMentionQuery] = useState(null); // null when not mentioning, string when typing after @
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionCursorPos, setMentionCursorPos] = useState(0);
+  const inputRef = useRef(null);
+
+  // ── API Key Vault Modal State ──
+  const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
+  const [vaultKeyInput, setVaultKeyInput] = useState(userApiKey);
+  const [keyValidationStatus, setKeyValidationStatus] = useState(null); // { loading, valid, message, error }
+
+  // Detect "@" in input to trigger file autocomplete
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    const cursorPos = e.target.selectionStart || 0;
+    setInputPrompt(val);
+
+    // Look for @ before cursor
+    const textBeforeCursor = val.slice(0, cursorPos);
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+
+    if (lastAtIndex !== -1) {
+      const query = textBeforeCursor.slice(lastAtIndex + 1);
+      // Only match if no spaces after @ or valid path characters
+      if (!query.includes(' ') && !query.includes('\n')) {
+        setMentionQuery(query.toLowerCase());
+        setMentionCursorPos(lastAtIndex);
+        setMentionIndex(0);
+        return;
+      }
+    }
+    setMentionQuery(null);
+  };
+
+  // Filter matching workspace files for @ mention
+  const matchingFiles = mentionQuery !== null 
+    ? files.filter(f => {
+        const path = (f.filePath || f.fileName || '').toLowerCase();
+        return path.includes(mentionQuery);
+      }).slice(0, 6)
+    : [];
+
+  const handleSelectMention = (filePath) => {
+    if (mentionCursorPos === -1) return;
+    const beforeAt = inputPrompt.slice(0, mentionCursorPos);
+    const textAfterCursor = inputPrompt.slice(inputRef.current?.selectionStart || mentionCursorPos);
+    const afterAt = textAfterCursor.replace(/^[^\s]*/, ''); // Remove the partial query
+
+    const newText = `${beforeAt}@${filePath} ${afterAt}`;
+    setInputPrompt(newText);
+    setMentionQuery(null);
+
+    setTimeout(() => {
+      if (inputRef.current) {
+        const newPos = beforeAt.length + filePath.length + 2;
+        inputRef.current.focus();
+        inputRef.current.setSelectionRange(newPos, newPos);
+      }
+    }, 10);
+  };
+
+  const handleKeyDown = (e) => {
+    if (mentionQuery !== null && matchingFiles.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev + 1) % matchingFiles.length);
+        return;
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev - 1 + matchingFiles.length) % matchingFiles.length);
+        return;
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const selected = matchingFiles[mentionIndex];
+        if (selected) {
+          handleSelectMention(selected.filePath || selected.fileName);
+        }
+        return;
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendPrompt();
+    }
+  };
+
+  // Extract all @mentioned file paths from the current prompt
+  const extractMentionedFiles = (text) => {
+    const matches = text.match(/@([\w\-./\\]+)/g) || [];
+    return matches.map(m => m.slice(1)).filter(p => files.some(f => f.filePath === p || f.fileName === p));
+  };
+
+  const activeMentionedFiles = extractMentionedFiles(inputPrompt);
+
+  // ── Session Management Functions ──
+  const handleStartNewChat = () => {
+    const newSess = createNewSession(`Chat ${sessions.length + 1}`);
+    setSessions(prev => [newSess, ...prev]);
+    setActiveSessionId(newSess.id);
+    setIsHistoryDrawerOpen(false);
+    setInputPrompt('');
+  };
+
+  const handleSwitchSession = (id) => {
+    setActiveSessionId(id);
+    setIsHistoryDrawerOpen(false);
+  };
+
+  const handleDeleteSession = (e, id) => {
+    e.stopPropagation();
+    setSessions(prev => {
+      const remaining = prev.filter(s => s.id !== id);
+      if (remaining.length === 0) {
+        const fresh = [createNewSession('New Chat')];
+        setActiveSessionId(fresh[0].id);
+        return fresh;
+      }
+      if (activeSessionId === id) {
+        setActiveSessionId(remaining[0].id);
+      }
+      return remaining;
+    });
+  };
+
+  const handleClearAllHistory = () => {
+    const fresh = [createNewSession('Fresh Workspace')];
+    setSessions(fresh);
+    setActiveSessionId(fresh[0].id);
+    setIsHistoryDrawerOpen(false);
+  };
+
+  // ── API Key Vault Functions ──
+  const handleTestKeyInVault = async () => {
+    const key = vaultKeyInput.trim();
+    if (!key) {
+      setKeyValidationStatus({ valid: false, error: 'Please paste an API key first.' });
+      return;
+    }
+
+    setKeyValidationStatus({ loading: true });
+    try {
+      const res = await fetch('/api/ai-agent/validate-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: key })
+      });
+      const data = await res.json();
+      if (res.ok && data.valid) {
+        setKeyValidationStatus({
+          valid: true,
+          message: `✅ Key is live & working! ${data.workingModels?.length || 0} models ready.`
+        });
+      } else {
+        setKeyValidationStatus({
+          valid: false,
+          error: data.error || 'API Key validation rejected by Gemini API.'
+        });
+      }
+    } catch (err) {
+      setKeyValidationStatus({
+        valid: false,
+        error: `Connection error: ${err.message}`
+      });
+    }
+  };
+
+  const handleSaveVaultKey = () => {
+    const key = vaultKeyInput.trim();
+    setUserApiKey(key);
+    if (key) {
+      localStorage.setItem('obsidian_ai_key', key);
+    } else {
+      localStorage.removeItem('obsidian_ai_key');
+    }
+    fetchAvailableModels(key);
     setIsKeyModalOpen(false);
+    setKeyValidationStatus(null);
   };
 
-  const handleClearHistory = () => {
-    setMessages(defaultMessages);
-    localStorage.removeItem(storageKey);
-  };
-
-  if (!isOpen) return null;
-
+  // ── Send Prompt Function with Whole Codebase Context ──
   const handleSendPrompt = async (e) => {
     e?.preventDefault();
     if (!inputPrompt.trim() || isSending) return;
 
     const userText = inputPrompt.trim();
+    const mentioned = extractMentionedFiles(userText);
     setInputPrompt('');
+    setMentionQuery(null);
 
-    // Append user message
+    // Append developer message to active session
     const updatedMessages = [
       ...messages,
-      { sender: 'user', text: userText }
+      { sender: 'user', text: userText, mentionedFiles: mentioned }
     ];
-    setMessages(updatedMessages);
+
+    // Generate smart session title from first prompt if default title
+    let sessionTitle = currentSession.title;
+    if (currentSession.title.startsWith('New') || currentSession.title.startsWith('Chat')) {
+      sessionTitle = userText.slice(0, 28) + (userText.length > 28 ? '...' : '');
+    }
+
+    setSessions(prev => prev.map(s => {
+      if (s.id === activeSessionId) {
+        return {
+          ...s,
+          title: sessionTitle,
+          messages: updatedMessages,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return s;
+    }));
+
     setIsSending(true);
 
     try {
-      // Build file manifest index
+      // Build comprehensive whole-project codebase manifest
       const fileManifest = files.map(f => ({
-        filePath: f.filePath,
-        content: f.content
+        filePath: f.filePath || f.fileName,
+        fileName: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file'),
+        content: f.content !== undefined ? String(f.content) : '',
+        fileType: f.fileType || (f.filePath ? f.filePath.split('.').pop() : 'txt')
       }));
 
+      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
       const res = await fetch('/api/ai-agent/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           prompt: userText,
-          activeFilePath: activeFile?.filePath || 'main.rs',
+          activeFilePath: activeFile?.filePath || '',
           activeFileContent: currentContent || '',
           fileManifest,
+          mentionedFiles: mentioned,
           apiKey: userApiKey,
           selectedModel
         })
@@ -99,182 +349,467 @@ export const AgenticAIChatSidebar = ({
 
       const data = await res.json();
       if (res.ok && data.response) {
-        setMessages(prev => [
-          ...prev,
-          {
-            sender: 'ai',
-            text: data.response.text,
-            modifications: data.response.fileModifications || []
+        const aiMessage = {
+          sender: 'ai',
+          text: data.response.text,
+          modifications: data.response.fileModifications || [],
+          modelUsed: data.response.modelUsed || selectedModel
+        };
+
+        setSessions(prev => prev.map(s => {
+          if (s.id === activeSessionId) {
+            return {
+              ...s,
+              messages: [...s.messages, aiMessage],
+              updatedAt: new Date().toISOString()
+            };
           }
-        ]);
+          return s;
+        }));
       } else {
-        setMessages(prev => [
-          ...prev,
-          { sender: 'ai', text: '⚠️ Failed to receive agent response from server.' }
-        ]);
+        const errDetail = data?.message || data?.error || 'Failed to receive response from Gemini AI.';
+        const errMessage = {
+          sender: 'ai',
+          text: `⚠️ **Agent Notice**: ${errDetail}\n\n*Tip: Check that your API key is valid in the Key Vault and that you have quota available.*`,
+          modifications: []
+        };
+        setSessions(prev => prev.map(s => {
+          if (s.id === activeSessionId) {
+            return {
+              ...s,
+              messages: [...s.messages, errMessage],
+              updatedAt: new Date().toISOString()
+            };
+          }
+          return s;
+        }));
       }
     } catch (err) {
       console.error('Error in agentic AI chat:', err);
-      setMessages(prev => [
-        ...prev,
-        { sender: 'ai', text: '⚠️ Communication error with AI backend service.' }
-      ]);
+      const connErrMessage = {
+        sender: 'ai',
+        text: `⚠️ **Connection Error**: ${err.message || 'Unable to connect to backend AI service.'}`,
+        modifications: []
+      };
+      setSessions(prev => prev.map(s => {
+        if (s.id === activeSessionId) {
+          return {
+            ...s,
+            messages: [...s.messages, connErrMessage],
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return s;
+      }));
     } finally {
       setIsSending(false);
     }
   };
 
+  if (!isOpen) return null;
+
   return (
-    <aside className="fixed top-12 right-0 bottom-8 w-96 z-[260] flex flex-col bg-[#0A0A0B] border-l border-outline-variant shadow-2xl font-mono text-xs select-none">
+    <aside 
+      style={{ width: `${width}px` }}
+      className="fixed top-12 right-0 bottom-8 z-[260] flex flex-col bg-[#0A0A0B] border-l border-outline-variant shadow-2xl font-mono text-xs select-none"
+    >
       {/* Top Header Strip */}
-      <div className="p-3 bg-surface-container-low border-b border-outline-variant flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-surface-tint text-base">auto_awesome</span>
-          <span className="font-bold text-on-surface font-headline text-xs">ANTIGRAVITY AGENT</span>
+      <div className="p-2.5 bg-surface-container-low border-b border-outline-variant flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="material-symbols-outlined text-surface-tint text-base shrink-0">auto_awesome</span>
+          <span className="font-bold text-on-surface font-headline text-xs truncate">
+            ANTIGRAVITY AGENT
+          </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Multi-Model Selector Dropdown */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Multi-Model Selector Dropdown (Dynamic from API) */}
           <select 
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
-            className="bg-[#1A1A1C] border border-outline-variant text-[10px] text-surface-tint px-1.5 py-0.5 rounded focus:outline-none"
+            disabled={isLoadingModels}
+            title={availableModels.find(m => m.id === selectedModel)?.description || 'Select AI Model'}
+            className="bg-[#141417] border border-cyan-500/30 text-[10px] text-cyan-300 px-2 py-1 rounded focus:outline-none focus:border-cyan-400 cursor-pointer max-w-[135px] truncate"
           >
-            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Fast)</option>
-            <option value="gemini-1.5-pro">Gemini 1.5 Pro (Deep)</option>
-            <option value="gpt-4o">GPT-4o (Proxy)</option>
-            <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+            {availableModels.map(m => (
+              <option key={m.id} value={m.id} className="bg-[#141417] text-white">
+                {m.name}
+              </option>
+            ))}
           </select>
 
+          {/* New Chat Button */}
           <button
-            onClick={() => setIsKeyModalOpen(true)}
-            className="text-on-surface-variant hover:text-surface-tint p-1"
-            title="Configure Custom API Key"
+            onClick={handleStartNewChat}
+            className="text-on-surface-variant hover:text-cyan-400 p-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
+            title="Start New Chat (+ New Chat)"
           >
-            <span className="material-symbols-outlined text-sm">key</span>
+            <span className="material-symbols-outlined text-sm">add_comment</span>
           </button>
 
+          {/* Chat History Drawer Toggle Button */}
+          <button
+            onClick={() => setIsHistoryDrawerOpen(!isHistoryDrawerOpen)}
+            className={`p-1 rounded transition-colors cursor-pointer ${
+              isHistoryDrawerOpen ? 'bg-cyan-950 text-cyan-400' : 'text-on-surface-variant hover:text-surface-tint hover:bg-white/5'
+            }`}
+            title="View Chat History"
+          >
+            <span className="material-symbols-outlined text-sm">history</span>
+          </button>
+
+          {/* API Key Vault Modal Button */}
+          <button
+            onClick={() => {
+              setVaultKeyInput(userApiKey);
+              setKeyValidationStatus(null);
+              setIsKeyModalOpen(true);
+            }}
+            className="text-on-surface-variant hover:text-amber-400 p-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
+            title="Configure API Key Vault"
+          >
+            <span className="material-symbols-outlined text-sm">vpn_key</span>
+          </button>
+
+          {/* Close Sidebar */}
           <button 
-            onClick={handleClearHistory}
-            className="text-on-surface-variant hover:text-amber-400 p-1"
-            title="Clear Chat History"
+            onClick={onClose} 
+            className="text-on-surface-variant hover:text-red-400 p-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
           >
-            <span className="material-symbols-outlined text-sm">delete_sweep</span>
-          </button>
-
-          <button onClick={onClose} className="text-on-surface-variant hover:text-red-400 p-1">
             <span className="material-symbols-outlined text-sm">close</span>
           </button>
         </div>
       </div>
 
-      {/* Context Awareness Pill */}
-      <div className="px-3 py-1.5 bg-cyan-950/40 border-b border-cyan-900/30 text-[10px] text-cyan-400 flex items-center justify-between">
-        <span>Context: {files.length} project files indexed</span>
-        <span>Active: {activeFile?.filePath || 'None'}</span>
+      {/* Codebase Context & Active File Ribbon */}
+      <div className="px-3 py-1.5 bg-cyan-950/40 border-b border-cyan-900/30 text-[10px] text-cyan-400 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 truncate">
+          <span className="material-symbols-outlined text-xs">folder_open</span>
+          <span className="truncate">Context: {files.length} project files indexed</span>
+        </div>
+        <div className="flex items-center gap-1 text-zinc-400 truncate">
+          <span className="text-zinc-500">Active:</span>
+          <span className="text-cyan-300 font-bold truncate">{activeFile?.filePath || activeFile?.fileName || 'main.rs'}</span>
+        </div>
       </div>
 
-      {/* Chat Messages Stream */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {messages.map((msg, idx) => (
-          <div 
-            key={idx} 
-            className={`flex flex-col gap-1 ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
-          >
-            <span className="text-[9px] text-on-surface-variant/60 uppercase">
-              {msg.sender === 'user' ? 'Developer' : 'Antigravity Agent'}
-            </span>
-
-            <div className={`p-3 max-w-[90%] text-xs font-mono leading-relaxed rounded-none border ${
-              msg.sender === 'user'
-                ? 'bg-surface-tint/10 border-surface-tint/30 text-surface-tint'
-                : 'bg-surface-container-low border-outline-variant text-on-surface'
-            }`}>
-              <div className="whitespace-pre-wrap">{msg.text}</div>
-
-              {/* Proposed File Modifications Preview & Apply Trigger */}
-              {msg.modifications && msg.modifications.length > 0 && (
-                <div className="mt-3 pt-2 border-t border-outline-variant/40 space-y-2">
-                  <span className="text-[10px] text-neon-green font-bold block">
-                    ⚡ PROPOSED AGENTIC FILE EDITS ({msg.modifications.length})
-                  </span>
-                  {msg.modifications.map((mod, mIdx) => (
-                    <div key={mIdx} className="bg-[#0A0A0B] p-2 border border-outline-variant/50 text-[10px]">
-                      <div className="text-surface-tint font-bold mb-1">{mod.filePath}</div>
-                      <button
-                        onClick={() => onApplyModifications(mod.filePath, mod.newContent)}
-                        className="w-full bg-cyan-950 text-cyan-400 border border-cyan-800 py-1 font-bold hover:bg-cyan-900 transition-colors cursor-pointer"
-                      >
-                        APPLY EDITS TO WORKSPACE
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+      {/* Chat History Dropdown / Drawer View */}
+      {isHistoryDrawerOpen ? (
+        <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[#0E0E11] animate-fade-in">
+          <div className="flex items-center justify-between pb-2 border-b border-white/10">
+            <div className="flex items-center gap-1.5 text-cyan-400 font-bold text-xs">
+              <span className="material-symbols-outlined text-sm">history</span>
+              <span>CHAT SESSIONS ({sessions.length})</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleStartNewChat}
+                className="text-[10px] bg-cyan-950 text-cyan-400 border border-cyan-800 px-2 py-0.5 rounded hover:bg-cyan-900 cursor-pointer"
+              >
+                + New Chat
+              </button>
+              <button
+                onClick={handleClearAllHistory}
+                className="text-[10px] text-rose-400 hover:underline cursor-pointer"
+              >
+                Clear All
+              </button>
             </div>
           </div>
-        ))}
 
-        {isSending && (
-          <div className="flex items-center gap-2 text-surface-tint text-xs font-mono animate-pulse p-2">
-            <span className="material-symbols-outlined text-sm animate-spin">sync</span>
-            Agent analyzing project context...
+          <div className="space-y-1.5 pt-1">
+            {sessions.map(sess => (
+              <div
+                key={sess.id}
+                onClick={() => handleSwitchSession(sess.id)}
+                className={`p-2.5 rounded border transition-all cursor-pointer flex items-center justify-between group ${
+                  sess.id === activeSessionId
+                    ? 'bg-cyan-950/40 border-cyan-500/50 text-white'
+                    : 'bg-surface-container-low border-outline-variant/40 text-zinc-400 hover:border-cyan-500/30 hover:text-zinc-200'
+                }`}
+              >
+                <div className="min-w-0 pr-2">
+                  <div className="font-bold text-xs truncate flex items-center gap-1.5">
+                    {sess.id === activeSessionId && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                    )}
+                    <span className="truncate">{sess.title || 'Untitled Session'}</span>
+                  </div>
+                  <div className="text-[9px] text-zinc-500 font-mono mt-0.5">
+                    {sess.messages.length} messages • {new Date(sess.updatedAt || sess.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+
+                <button
+                  onClick={(e) => handleDeleteSession(e, sess.id)}
+                  className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-rose-400 transition-opacity"
+                  title="Delete Session"
+                >
+                  <span className="material-symbols-outlined text-xs">delete</span>
+                </button>
+              </div>
+            ))}
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        /* Chat Messages Stream */
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {messages.map((msg, idx) => (
+            <div 
+              key={idx} 
+              className={`flex flex-col gap-1 ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
+            >
+              <div className="flex items-center gap-1.5 text-[9px] text-on-surface-variant/60 uppercase">
+                <span>{msg.sender === 'user' ? 'Developer' : 'Antigravity Agent'}</span>
+                {msg.modelUsed && <span className="text-cyan-500/70 font-mono">• {msg.modelUsed}</span>}
+              </div>
+
+              <div className={`p-3 max-w-[92%] text-xs font-mono leading-relaxed rounded-lg border shadow-sm ${
+                msg.sender === 'user'
+                  ? 'bg-cyan-950/30 border-cyan-500/30 text-cyan-200'
+                  : 'bg-surface-container-low border-outline-variant text-on-surface'
+              }`}>
+                {/* Mentioned Files Badges */}
+                {msg.mentionedFiles && msg.mentionedFiles.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {msg.mentionedFiles.map((mPath, mi) => (
+                      <span key={mi} className="text-[9px] bg-cyan-950/80 text-cyan-300 border border-cyan-700/50 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <span>@{mPath}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="whitespace-pre-wrap">{msg.text}</div>
+
+                {/* Proposed File Modifications Preview & Apply Trigger */}
+                {msg.modifications && msg.modifications.length > 0 && (
+                  <div className="mt-3 pt-2.5 border-t border-outline-variant/40 space-y-2">
+                    <div className="flex items-center justify-between text-[10px] text-emerald-400 font-bold">
+                      <span className="flex items-center gap-1">
+                        <span className="material-symbols-outlined text-xs">edit_document</span>
+                        <span>PROPOSED FILE EDITS ({msg.modifications.length})</span>
+                      </span>
+                      {msg.modifications.length > 1 && (
+                        <button
+                          onClick={() => {
+                            msg.modifications.forEach((mod, mIdx) => {
+                              onApplyModifications(mod.filePath, mod.newContent);
+                              setAppliedModIds(prev => new Set(prev).add(`${idx}_${mIdx}`));
+                            });
+                          }}
+                          className="text-[9px] bg-emerald-950 text-emerald-300 border border-emerald-700 px-2 py-0.5 rounded hover:bg-emerald-900 cursor-pointer font-mono"
+                        >
+                          ⚡ Apply All ({msg.modifications.length})
+                        </button>
+                      )}
+                    </div>
+
+                    {msg.modifications.map((mod, mIdx) => {
+                      const modKey = `${idx}_${mIdx}`;
+                      const isApplied = appliedModIds.has(modKey);
+                      return (
+                        <div key={mIdx} className="bg-[#0A0A0B] p-2.5 rounded border border-outline-variant/50 text-[10px] space-y-1.5">
+                          <div className="text-cyan-300 font-bold flex items-center justify-between">
+                            <span className="truncate">{mod.filePath}</span>
+                            <span className="text-[9px] text-zinc-500 font-mono">
+                              {mod.newContent ? `${mod.newContent.split('\n').length} lines` : ''}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              onApplyModifications(mod.filePath, mod.newContent);
+                              setAppliedModIds(prev => new Set(prev).add(modKey));
+                            }}
+                            className={`w-full py-1.5 px-2 rounded font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow ${
+                              isApplied
+                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-600/80 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                                : 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 hover:bg-cyan-900'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-xs">
+                              {isApplied ? 'check_circle' : 'task_alt'}
+                            </span>
+                            <span>{isApplied ? 'EDITS APPLIED TO WORKSPACE' : 'APPLY EDITS TO WORKSPACE'}</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {isSending && (
+            <div className="flex items-center gap-2 text-cyan-400 text-xs font-mono animate-pulse p-2 bg-cyan-950/20 border border-cyan-900/30 rounded">
+              <span className="material-symbols-outlined text-sm animate-spin">sync</span>
+              <span>Agent reasoning with whole project context...</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Floating "@" File Mention Suggestion Dropdown */}
+      {mentionQuery !== null && matchingFiles.length > 0 && (
+        <div className="mx-2 mb-1 p-1 bg-[#16161A] border border-cyan-500/40 rounded-lg shadow-2xl z-20 space-y-0.5 animate-fade-in max-h-48 overflow-y-auto">
+          <div className="px-2 py-1 text-[9px] font-bold text-cyan-400 uppercase tracking-wider border-b border-white/10 flex items-center justify-between">
+            <span>Reference Project File (@)</span>
+            <span className="text-zinc-500">↑↓ to navigate, ↵ to insert</span>
+          </div>
+          {matchingFiles.map((file, idx) => (
+            <div
+              key={file.filePath || idx}
+              onClick={() => handleSelectMention(file.filePath || file.fileName)}
+              className={`px-2 py-1.5 rounded text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                idx === mentionIndex 
+                  ? 'bg-cyan-500 text-neutral-950 font-bold' 
+                  : 'text-zinc-300 hover:bg-white/5'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                <span className="material-symbols-outlined text-xs">description</span>
+                <span className="truncate">{file.filePath || file.fileName}</span>
+              </div>
+              <span className={`text-[9px] uppercase px-1 rounded ${
+                idx === mentionIndex ? 'bg-neutral-900 text-cyan-400' : 'text-zinc-500 bg-zinc-800'
+              }`}>
+                {file.fileType || (file.filePath ? file.filePath.split('.').pop() : 'file')}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Mentioned Files Chips Preview */}
+      {activeMentionedFiles.length > 0 && (
+        <div className="px-2.5 py-1 bg-[#121215] border-t border-outline-variant/40 flex flex-wrap gap-1 items-center">
+          <span className="text-[9px] text-zinc-500 font-mono">Referenced:</span>
+          {activeMentionedFiles.map((mPath, mi) => (
+            <span key={mi} className="text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-800 px-1.5 py-0.5 rounded flex items-center gap-1">
+              <span>@{mPath}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Prompt Input Form */}
-      <form onSubmit={handleSendPrompt} className="p-2 border-t border-outline-variant bg-surface-container-low flex gap-2">
-        <input 
-          type="text"
+      <form onSubmit={handleSendPrompt} className="p-2 border-t border-outline-variant bg-surface-container-low flex gap-2 relative">
+        <textarea 
+          ref={inputRef}
+          rows={2}
           value={inputPrompt}
-          onChange={(e) => setInputPrompt(e.target.value)}
-          placeholder="Ask AI to edit code or build feature..."
-          className="flex-1 bg-[#1A1A1C] border border-outline-variant p-2 text-xs text-on-surface focus:outline-none focus:border-surface-tint font-mono"
+          onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask AI or type @ to mention files..."
+          className="flex-1 bg-[#141417] border border-outline-variant p-2 text-xs text-on-surface focus:outline-none focus:border-cyan-400 font-mono resize-none rounded"
         />
         <button
           type="submit"
           disabled={!inputPrompt.trim() || isSending}
-          className="bg-surface-tint text-neutral-900 px-3 py-2 font-bold hover:bg-cyan-400 transition-colors disabled:opacity-50 cursor-pointer"
+          className="bg-surface-tint text-neutral-900 px-3.5 py-2 font-bold hover:bg-cyan-400 transition-colors disabled:opacity-50 cursor-pointer self-end rounded flex items-center justify-center shadow"
         >
           <span className="material-symbols-outlined text-sm">send</span>
         </button>
       </form>
 
-      {/* Secure API Key Configuration Modal */}
+      {/* Unrestricted Secure API Key Vault Modal */}
       {isKeyModalOpen && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-neutral-950/80 backdrop-blur-sm">
-          <div className="glass-panel w-full max-w-sm p-6 shadow-2xl flex flex-col gap-4 bg-surface-container-low border border-outline-variant font-mono">
-            <div className="flex justify-between items-center border-b border-outline-variant/40 pb-2">
-              <h3 className="text-xs font-bold text-surface-tint font-headline">Secure API Key Vault</h3>
-              <button onClick={() => setIsKeyModalOpen(false)} className="text-on-surface-variant hover:text-red-400">×</button>
+        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-neutral-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#121216] border border-cyan-500/30 w-full max-w-md p-6 rounded-xl shadow-2xl flex flex-col gap-4 font-mono select-none">
+            <div className="flex justify-between items-center border-b border-outline-variant/40 pb-2.5">
+              <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm">
+                <span className="material-symbols-outlined text-base">vpn_key</span>
+                <span>API Key Vault</span>
+              </div>
+              <button 
+                onClick={() => setIsKeyModalOpen(false)} 
+                className="text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
             </div>
 
-            <p className="text-[10px] text-on-surface-variant leading-relaxed">
-              API Keys are masked securely and never saved unencrypted. Copy-pasting is restricted for security compliance.
+            <p className="text-xs text-zinc-300 font-sans leading-relaxed">
+              Paste your Google Gemini API Key below. You can freely copy, paste, and test your key directly to verify live response and discover all working models.
             </p>
 
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] text-on-surface-variant uppercase">Gemini / OpenAI API Key</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] text-zinc-400 font-bold uppercase flex justify-between">
+                <span>Google Gemini API Key</span>
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-cyan-400 hover:underline text-[10px] normal-case"
+                >
+                  Get Free API Key ↗
+                </a>
+              </label>
+              
+              {/* Unrestricted Input Box: Copy and paste freely */}
               <input
-                type="password"
-                value={userApiKey}
-                onChange={(e) => setUserApiKey(e.target.value)}
-                onCopy={(e) => e.preventDefault()}
-                onPaste={(e) => e.preventDefault()}
-                placeholder="AI_KEY_••••••••••••••••"
-                className="bg-[#1A1A1C] border border-outline-variant p-2 text-xs text-on-surface focus:outline-none focus:border-surface-tint"
+                type="text"
+                value={vaultKeyInput}
+                onChange={(e) => setVaultKeyInput(e.target.value)}
+                placeholder="AIzaSy... or paste key here"
+                className="bg-[#0A0A0C] border border-cyan-500/30 p-2.5 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono rounded-lg transition-colors"
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-outline-variant/40">
+            {/* Live Key Validation Feedback */}
+            {keyValidationStatus && (
+              <div className={`p-3 rounded-lg text-xs leading-relaxed flex items-start gap-2 border ${
+                keyValidationStatus.loading
+                  ? 'bg-cyan-950/40 border-cyan-500/40 text-cyan-300'
+                  : keyValidationStatus.valid
+                    ? 'bg-emerald-950/50 border-emerald-500/40 text-emerald-300'
+                    : 'bg-rose-950/50 border-rose-500/40 text-rose-300'
+              }`}>
+                {keyValidationStatus.loading ? (
+                  <span className="material-symbols-outlined text-sm animate-spin shrink-0 mt-0.5">sync</span>
+                ) : keyValidationStatus.valid ? (
+                  <span className="material-symbols-outlined text-sm shrink-0 mt-0.5">check_circle</span>
+                ) : (
+                  <span className="material-symbols-outlined text-sm shrink-0 mt-0.5">error</span>
+                )}
+                <span>
+                  {keyValidationStatus.loading 
+                    ? 'Testing key with Google Gemini API & discovering models...' 
+                    : keyValidationStatus.valid 
+                      ? keyValidationStatus.message 
+                      : keyValidationStatus.error}
+                </span>
+              </div>
+            )}
+
+            <div className="flex justify-between items-center pt-2 border-t border-outline-variant/40">
               <button
                 type="button"
-                onClick={handleSaveApiKey}
-                className="bg-surface-tint text-neutral-900 px-3 py-1 text-xs font-bold hover:bg-cyan-400 cursor-pointer"
+                onClick={handleTestKeyInVault}
+                disabled={keyValidationStatus?.loading || !vaultKeyInput.trim()}
+                className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold rounded-lg transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
               >
-                Save & Secure Key
+                <span className="material-symbols-outlined text-xs">network_check</span>
+                <span>Test & Discover Models</span>
               </button>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsKeyModalOpen(false)}
+                  className="px-3 py-1.5 text-xs text-zinc-400 hover:text-white cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveVaultKey}
+                  className="bg-cyan-500 text-neutral-950 px-4 py-1.5 text-xs font-bold hover:bg-cyan-400 rounded-lg cursor-pointer transition-colors shadow"
+                >
+                  Save & Apply Key
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -282,3 +817,6 @@ export const AgenticAIChatSidebar = ({
     </aside>
   );
 };
+
+export default AgenticAIChatSidebar;
+

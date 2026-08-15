@@ -1,108 +1,354 @@
 import express from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import fetch from 'node-fetch';
+import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// POST /api/ai-agent/chat: Agentic AI Chatbot endpoint with Project Context
-router.post('/chat', async (req, res) => {
+// Memory cache for discovered & validated models per API key hash
+const modelDiscoveryCache = new Map();
+
+// Helper to sanitize model names
+const cleanModelId = (name = '') => name.replace(/^models\//, '');
+
+// Fetch and verify operable Gemini models for a given API key
+const discoverWorkingModels = async (apiKey) => {
+  if (!apiKey) return [];
+
+  const cacheKey = apiKey.slice(-10);
+  if (modelDiscoveryCache.has(cacheKey)) {
+    const cached = modelDiscoveryCache.get(cacheKey);
+    // Cache valid for 15 minutes
+    if (Date.now() - cached.timestamp < 15 * 60 * 1000) {
+      return cached.models;
+    }
+  }
+
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error?.message || `Failed to list models (HTTP ${res.status})`);
+    }
+
+    const data = await res.json();
+    const rawModels = data.models || [];
+
+    // Filter models that support content generation
+    const generateContentModels = rawModels.filter(m => 
+      Array.isArray(m.supportedGenerationMethods) && 
+      m.supportedGenerationMethods.includes('generateContent')
+    );
+
+    // Prioritized model candidate patterns (newest & most powerful first)
+    const priorityNames = [
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
+      'gemini-3-flash-preview',
+      'gemini-3.1-flash-lite-preview',
+      'gemini-flash-lite-latest',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro',
+      'gemini-pro-latest'
+    ];
+
+    const discoveredMap = new Map();
+    generateContentModels.forEach(m => {
+      const id = cleanModelId(m.name);
+      // Exclude specialized non-chat / vision-only / image-gen models
+      if (
+        !id.includes('image') && 
+        !id.includes('tts') && 
+        !id.includes('robotics') && 
+        !id.includes('video-understanding') &&
+        !id.includes('customtools')
+      ) {
+        discoveredMap.set(id, {
+          id,
+          name: m.displayName || id,
+          description: m.description || 'Google Gemini Language & Coding Model'
+        });
+      }
+    });
+
+    // Fast known working models set (verified on current Gemini API v1beta)
+    const knownWorkingSet = new Set([
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
+      'gemini-3-flash-preview',
+      'gemini-3.1-flash-lite-preview',
+      'gemini-flash-lite-latest'
+    ]);
+
+    const finalModels = [];
+    priorityNames.forEach(pName => {
+      if (discoveredMap.has(pName) && knownWorkingSet.has(pName)) {
+        finalModels.push(discoveredMap.get(pName));
+      }
+    });
+
+    // If none of the known set matched, take the first 4 discovered general models
+    if (finalModels.length === 0) {
+      discoveredMap.forEach((val, id) => {
+        if (id.startsWith('gemini-') && finalModels.length < 5) {
+          finalModels.push(val);
+        }
+      });
+    }
+
+    if (finalModels.length === 0) {
+      finalModels.push(
+        { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', description: 'Next-gen fast code & reasoning model' },
+        { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', description: 'High-speed coding model' },
+        { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Preview intelligence model' }
+      );
+    }
+
+    modelDiscoveryCache.set(cacheKey, {
+      models: finalModels,
+      timestamp: Date.now()
+    });
+
+    return finalModels;
+  } catch (error) {
+    console.warn('[AI Model Discovery] Error querying models:', error.message);
+    return [
+      { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Recommended)', description: 'Fast code intelligence' },
+      { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', description: 'High-speed reasoning' },
+      { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Preview model' }
+    ];
+  }
+};
+
+// GET /api/ai-agent/models: Dynamically list and verify active working models for the API key
+router.get('/models', async (req, res) => {
+  try {
+    const { apiKey } = req.query;
+    const effectiveApiKey = (apiKey || process.env.GEMINI_API_KEY || '').trim();
+
+    if (!effectiveApiKey) {
+      return res.json({
+        status: 'SUCCESS',
+        hasKey: false,
+        models: [
+          { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', description: 'Enter API Key to enable' },
+          { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', description: 'Enter API Key to enable' }
+        ]
+      });
+    }
+
+    const workingModels = await discoverWorkingModels(effectiveApiKey);
+
+    res.json({
+      status: 'SUCCESS',
+      hasKey: true,
+      count: workingModels.length,
+      models: workingModels
+    });
+  } catch (error) {
+    console.error('Error in /api/ai-agent/models:', error);
+    res.status(500).json({ error: 'Failed to discover models', details: error.message });
+  }
+});
+
+// POST /api/ai-agent/validate-key: Test an API key and return working models
+router.post('/validate-key', async (req, res) => {
+  try {
+    const { apiKey } = req.body;
+    const keyToTest = (apiKey || process.env.GEMINI_API_KEY || '').trim();
+
+    if (!keyToTest) {
+      return res.status(400).json({ valid: false, error: 'API key is required.' });
+    }
+
+    try {
+      const genAI = new GoogleGenerativeAI(keyToTest);
+      const workingModels = await discoverWorkingModels(keyToTest);
+
+      if (workingModels.length === 0) {
+        return res.status(400).json({
+          valid: false,
+          error: 'API key was accepted by Google, but no working generateContent models were found.'
+        });
+      }
+
+      // Quick generation test with the primary model
+      const testModel = genAI.getGenerativeModel({ model: workingModels[0].id });
+      const testPing = await testModel.generateContent('Say "OK" in 1 word.');
+      const testText = testPing.response.text();
+
+      res.json({
+        valid: true,
+        status: 'SUCCESS',
+        message: `API Key validated successfully! ${workingModels.length} operable model(s) discovered.`,
+        pingResponse: testText.trim(),
+        primaryModel: workingModels[0].id,
+        workingModels
+      });
+    } catch (testErr) {
+      console.warn('[AI Key Validation] Failed:', testErr.message);
+      res.status(400).json({
+        valid: false,
+        error: `Google Gemini API rejected this key: ${testErr.message}`
+      });
+    }
+  } catch (error) {
+    console.error('Error in /validate-key:', error);
+    res.status(500).json({ valid: false, error: error.message });
+  }
+});
+
+// POST /api/ai-agent/chat: Agentic AI Chatbot with Full Project Codebase Context
+router.post('/chat', verifyToken, async (req, res) => {
   try {
     const { 
       prompt, 
-      activeFilePath = 'main.rs', 
+      activeFilePath = '', 
       activeFileContent = '', 
       fileManifest = [], 
       apiKey, 
-      selectedModel = 'gemini-1.5-flash' 
+      selectedModel,
+      mentionedFiles = []
     } = req.body;
 
-    if (!prompt) {
+    if (!prompt || !prompt.trim()) {
       return res.status(400).json({ error: 'User prompt is required.' });
     }
 
-    const effectiveApiKey = apiKey || process.env.GEMINI_API_KEY;
+    const effectiveApiKey = (apiKey || process.env.GEMINI_API_KEY || '').trim();
 
-    let aiResponseText = '';
-    let fileModifications = [];
+    if (!effectiveApiKey) {
+      return res.status(400).json({
+        error: 'NO_API_KEY',
+        message: 'No Google Gemini API Key configured. Please enter your API key in the AI Key Vault panel.'
+      });
+    }
 
-    if (effectiveApiKey) {
-      try {
-        const genAI = new GoogleGenerativeAI(effectiveApiKey);
-        const model = genAI.getGenerativeModel({ model: selectedModel });
+    const genAI = new GoogleGenerativeAI(effectiveApiKey);
 
-        const manifestStr = fileManifest.length > 0 
-          ? fileManifest.map(f => `- ${f.filePath} (${f.content ? f.content.length : 0} bytes)`).join('\n')
-          : `- ${activeFilePath}`;
+    // Resolve working model name
+    let chosenModel = selectedModel;
+    if (!chosenModel || chosenModel.includes('gpt-') || chosenModel.includes('claude-')) {
+      chosenModel = 'gemini-3.6-flash';
+    }
 
-        const systemPrompt = `You are Antigravity-AI, an autonomous agentic coding assistant embedded in ObsidianIDE.
-You have full awareness of the user's project structure.
+    // Build Whole-Project Full Source Code Context
+    let codebaseContextSection = '';
+    if (Array.isArray(fileManifest) && fileManifest.length > 0) {
+      const filesWithContent = fileManifest.map((f, i) => {
+        const path = f.filePath || f.fileName || `file_${i}`;
+        const content = f.content !== undefined ? String(f.content) : '';
+        const isMentioned = Array.isArray(mentionedFiles) && mentionedFiles.includes(path);
+        const tag = isMentioned ? ' [⭐ USER MENTIONED FILE]' : '';
+        return `========================================================\nFILE [${i + 1}/${fileManifest.length}]: ${path}${tag}\n========================================================\n${content}\n`;
+      }).join('\n');
 
-PROJECT FILE MANIFEST INDEX:
-${manifestStr}
+      codebaseContextSection = `
+PROJECT CODEBASE - COMPLETE SOURCE CODE REPOSITORY (${fileManifest.length} files):
+The developer has provided the full contents of all project workspace files below:
+${filesWithContent}
+`;
+    }
 
-ACTIVE OPEN FILE (${activeFilePath}):
-\`\`\`
-${activeFileContent}
-\`\`\`
+    const mentionedSummary = (Array.isArray(mentionedFiles) && mentionedFiles.length > 0)
+      ? `\nDEVELOPER FOCUSED MENTIONS:\nThe developer explicitly tagged these files with @: ${mentionedFiles.join(', ')}\n`
+      : '';
 
-USER REQUEST: ${prompt}
+    const systemPrompt = `You are Antigravity-AI, the advanced autonomous agentic coding assistant embedded in ObsidianIDE.
+You have COMPLETE access and vision over the user's entire project workspace and source files.
 
-INSTRUCTIONS:
-1. Provide a clear, technical response explaining your analysis and plan.
-2. If code modifications are needed, end your response with a JSON block in the exact format:
+${codebaseContextSection}
+${mentionedSummary}
+${activeFilePath ? `ACTIVE OPEN BUFFER (${activeFilePath}):\n\`\`\`\n${activeFileContent}\n\`\`\`\n` : ''}
+
+USER INSTRUCTION:
+${prompt}
+
+RESPONSE GUIDELINES:
+1. Provide a comprehensive, clear, and professional response. Explain any code analysis, bugs, architecture, or solutions clearly.
+2. If code modifications or new files are needed across the workspace, you MUST include a clean JSON block at the very end of your response inside a \`\`\`json\`\`\` code fence formatted EXACTLY as follows:
 \`\`\`json
 {
   "modifications": [
     {
-      "filePath": "${activeFilePath}",
-      "newContent": "updated full file content here..."
+      "filePath": "path/to/file.ext",
+      "newContent": "COMPLETE updated source code for this file"
     }
   ]
 }
-\`\`\``;
+\`\`\`
+3. If no file modifications are needed, just provide your full answer without the modifications JSON block.
+`;
 
-        const result = await model.generateContent(systemPrompt);
-        aiResponseText = result.response.text();
+    // Attempt generation with chosen model and auto-fallback to alternate verified models
+    let result = null;
+    let actualModelUsed = chosenModel;
+    const fallbackCandidates = [
+      chosenModel,
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
+      'gemini-3-flash-preview',
+      'gemini-flash-lite-latest'
+    ];
 
-        // Extract JSON modifications block if present
-        const jsonMatch = aiResponseText.match(/```json\s*([\s\S]*?)\s*```/);
-        if (jsonMatch && jsonMatch[1]) {
-          try {
-            const parsed = JSON.parse(jsonMatch[1]);
-            if (parsed.modifications && Array.isArray(parsed.modifications)) {
-              fileModifications = parsed.modifications;
-            }
-          } catch (jsonErr) {
-            console.warn("JSON modification parse notice:", jsonErr.message);
-          }
-        }
-      } catch (err) {
-        console.warn("Gemini API call fallback notice:", err.message);
-        aiResponseText = `I have analyzed your request regarding **${activeFilePath}**.\n\n### Proposed Refactoring Strategy\n- **Project Manifest Awareness**: Validated against ${fileManifest.length} project files.\n- **Optimization**: Wrapped memory allocations in localized blocks and updated async execution handlers.\n\nWould you like me to apply these refactored edits to your active buffer?`;
-        
-        fileModifications = [
-          {
-            filePath: activeFilePath,
-            newContent: `// Refactored by Obsidian Agentic AI (${selectedModel})\n` + activeFileContent
-          }
-        ];
+    let lastError = null;
+    for (const modelCandidate of [...new Set(fallbackCandidates)]) {
+      try {
+        const modelInstance = genAI.getGenerativeModel({ model: modelCandidate });
+        result = await modelInstance.generateContent(systemPrompt);
+        actualModelUsed = modelCandidate;
+        break;
+      } catch (genErr) {
+        lastError = genErr;
+        console.warn(`[AI Chat] Model ${modelCandidate} failed (${genErr.message}), trying fallback...`);
       }
-    } else {
-      aiResponseText = `⚠️ No Gemini API Key configured. Please add your key in the AI settings panel to enable real-time agentic code generation with ${selectedModel}.`;
+    }
+
+    if (!result) {
+      return res.status(500).json({
+        error: 'AI_GENERATION_FAILED',
+        message: `Gemini AI failed to respond: ${lastError?.message || 'Unknown error'}. Please check your API key and model selection.`
+      });
+    }
+
+    const rawResponseText = result.response.text();
+    let displayText = rawResponseText;
+    let fileModifications = [];
+
+    // Parse any structured modifications JSON code block from response
+    const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/g;
+    let match;
+    while ((match = jsonBlockRegex.exec(rawResponseText)) !== null) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        if (parsed.modifications && Array.isArray(parsed.modifications)) {
+          fileModifications = parsed.modifications;
+          // Clean up the JSON block from the readable display text if desired
+          displayText = displayText.replace(match[0], '').trim();
+        }
+      } catch (e) {}
     }
 
     res.json({
       status: 'SUCCESS',
       response: {
-        text: aiResponseText,
+        text: displayText || rawResponseText,
         fileModifications,
-        modelUsed: selectedModel,
+        modelUsed: actualModelUsed,
+        filesIndexedCount: Array.isArray(fileManifest) ? fileManifest.length : 0,
         timestamp: new Date().toISOString()
       }
     });
   } catch (error) {
     console.error('Error in agentic AI chat handler:', error);
-    res.status(500).json({ error: 'Failed to process agentic AI chat request', details: error.message });
+    res.status(500).json({
+      error: 'AI_CHAT_ERROR',
+      message: error.message || 'Failed to process AI chat request'
+    });
   }
 });
 
 export default router;
+

@@ -24,6 +24,7 @@
               "surface-container": "#1f1f21",
               "surface-container-low": "#1b1b1d",
               "surface-container-high": "#2a2a2c",
+              "surface-container-highest": "#3a3a3c",
               "surface-container-lowest": "#0e0e10",
               "surface-slate": "#1A1A1E",
               "surface-tint": "#00dce5",
@@ -31,6 +32,7 @@
               "primary-container": "#00f5ff",
               "primary": "#00f5ff",
               "secondary": "#e0b6ff",
+              "secondary-fixed-dim": "#e0b6ff",
               "secondary-container": "#6d11ad",
               "neon-green": "#39FF14",
               "outline-variant": "#3a494a",
@@ -46,6 +48,21 @@
         }
       }
     </script>
+    <style type="text/tailwindcss">
+      @layer utilities {
+        .glass-panel {
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+        }
+        .animate-fade-in {
+          animation: fadeIn 0.18s ease-out;
+        }
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-4px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+    </style>
   </head>
   <body class="bg-[#F4F4F6] dark:bg-[#0A0A0B] text-[#131314] dark:text-[#e4e2e4] font-sans min-h-screen selection:bg-primary-container selection:text-black">
     <div id="root"></div>

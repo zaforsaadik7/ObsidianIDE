@@ -1,9 +1,12 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 
 export const Sidebar = () => {
   const location = useLocation();
+  const { currentUser, userProfile } = useAuth();
 
+  const avatarUrl = userProfile?.info?.avatarUrl || userProfile?.avatarUrl || currentUser?.photoURL || '';
   const isActive = (path) => location.pathname === path;
 
   return (
@@ -22,14 +25,18 @@ export const Sidebar = () => {
 
       <Link 
         to="/profile" 
-        className={`w-10 h-10 flex items-center justify-center transition-colors ${
+        className={`w-10 h-10 flex items-center justify-center transition-colors overflow-hidden rounded ${
           isActive('/profile') 
             ? 'bg-secondary-container/20 text-secondary-fixed border-l-2 border-surface-tint' 
             : 'text-on-surface-variant hover:bg-surface-container-high'
         }`}
         title="Developer Profile & Settings"
       >
-        <span className="material-symbols-outlined">account_circle</span>
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="Profile" className="w-7 h-7 rounded-full object-cover border border-surface-tint/50" />
+        ) : (
+          <span className="material-symbols-outlined">account_circle</span>
+        )}
       </Link>
     </aside>
   );

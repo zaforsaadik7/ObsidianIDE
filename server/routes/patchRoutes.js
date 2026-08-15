@@ -1,16 +1,6 @@
 import express from 'express';
-import { db } from '../../src/firebase.js';
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where,
-  updateDoc,
-  deleteDoc
-} from 'firebase/firestore';
+import { adminDb } from '../config/firebaseAdmin.js';
+import { verifyToken } from '../middleware/authMiddleware.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
@@ -51,18 +41,17 @@ const seedDemoPatches = (projectId, fileId) => {
 };
 
 // GET /api/patches/:projectId: Fetch pending patches for a project
-router.get('/:projectId', async (req, res) => {
+router.get('/:projectId', verifyToken, async (req, res) => {
   try {
     const { projectId } = req.params;
-
-    const patchesRef = collection(db, 'pending_patches');
-    const q = query(patchesRef, where('projectId', '==', projectId));
-    const querySnapshot = await getDocs(q);
-
     let patchesList = [];
-    querySnapshot.forEach((docSnap) => {
-      patchesList.push(docSnap.data());
-    });
+
+    if (adminDb) {
+      const querySnapshot = await adminDb.collection('pending_patches').where('projectId', '==', projectId).get();
+      querySnapshot.forEach((docSnap) => {
+        patchesList.push(docSnap.data());
+      });
+    }
 
     if (patchesList.length === 0) {
       patchesList = seedDemoPatches(projectId, 'default-file-01');
@@ -80,7 +69,7 @@ router.get('/:projectId', async (req, res) => {
 });
 
 // POST /api/patches: Submit a new reviewer patch
-router.post('/', async (req, res) => {
+router.post('/', verifyToken, async (req, res) => {
   try {
     const { projectId, fileId, authorName, authorEmail, diffPayload, comment } = req.body;
 
@@ -96,14 +85,16 @@ router.post('/', async (req, res) => {
       projectId,
       fileId,
       authorName: authorName || 'Collaborator Reviewer',
-      authorEmail: authorEmail || 'reviewer@bubt.edu.bd',
+      authorEmail: authorEmail || req.user?.email || 'reviewer@bubt.edu.bd',
       diffPayload,
       comment: comment || 'Reviewer code patch submitted.',
       status: 'PENDING',
       submittedAt: timestamp
     };
 
-    await setDoc(doc(db, 'pending_patches', patchId), newPatch);
+    if (adminDb) {
+      await adminDb.collection('pending_patches').doc(patchId).set(newPatch);
+    }
 
     res.status(201).json({
       status: 'SUCCESS',
@@ -117,10 +108,10 @@ router.post('/', async (req, res) => {
 });
 
 // POST /api/patches/:patchId/resolve: Approve or Reject a patch
-router.post('/:patchId/resolve', async (req, res) => {
+router.post('/:patchId/resolve', verifyToken, async (req, res) => {
   try {
     const { patchId } = req.params;
-    const { action, fileId, newContent } = req.body; // action: 'APPROVE' | 'REJECT'
+    const { action, fileId, newContent } = req.body;
 
     if (!action || !['APPROVE', 'REJECT'].includes(action.toUpperCase())) {
       return res.status(400).json({ error: 'Valid action (APPROVE or REJECT) is required.' });
@@ -128,20 +119,19 @@ router.post('/:patchId/resolve', async (req, res) => {
 
     const isApproved = action.toUpperCase() === 'APPROVE';
 
-    if (isApproved && fileId && newContent !== undefined) {
-      // Merge patch changes into target file record
-      const fileDocRef = doc(db, 'files', fileId);
-      await updateDoc(fileDocRef, {
-        content: newContent,
-        updatedAt: new Date().toISOString()
-      });
-    }
+    if (adminDb) {
+      if (isApproved && fileId && newContent !== undefined) {
+        await adminDb.collection('files').doc(fileId).update({
+          content: newContent,
+          updatedAt: new Date().toISOString()
+        });
+      }
 
-    // Try deleting patch record from Firestore if it exists
-    try {
-      await deleteDoc(doc(db, 'pending_patches', patchId));
-    } catch (e) {
-      console.warn("Patch doc delete notice:", e);
+      try {
+        await adminDb.collection('pending_patches').doc(patchId).delete();
+      } catch (e) {
+        console.warn("Patch doc delete notice:", e);
+      }
     }
 
     res.json({

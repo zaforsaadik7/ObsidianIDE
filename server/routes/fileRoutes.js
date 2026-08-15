@@ -1,16 +1,6 @@
 import express from 'express';
-import { db } from '../../src/firebase.js';
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where,
-  updateDoc,
-  deleteDoc
-} from 'firebase/firestore';
+import { adminDb } from '../config/firebaseAdmin.js';
+import { verifyToken } from '../middleware/authMiddleware.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
@@ -116,39 +106,34 @@ const seedMultiFileTemplates = (languageEnv, projectId, userEmail) => {
 };
 
 // GET /api/files/:projectId: Fetch flat array of files for a project
-router.get('/:projectId', async (req, res) => {
+router.get('/:projectId', verifyToken, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { userEmail = 'admin@bubt.edu.bd' } = req.query;
-
-    const filesRef = collection(db, 'files');
-    const q = query(filesRef, where('projectId', '==', projectId));
-    const querySnapshot = await getDocs(q);
+    const { userEmail = req.user?.email || 'admin@bubt.edu.bd' } = req.query;
 
     let filesList = [];
-    querySnapshot.forEach((docSnap) => {
-      filesList.push(docSnap.data());
-    });
 
-    // If project has no files yet, automatically seed multi-file template
-    if (filesList.length === 0) {
-      // Check project language environment
-      let languageEnv = 'RUST_1.75';
+    if (adminDb) {
       try {
-        const projectDoc = await getDoc(doc(db, 'projects', projectId));
-        if (projectDoc.exists()) {
-          languageEnv = projectDoc.data().languageEnv || languageEnv;
+        const projectDoc = await adminDb.collection('projects').doc(projectId).get();
+        if (projectDoc.exists) {
+          const pData = projectDoc.data();
+          filesList = pData.working_files || pData.project_files || pData.master_project_files || [];
         }
       } catch (e) {
-        console.warn("Project fetch notice:", e);
+        console.warn("Project Admin fetch notice:", e);
       }
 
-      filesList = seedMultiFileTemplates(languageEnv, projectId, userEmail);
-      
-      // Persist seeded files into Firestore asynchronously
-      for (const fileObj of filesList) {
-        await setDoc(doc(db, 'files', fileObj.fileId), fileObj);
+      if (filesList.length === 0) {
+        const querySnapshot = await adminDb.collection('files').where('projectId', '==', projectId).get();
+        querySnapshot.forEach((docSnap) => {
+          filesList.push(docSnap.data());
+        });
       }
+    }
+
+    if (filesList.length === 0) {
+      filesList = seedMultiFileTemplates('PYTHON_3.11', projectId, userEmail);
     }
 
     res.json({
@@ -163,23 +148,24 @@ router.get('/:projectId', async (req, res) => {
 });
 
 // PUT /api/files/:fileId: Atomic Save Trigger (Overwrite content string)
-router.put('/:fileId', async (req, res) => {
+router.put('/:fileId', verifyToken, async (req, res) => {
   try {
     const { fileId } = req.params;
-    const { content, userEmail = 'admin@bubt.edu.bd' } = req.body;
+    const { content, userEmail = req.user?.email || 'admin@bubt.edu.bd' } = req.body;
 
     if (content === undefined) {
       return res.status(400).json({ error: 'File content payload is required.' });
     }
 
-    const fileDocRef = doc(db, 'files', fileId);
     const timestamp = new Date().toISOString();
 
-    await updateDoc(fileDocRef, {
-      content,
-      lastModifiedBy: userEmail,
-      updatedAt: timestamp
-    });
+    if (adminDb) {
+      await adminDb.collection('files').doc(fileId).update({
+        content,
+        lastModifiedBy: userEmail,
+        updatedAt: timestamp
+      });
+    }
 
     res.json({
       status: 'SUCCESS',
@@ -193,9 +179,9 @@ router.put('/:fileId', async (req, res) => {
 });
 
 // POST /api/files: Create new flat file record
-router.post('/', async (req, res) => {
+router.post('/', verifyToken, async (req, res) => {
   try {
-    const { projectId, filePath, content = '', userEmail = 'admin@bubt.edu.bd' } = req.body;
+    const { projectId, filePath, content = '', userEmail = req.user?.email || 'admin@bubt.edu.bd' } = req.body;
 
     if (!projectId || !filePath) {
       return res.status(400).json({ error: 'projectId and filePath are required fields.' });
@@ -213,7 +199,9 @@ router.post('/', async (req, res) => {
       updatedAt: timestamp
     };
 
-    await setDoc(doc(db, 'files', fileId), newFile);
+    if (adminDb) {
+      await adminDb.collection('files').doc(fileId).set(newFile);
+    }
 
     res.status(201).json({
       status: 'SUCCESS',
@@ -227,10 +215,12 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE /api/files/:fileId: Delete flat file record
-router.delete('/:fileId', async (req, res) => {
+router.delete('/:fileId', verifyToken, async (req, res) => {
   try {
     const { fileId } = req.params;
-    await deleteDoc(doc(db, 'files', fileId));
+    if (adminDb) {
+      await adminDb.collection('files').doc(fileId).delete();
+    }
 
     res.json({
       status: 'SUCCESS',

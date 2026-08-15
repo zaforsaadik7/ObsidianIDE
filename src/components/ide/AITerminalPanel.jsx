@@ -47,12 +47,65 @@ export const AITerminalPanel = ({
         {isAnalyzing ? (
           <div className="h-full flex items-center justify-center gap-2 text-surface-tint animate-pulse">
             <span className="material-symbols-outlined text-lg animate-spin">sync</span>
-            <span>Running Agentic AI Code Analysis via Gemini API...</span>
+            <span>Running Agentic AI Static Linter via Gemini API...</span>
           </div>
         ) : aiFeedback ? (
-          <div className="prose prose-invert max-w-none text-xs font-mono leading-relaxed whitespace-pre-wrap">
-            {aiFeedback}
-          </div>
+          (() => {
+            let parsedReviews = [];
+            try {
+              const data = typeof aiFeedback === 'string' ? JSON.parse(aiFeedback) : aiFeedback;
+              parsedReviews = data.reviews || (Array.isArray(data) ? data : []);
+            } catch (e) {
+              parsedReviews = [];
+            }
+
+            if (parsedReviews.length === 0) {
+              return (
+                <div className="prose prose-invert max-w-none text-xs font-mono leading-relaxed whitespace-pre-wrap">
+                  {aiFeedback}
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-2.5">
+                <div className="text-[11px] text-on-surface-variant font-bold flex items-center justify-between border-b border-outline-variant/30 pb-1.5">
+                  <span>DETECTED STATIC LINT RULES ({parsedReviews.length})</span>
+                  <span>TARGET: {currentFileName}</span>
+                </div>
+                {parsedReviews.map((rev, idx) => {
+                  const isError = rev.severity === 'error';
+                  const isWarning = rev.severity === 'warning';
+                  const badgeBg = isError 
+                    ? 'bg-red-950/80 border-red-500/60 text-red-300' 
+                    : isWarning 
+                    ? 'bg-amber-950/80 border-amber-500/60 text-amber-300' 
+                    : 'bg-cyan-950/80 border-cyan-500/60 text-cyan-300';
+                  
+                  const icon = isError ? 'cancel' : isWarning ? 'warning' : 'info';
+
+                  return (
+                    <div key={idx} className={`p-2.5 rounded border text-xs flex items-start gap-3 transition-all ${badgeBg}`}>
+                      <span className="material-symbols-outlined text-sm mt-0.5">{icon}</span>
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center justify-between font-bold">
+                          <span className="uppercase text-[10px] tracking-wider font-mono">
+                            Line {rev.line || '—'} • [{rev.severity?.toUpperCase() || 'INFO'}]
+                          </span>
+                          <span className="text-[11px] font-sans opacity-95">{rev.message}</span>
+                        </div>
+                        {rev.suggestion && (
+                          <div className="text-[11px] opacity-85 bg-black/30 p-1.5 rounded font-mono border border-white/5">
+                            💡 <strong>Fix:</strong> {rev.suggestion}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()
         ) : (
           <div className="text-on-surface-variant/60 py-6 text-center">
             Click <strong className="text-surface-tint">"RUN DIAGNOSTICS"</strong> to analyze active buffer syntax, logical edge cases, and performance optimizations.

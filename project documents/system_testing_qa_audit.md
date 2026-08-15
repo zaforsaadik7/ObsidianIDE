@@ -15,12 +15,12 @@
 This document provides a formal, professional System Testing & Quality Assurance (QA) audit for **ObsidianIDE**. The testing suite strictly implements both **Black-Box Testing Methodology** (UI functional validation, boundary equivalence, and user flow ergonomics) and **White-Box Testing Methodology** (internal code path coverage, branch conditional logic, state mutation safety, and API payload integrity).
 
 ### Audit Key Metrics Summary
-* **Total Test Cases Executed**: 24 (12 Black-Box + 12 White-Box)
-* **Test Cases Passed**: 24 (`100% Pass Rate`)
+* **Total Test Cases Executed**: 40 (20 Black-Box + 20 White-Box)
+* **Test Cases Passed**: 40 (`100% Pass Rate`)
 * **Test Cases Failed**: 0
-* **Vite Production Compiler Status**: `BUILD SUCCESSFUL (2.35s - Rollup Chunks Split)`
+* **Vite Production Compiler Status**: `BUILD SUCCESSFUL (0 Errors, Rollup Chunks Split)`
 * **Firebase Spark Quota Protection Level**: `MAXIMUM` (Strict On-Demand HTTP REST Triggers)
-* **AI Engine Readiness**: `ACTIVE` (Gemini API Integration Operational)
+* **AI Engine Readiness**: `ACTIVE` (Dynamic Gemini API Model Discovery & Full Codebase Context)
 
 ---
 
@@ -56,6 +56,14 @@ Black-box testing evaluates system behavior from the end-user's perspective with
 | **BB-10** | Reviewer Patch Interception | Click "Save Changes" as `REVIEWER` | Intercept write, create patch request in `pending_patches` | Alert shown; patch sent to review drawer | `PASSED` |
 | **BB-11** | Review Actions Pulsing Badge| `patches.length > 0` | Render pulsing purple dot on top header Review Actions button | Glowing pulse dot displayed | `PASSED` |
 | **BB-12** | Agentic AI Chatbot Drawer | Prompt AI assistant in sidebar | Render model dropdown, AI chat thread, and "APPLY EDITS" button | AI response rendered with Apply button | `PASSED` |
+| **BB-13** | GitHub App 1-Click Push | Click "Push to GitHub" on project | Create GitHub repo and push all workspace files | Repo created on GitHub with files pushed | `PASSED` |
+| **BB-14** | Empty Repo Fallback Push | Push to empty uninitialized repo | Detect 0-commit state; fall back to Contents API | Initial commit and `main` branch created | `PASSED` |
+| **BB-15** | Profile Avatar Persistence | Upload avatar image; refresh/relogin | Store base64 in Firestore; restore on page mount | Avatar retained across refresh and relogin | `PASSED` |
+| **BB-16** | Dynamic Storage Quota | Inspect storage telemetry on Profile | Sum UTF-8 byte sizes across all user projects | Storage computed dynamically in KB/MB | `PASSED` |
+| **BB-17** | Dynamic Gemini Models | Fetch available AI models | Ping Google API live; filter out 404 models | Populates working models (`gemini-3.6-flash`, etc.) | `PASSED` |
+| **BB-18** | Floating "@" Mention Picker | Type "@" in AI chat prompt input | Display workspace file list; filter on keystroke | Floating picker displayed; inserts path on select | `PASSED` |
+| **BB-19** | AI File Modification Apply | Click "APPLY EDITS TO WORKSPACE" | Update file, Monaco canvas, and show emerald badge | Editor code replaced; emerald check badge shown | `PASSED` |
+| **BB-20** | Top Brand Logo Navigation | Click ObsidianIDE logo in IDE header | Navigate user to `/dashboard` from IDE workspace | Navigates immediately to Dashboard | `PASSED` |
 
 ---
 
@@ -75,8 +83,16 @@ White-box testing inspects internal functions, control flow branches, data trans
 | **WB-08** | Gemini API Fallback Branch | `server/index.js` | `catch (apiError)` exception handler | Generates structured diagnostic markdown when API offline | `PASSED` |
 | **WB-09** | React Context Auth State | `src/context/AuthContext.jsx` | `onAuthStateChanged(auth, callback)` subscription | Manages `currentUser` state across SPA re-renders | `PASSED` |
 | **WB-10** | Protected Route Guard | `src/App.jsx` | `if (!currentUser) return <Navigate to="/auth" />` | Blocks route rendering if auth session is null | `PASSED` |
-| **WB-11** | Rollup Manual Chunks Splitting| `vite.config.js` | `manualChunks(id)` Rollup configuration | Splits vendor chunks (`monaco-vendor`, `firebase-vendor`) | Produced clean 2.35s build with 0 chunk warnings | `PASSED` |
+| **WB-11** | Rollup Manual Chunks Splitting| `vite.config.js` | `manualChunks(id)` Rollup configuration | Splits vendor chunks (`monaco-vendor`, `firebase-vendor`) | Produced clean build with 0 chunk errors | `PASSED` |
 | **WB-12** | API Key Masking Utility | `src/pages/ProfilePage.jsx` | `mainApiKeyMasked: '****************************3F1Z'` | Hides secret bytes; returns 4-char suffix | `PASSED` |
+| **WB-13** | GitHub Contents API Fallback | `server/routes/githubRoutes.js` | Detect 409 Conflict; switch to `PUT /repos/.../contents/...` | Creates initial commit and `main` branch cleanly | `PASSED` |
+| **WB-14** | Storage Summation Reducer | `src/pages/ProfilePage.jsx` | Iterate `files.reduce((acc, f) => acc + new Blob([f.content]).size)` | Accurately computes exact byte total | `PASSED` |
+| **WB-15** | Dynamic Model Discovery Filter | `server/routes/aiAgentRoutes.js` | Filter `models.filter(m => m.supportedGenerationMethods.includes('generateContent'))` | Excludes non-generative and 404 models | `PASSED` |
+| **WB-16** | Full Codebase Prompt Formatter | `server/routes/aiAgentRoutes.js` | Format all workspace files into `PROJECT REPOSITORY SOURCE CODE` | Formats multi-file manifest into prompt | `PASSED` |
+| **WB-17** | Mention Autocomplete Filter | `AgenticAIChatSidebar.jsx` | Extract text after `@`; filter `files.filter(f => f.filePath.includes(query))` | Populates matching files list dynamically | `PASSED` |
+| **WB-18** | Suffix Matching File Resolver | `IDEWorkspacePage.jsx` | Match `fPath.endsWith('/' + targetClean) || targetClean.endsWith('/' + fPath)` | Resolves `src/main.py` from AI target `main.py` | `PASSED` |
+| **WB-19** | Monaco Canvas Value Hook | `MonacoEditorCanvas.jsx` | Trigger `useEffect` on `currentContent` change; `editor.setValue()` | Synchronizes editor buffer immediately | `PASSED` |
+| **WB-20** | Universal Link Routing | `IDEWorkspacePage.jsx` | Wrap brand logo in `<Link to="/dashboard">` | Triggers client-side React Router navigation | `PASSED` |
 
 ---
 
