@@ -71,12 +71,12 @@ if (GEMINI_API_KEY) {
   console.warn('⚠️ GEMINI_API_KEY missing in .env file.');
 }
 
-// Root Route & Health Check API
-app.get('/', (req, res) => {
+// Root REST API Health & Status API
+app.get('/api', (req, res) => {
   res.json({
     status: 'ONLINE',
     system: 'ObsidianIDE Express REST API Engine',
-    message: 'Backend server is running cleanly. Open http://localhost:3000 in browser for web app.',
+    message: 'Backend server is running cleanly.',
     endpoints: ['/api/health', '/api/projects', '/api/files', '/api/users', '/api/patches', '/api/ai-agent'],
     timestamp: new Date().toISOString()
   });
@@ -298,17 +298,22 @@ CRITICAL RULES:
   }
 });
 
-// Serve static production frontend assets when NODE_ENV === 'production'
+// Serve static production frontend assets for React Web App
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const distPath = path.join(__dirname, '../dist');
 
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../dist')));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../dist/index.html'));
+if (fs.existsSync(path.join(distPath, 'index.html')) || process.env.NODE_ENV === 'production') {
+  app.use(express.static(distPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) {
+      return next();
+    }
+    res.sendFile(path.join(distPath, 'index.html'));
   });
 }
 
