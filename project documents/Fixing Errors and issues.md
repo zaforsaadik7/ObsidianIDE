@@ -1541,6 +1541,25 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Executed large folder performance benchmark with 15 files and binary PNGs: verified response time dropped from **5–7 minutes to 309ms** (99.9% faster).
   - Built with `npm run build` with **0 errors in 9.70s**.
 
+### 122. Single-Click Fork Request Broadcast & Owner Fork Proposal Clarification (v70)
+* **Problem / Bug**:
+  - After uploading a folder, the Editor had to click "Request Fork" multiple times for files to appear on the Owner's screen.
+  - When the files appeared on the Owner's screen, they appeared without a clear proposal status header, making the Owner believe they were already merged into Master before clicking "Merge to Master".
+* **Root Causes**:
+  1. Delayed WebSocket Emission in `handleRequestFork`: The WebSocket event was triggered after `await fetch('/api/projects/update-files')`. Any network latency delayed the Owner's receipt, prompting repeated button clicks.
+  2. Binary File Buffer Overwrite: `handleRequestFork` was overwriting binary file payloads with `currentContent` text buffer during rapid file selection.
+  3. Missing File-Level Proposal Review Header in Workspace: When the Owner opened proposed binary images or code files, there was no prominent "Fork Proposal Pending Review" badge above the editor/viewer to distinguish proposed files from canonical Master repository files.
+* **Solutions Implemented**:
+  1. Instant Single-Click WebSocket Dispatch: `handleRequestFork` now broadcasts `FORK_REQUESTED` immediately at the top of the function (< 50ms delivery), before executing background asynchronous persistence.
+  2. Binary Asset Protection: `handleRequestFork` strictly checks `!isBinaryFile(targetFile.filePath)` before applying text buffer content, preserving image base64 data intact.
+  3. Visual Proposal Review System:
+     - Added a dedicated "Fork Proposals: X change(s) [PENDING APPROVAL]" banner in File Explorer (Pane A).
+     - Added a dedicated active file status header with `[• NEW PROPOSED FILE]` / `[• PROPOSED MODIFICATION]` badges for both binary assets and code files.
+     - Bottom status bar explicitly distinguishes `Master Repository: X files` from `Proposed Fork: Y staged changes`.
+* **QA & Automated Verification**:
+  - Executed two-client real-time WebSocket and database verification test: confirmed single-click `FORK_REQUESTED` delivery, 100% database Master baseline isolation (unmerged until approved), and clean reset upon `POST /reject-fork`.
+  - Built with `npm run build` with **0 errors in 9.97s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*

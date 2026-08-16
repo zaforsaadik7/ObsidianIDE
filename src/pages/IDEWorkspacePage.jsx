@@ -705,14 +705,14 @@ export const IDEWorkspacePage = () => {
     setSaveSyncSuccessMsg('');
     try {
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
-      const userEmail = currentUser?.email || 'developer@obsidian.io';
+      const userEmail = (currentUser?.email || 'developer@obsidian.io').trim().toLowerCase();
       const timestamp = new Date().toISOString();
 
       localMutationTimestampRef.current = Date.now();
 
       const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
       let updatedFiles = currentFiles;
-      if (targetFile) {
+      if (targetFile && !isBinaryFile(targetFile.filePath) && currentContent !== undefined) {
         updatedFiles = currentFiles.map(f =>
           (f.fileId === targetFile.fileId || f.filePath === targetFile.filePath)
             ? { ...f, content: currentContent, updatedAt: timestamp, lastModifiedBy: userEmail }
@@ -725,47 +725,11 @@ export const IDEWorkspacePage = () => {
 
       localFilesRef.current = updatedFiles;
       setFiles(updatedFiles);
-      setSavedContent(currentContent);
-
-      // Persist Working Files to Owner DB via server-side BYOD
-      try {
-        await fetch('/api/projects/update-files', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({
-            projectId,
-            working_files: updatedFiles,
-            userEmail,
-            ownerEmail: projectData?.ownerEmail,
-            collaborators: projectData?.collaborators
-          })
-        });
-      } catch (apiErr) {
-        console.warn('Backend update-files notice:', apiErr);
+      if (!targetFile || !isBinaryFile(targetFile.filePath)) {
+        setSavedContent(currentContent);
       }
 
-      // Record Collaborator Change Attribution
-      if (targetFile) {
-        try {
-          await fetch(`/api/collaboration/${projectId}/attribution`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filePath: targetFile.filePath,
-              authorEmail: userEmail,
-              authorName: currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0],
-              authorRole: activeUserRole,
-              authorAvatar: currentUser?.photoURL || userProfile?.info?.avatarUrl || '',
-              changeSummary: `Submitted fork updates for ${targetFile.filePath}`
-            })
-          });
-        } catch (attrErr) { }
-      }
-
-      // Broadcast FORK_REQUESTED over WebSocket so Owner sees new proposal immediately
+      // 1. Broadcast FORK_REQUESTED immediately over WebSocket so Owner sees new proposal within < 50ms
       if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
         collaborationWsRef.current.send(JSON.stringify({
           type: 'FORK_REQUESTED',
@@ -779,7 +743,39 @@ export const IDEWorkspacePage = () => {
         }));
       }
 
-      setSaveSyncSuccessMsg(`🍴 Fork requested! ${Object.keys(fileStatusMap).length || 1} change(s) submitted for Project Owner review.`);
+      // 2. Persist Working Files to Owner DB via server-side BYOD asynchronously
+      fetch('/api/projects/update-files', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          projectId,
+          working_files: updatedFiles,
+          userEmail,
+          ownerEmail: projectData?.ownerEmail,
+          collaborators: projectData?.collaborators
+        })
+      }).catch(apiErr => console.warn('Backend update-files notice:', apiErr));
+
+      // 3. Record Collaborator Change Attribution
+      if (targetFile) {
+        fetch(`/api/collaboration/${projectId}/attribution`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filePath: targetFile.filePath,
+            authorEmail: userEmail,
+            authorName: currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0],
+            authorRole: activeUserRole,
+            authorAvatar: currentUser?.photoURL || userProfile?.info?.avatarUrl || '',
+            changeSummary: `Submitted fork updates for ${targetFile.filePath}`
+          })
+        }).catch(() => {});
+      }
+
+      setSaveSyncSuccessMsg(`🍴 Fork requested! ${Object.keys(fileStatusMap).length || updatedFiles.length} change(s) submitted for Project Owner review.`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
     } catch (err) {
       console.error('Error submitting fork request:', err);
@@ -2593,6 +2589,10 @@ export const IDEWorkspacePage = () => {
               fileStatusMap={fileStatusMap}
               attributions={fileAttributions}
               projectTitle={projectData?.title || 'Quantum_Router'}
+              isProjectOwner={isProjectOwner}
+              onSaveAndSyncMaster={handleSaveAndSyncMaster}
+              onRejectFork={handleRejectFork}
+              isSaving={isSaving}
               width={leftWidth}
             />
 
@@ -2667,11 +2667,11 @@ export const IDEWorkspacePage = () => {
                 </div>
               )}
 
-              {/* Secondary Editor Tab Bar for Diff vs Master Toggle */}
-              {activeFile && !isBinaryFile(activeFile.filePath) && (
+              {/* Secondary Active File Tab Bar with Live Diff vs Master Toggle & Fork Status */}
+              {activeFile && (
                 <div className="h-8 bg-[#12131A] border-b border-white/[0.06] flex items-center justify-between px-3 text-xs font-mono select-none z-10 shrink-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-zinc-400 font-semibold truncate max-w-[200px]">
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="text-[11px] text-zinc-300 font-semibold truncate max-w-[240px]">
                       {activeFile.fileName || activeFile.filePath.split('/').pop()}
                     </span>
                     {fileStatusMap[activeFile.filePath] && (
@@ -2681,33 +2681,42 @@ export const IDEWorkspacePage = () => {
                             ? 'bg-amber-950 text-amber-300 border border-amber-500/40'
                             : 'bg-rose-950 text-rose-300 border border-rose-500/40'
                         }`}>
-                        {fileStatusMap[activeFile.filePath] === 'ADDED' ? '• NEW FILE' : '• MODIFIED'}
+                        {fileStatusMap[activeFile.filePath] === 'ADDED' ? '• NEW PROPOSED FILE' : '• PROPOSED MODIFICATION'}
+                      </span>
+                    )}
+                    {isBinaryFile(activeFile.filePath) && (
+                      <span className="text-[9px] bg-cyan-950/70 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.2 rounded">
+                        BINARY ASSET
                       </span>
                     )}
                   </div>
 
-                  {/* Toggle: Edit Code vs View Diff vs Master */}
-                  <div className="flex items-center bg-black/50 p-0.5 rounded-lg border border-white/10 text-[11px]">
-                    <button
-                      onClick={() => setIsDiffViewActive(false)}
-                      className={`px-2.5 py-0.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${!isDiffViewActive
-                          ? 'bg-cyan-600 text-white font-bold shadow'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                        }`}
-                    >
-                      <span className="material-symbols-outlined text-xs">code</span>
-                      <span>Edit Code</span>
-                    </button>
-                    <button
-                      onClick={() => setIsDiffViewActive(true)}
-                      className={`px-2.5 py-0.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${isDiffViewActive
-                          ? 'bg-purple-600 text-white font-bold shadow'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                        }`}
-                    >
-                      <span className="material-symbols-outlined text-xs">difference</span>
-                      <span>View Diff vs Master</span>
-                    </button>
+                  {/* Right Side Options */}
+                  <div className="flex items-center gap-2">
+                    {!isBinaryFile(activeFile.filePath) && (
+                      <div className="flex items-center bg-black/50 p-0.5 rounded-lg border border-white/10 text-[11px]">
+                        <button
+                          onClick={() => setIsDiffViewActive(false)}
+                          className={`px-2.5 py-0.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${!isDiffViewActive
+                              ? 'bg-cyan-600 text-white font-bold shadow'
+                              : 'text-zinc-400 hover:text-zinc-200'
+                            }`}
+                        >
+                          <span className="material-symbols-outlined text-xs">code</span>
+                          <span>Edit Code</span>
+                        </button>
+                        <button
+                          onClick={() => setIsDiffViewActive(true)}
+                          className={`px-2.5 py-0.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${isDiffViewActive
+                              ? 'bg-purple-600 text-white font-bold shadow'
+                              : 'text-zinc-400 hover:text-zinc-200'
+                            }`}
+                        >
+                          <span className="material-symbols-outlined text-xs">difference</span>
+                          <span>View Diff vs Master</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

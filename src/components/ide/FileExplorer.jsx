@@ -31,6 +31,10 @@ export const FileExplorer = ({
   fileStatusMap = {},
   attributions = {},
   projectTitle = 'Project_Workspace',
+  isProjectOwner = false,
+  onSaveAndSyncMaster,
+  onRejectFork,
+  isSaving = false,
   width = 256
 }) => {
   // Context Menu State
@@ -675,12 +679,24 @@ export const FileExplorer = ({
 
       {/* GitHub-Style Working Fork Staged Modifications Banner */}
       {Object.keys(fileStatusMap).length > 0 && (
-        <div className="px-2.5 py-1.5 bg-amber-950/40 border-b border-amber-500/30 flex items-center justify-between text-[10px] text-amber-200 font-mono">
-          <div className="flex items-center gap-1.5 font-bold">
-            <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            <span>Fork: {Object.keys(fileStatusMap).length} change{Object.keys(fileStatusMap).length > 1 ? 's' : ''}</span>
+        <div className={`px-2.5 py-1.5 border-b flex items-center justify-between text-[10px] font-mono ${
+          isProjectOwner
+            ? 'bg-cyan-950/60 border-cyan-500/40 text-cyan-200'
+            : 'bg-amber-950/40 border-amber-500/30 text-amber-200'
+        }`}>
+          <div className="flex items-center gap-1.5 font-bold truncate">
+            <span className={`inline-block w-2 h-2 rounded-full animate-pulse ${isProjectOwner ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+            <span className="truncate">
+              {isProjectOwner ? 'Fork Proposals' : 'Working Fork'}: {Object.keys(fileStatusMap).length} change{Object.keys(fileStatusMap).length > 1 ? 's' : ''}
+            </span>
           </div>
-          <span className="text-[9px] text-amber-300/70">Pending Merge</span>
+          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+            isProjectOwner
+              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+              : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+          }`}>
+            {isProjectOwner ? 'PENDING APPROVAL' : 'PENDING MERGE'}
+          </span>
         </div>
       )}
 
