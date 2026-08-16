@@ -339,7 +339,11 @@ export const DashboardPage = () => {
         isOpen={Boolean(detailsProject)}
         onClose={() => setDetailsProject(null)}
         project={detailsProject}
-        userRole={detailsProject?.userRole || 'OWNER'}
+        userRole={
+          (detailsProject?.ownerEmail && currentUser?.email && detailsProject.ownerEmail.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
+            ? 'OWNER'
+            : (detailsProject?.userRole || detailsProject?.collaborators?.[currentUser?.email?.toLowerCase()] || 'EDITOR')
+        }
       />
 
       {/* Invite Teammate Modal */}

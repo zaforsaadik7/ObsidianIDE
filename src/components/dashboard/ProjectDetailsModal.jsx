@@ -1,6 +1,6 @@
 import React from 'react';
 
-export const ProjectDetailsModal = ({ isOpen, onClose, project, userRole = 'OWNER' }) => {
+export const ProjectDetailsModal = ({ isOpen, onClose, project, userRole = 'EDITOR' }) => {
   if (!isOpen || !project) return null;
 
   const getRoleDescription = (role) => {
