@@ -154,6 +154,62 @@ ${domain}
 </html>
 `.trim();
 
+  // Attempt 1: Direct HTTPS Email API via Resend (Bypasses all cloud port blocking on port 443)
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const resendRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: process.env.EMAIL_FROM || 'ObsidianIDE <onboarding@resend.dev>',
+          to: [to],
+          subject: `Invitation to collaborate on project: ${cleanTitle}`,
+          text: textBody,
+          html: htmlBody
+        })
+      });
+      const resendData = await resendRes.json();
+      if (resendRes.ok) {
+        console.log(`✉️ [RESEND HTTPS API SUCCESS] Dispatched to ${to} [ID: ${resendData.id}]`);
+        return { success: true, provider: 'resend', messageId: resendData.id };
+      }
+    } catch (rErr) {
+      console.warn('Resend HTTPS API notice:', rErr.message);
+    }
+  }
+
+  // Attempt 2: Direct HTTPS Email API via Brevo / Sendinblue (Port 443 HTTPS)
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': process.env.BREVO_API_KEY.trim(),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: { name: 'ObsidianIDE', email: process.env.EMAIL_FROM || 'notifications@obsidianide.com' },
+          to: [{ email: to }],
+          subject: `Invitation to collaborate on project: ${cleanTitle}`,
+          textContent: textBody,
+          htmlContent: htmlBody
+        })
+      });
+      const brevoData = await brevoRes.json();
+      if (brevoRes.ok) {
+        console.log(`✉️ [BREVO HTTPS API SUCCESS] Dispatched to ${to} [MessageId: ${brevoData.messageId}]`);
+        return { success: true, provider: 'brevo', messageId: brevoData.messageId };
+      }
+    } catch (bErr) {
+      console.warn('Brevo HTTPS API notice:', bErr.message);
+    }
+  }
+
+  // Attempt 3: SMTP Direct SSL / STARTTLS with Dual Port Failover
+
   // 3. Strict RFC Anti-Spam MIME Headers with 100% Matching Authenticated Sender Address
   const mailOptions = {
     from: `"ObsidianIDE" <${authUser}>`,
