@@ -1703,6 +1703,19 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Verified that SMTP parameters match Google Mail specifications.
   - Built with `npm run build` with **0 errors in 9.84s**.
 
+### 133. Website Central Firebase Outbox Mail Queue with Auto-Deletion (v81)
+* **Problem / Bug**:
+  - Outbound SMTP connections from Render cloud instances fail due to cloud firewall port restrictions, and individual users should not have to configure personal databases or API keys.
+* **Root Causes**:
+  - Cloud container networks filter raw outgoing TCP ports 25, 465, and 587.
+* **Solutions Implemented**:
+  1. Centralized Firebase Outbox Staging: Updated `emailQueueService.js` to stage all invitation email payloads directly into the website's central Firestore database (`src/firebase.js`) in the `mail` collection matching the official Google Firebase Trigger Email specification (`to: [email]`, `replyTo: ownerEmail`, `message: { subject, text, html }`).
+  2. Automatic Lifecycle Deletion: Implemented automatic snapshot listener and cleanup timer that deletes the staged email document from Firestore (`deleteDoc(doc(db, 'mail', mailId))`) once processed, ensuring zero persistent clutter.
+  3. One-Time Setup Compatibility: Provides one-time configuration compatibility with the Google Firebase "Trigger Email from Firestore" extension.
+* **QA & Automated Verification**:
+  - Verified document staging schema against the official Firebase Trigger Email extension format.
+  - Built with `npm run build` with **0 errors in 9.50s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
