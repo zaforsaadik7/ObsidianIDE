@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, deleteDoc, updateDoc, deleteField } from 'firebase/firestore';
 
 /**
  * Retrieves the personal Firebase Firestore configuration for the current user or project owner.
@@ -249,5 +249,31 @@ export const syncWorkingFilesToPersonalFirestore = async (projectId, workingFile
     }
   } catch (err) {
     console.warn('Personal Firestore working files sync notice:', err.message);
+  }
+};
+
+/**
+ * Deletes a project from the user's personal Firebase Firestore instance if configured.
+ */
+export const deleteProjectFromPersonalFirestore = async (projectId, userProfile, targetEmail) => {
+  if (!projectId) return;
+  const email = (targetEmail || userProfile?.info?.email || '').trim().toLowerCase();
+  const config = getPersonalFirebaseConfig(userProfile, email);
+  if (!config || !config.projectId) return;
+
+  try {
+    const personalDb = getPersonalFirestore(userProfile, email);
+    if (personalDb) {
+      const username = (email.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+      await Promise.allSettled([
+        deleteDoc(doc(personalDb, 'projects', projectId)),
+        updateDoc(doc(personalDb, 'users', username), {
+          [`projects.${projectId}`]: deleteField()
+        })
+      ]);
+      console.log(`✅ Project ${projectId} removed from personal Firestore.`);
+    }
+  } catch (err) {
+    console.warn('Personal Firestore delete notice:', err.message);
   }
 };

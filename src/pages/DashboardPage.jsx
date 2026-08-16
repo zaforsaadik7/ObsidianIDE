@@ -8,9 +8,10 @@ import { InviteTeammateModal } from '../components/dashboard/InviteTeammateModal
 import { ExportToGitHubModal } from '../components/dashboard/ExportToGitHubModal';
 import { db } from '../firebase';
 import { doc, getDoc, collection, getDocs, deleteDoc, updateDoc, deleteField } from 'firebase/firestore';
+import { deleteProjectFromPersonalFirestore } from '../services/personalFirebaseStorage';
 
 export const DashboardPage = () => {
-  const { currentUser, userProfile } = useAuth();
+  const { currentUser, userProfile, setUserProfile } = useAuth();
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -195,7 +196,31 @@ export const DashboardPage = () => {
     const isOwner = deleteTargetProject.userRole === 'OWNER' || (deleteTargetProject.ownerEmail && deleteTargetProject.ownerEmail.trim().toLowerCase() === userEmailNorm);
 
     try {
-      // 1. Client Firestore operations
+      // 1. Purge from AuthContext userProfile state & LocalStorage Cache
+      if (setUserProfile) {
+        setUserProfile(prev => {
+          if (!prev) return prev;
+          const updatedProjects = { ...(prev.projects || {}) };
+          delete updatedProjects[pid];
+          return {
+            ...prev,
+            projects: updatedProjects
+          };
+        });
+      }
+
+      try {
+        const rawProfile = localStorage.getItem('obsidian_active_profile');
+        if (rawProfile) {
+          const parsed = JSON.parse(rawProfile);
+          if (parsed?.projects?.[pid]) {
+            delete parsed.projects[pid];
+            localStorage.setItem('obsidian_active_profile', JSON.stringify(parsed));
+          }
+        }
+      } catch (e) {}
+
+      // 2. Client Firestore operations
       try {
         const cleanDocId = userEmailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_');
         if (cleanDocId) {
@@ -222,7 +247,12 @@ export const DashboardPage = () => {
         console.warn('Firestore project deletion notice:', fsErr);
       }
 
-      // 2. Call backend REST DELETE endpoint
+      // 3. Purge from Personal Firebase Storage if configured
+      try {
+        await deleteProjectFromPersonalFirestore(pid, userProfile, currentUser?.email);
+      } catch (pErr) {}
+
+      // 4. Call backend REST DELETE endpoint
       try {
         const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
         await fetch(`/api/projects/${pid}?userEmail=${encodeURIComponent(currentUser?.email || '')}`, {
@@ -235,7 +265,7 @@ export const DashboardPage = () => {
         console.warn('Backend DELETE notice:', apiErr);
       }
 
-      // 3. Remove from UI state for this user
+      // 5. Remove from UI state for this user
       setProjects(prev => prev.filter(p => p.projectId !== pid));
       showToast(isOwner ? `✓ Repository '${title}' permanently deleted.` : `✓ Repository '${title}' unlinked from your workspace.`);
       setDeleteTargetProject(null);
