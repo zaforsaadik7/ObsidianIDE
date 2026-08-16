@@ -290,7 +290,7 @@ router.delete('/:projectId', async (req, res) => {
     }
 
     const ownerEmail = (projectData?.ownerEmail || '').trim().toLowerCase();
-    isOwner = (ownerEmail === userEmail) || (userEmail && !ownerEmail);
+    isOwner = Boolean(ownerEmail && userEmail && ownerEmail === userEmail);
 
     if (isOwner) {
       // 1. Permanently delete canonical project document from Firestore
