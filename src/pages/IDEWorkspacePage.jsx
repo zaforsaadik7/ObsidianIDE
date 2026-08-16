@@ -503,6 +503,52 @@ export const IDEWorkspacePage = () => {
     }
   };
 
+  // ── Debounced Live Working Code Synchronization (Broadcasts live code before merge) ──
+  useEffect(() => {
+    if (!activeFile || isBinaryFile(activeFile.filePath) || currentContent === savedContent) return;
+
+    const timer = setTimeout(() => {
+      const userEmail = (currentUser?.email || 'developer@obsidian.io').trim().toLowerCase();
+      const userName = currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0];
+      const timestamp = new Date().toISOString();
+
+      const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
+      const updatedFiles = currentFiles.map(f =>
+        (f.fileId === activeFile.fileId || f.filePath === activeFile.filePath)
+          ? { ...f, content: currentContent, updatedAt: timestamp, lastModifiedBy: userEmail, lastModifiedByName: userName }
+          : f
+      );
+
+      localFilesRef.current = updatedFiles;
+      setFiles(updatedFiles);
+
+      // Broadcast FORK_REQUESTED over WebSocket so connected editors see live typing in working copy
+      if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+        collaborationWsRef.current.send(JSON.stringify({
+          type: 'FORK_REQUESTED',
+          projectId,
+          working_files: updatedFiles,
+          requestedBy: userEmail,
+          user: {
+            email: userEmail,
+            displayName: userName,
+            role: activeUserRole || (isProjectOwner ? 'OWNER' : 'EDITOR')
+          }
+        }));
+      }
+
+      // Persist to Firestore working_files non-blocking
+      setDoc(doc(db, 'projects', projectId), {
+        working_files: updatedFiles,
+        lastWorkingModifiedBy: userEmail,
+        lastWorkingModifiedByName: userName,
+        updatedAt: timestamp
+      }, { merge: true }).catch(() => {});
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [currentContent, activeFile, savedContent, projectId, currentUser?.email, isProjectOwner, activeUserRole]);
+
   // ── GitHub Diff Calculation (Working Copy vs Canonical Master Repository) ──
   const fileStatusMap = useMemo(() => {
     const status = {};
@@ -1874,7 +1920,9 @@ export const IDEWorkspacePage = () => {
   const handleConfirmImport = async (incomingFiles) => {
     try {
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
-      const userEmail = currentUser?.email || 'developer@obsidian.io';
+      const userEmail = (currentUser?.email || 'developer@obsidian.io').trim().toLowerCase();
+      const userName = currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0];
+      const timestamp = new Date().toISOString();
 
       // Prepare new files array with unique fileIds and timestamps
       const newFormattedFiles = incomingFiles.map((f, idx) => ({
@@ -1884,15 +1932,17 @@ export const IDEWorkspacePage = () => {
         fileName: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file'),
         content: typeof f.content === 'string' ? f.content : '',
         fileType: f.fileType || 'plaintext',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        lastModifiedBy: userEmail
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        lastModifiedBy: userEmail,
+        lastModifiedByName: userName
       }));
 
       // Merge with existing files (replace if same filePath exists, else append)
+      const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
       const existingPaths = new Set(newFormattedFiles.map(f => f.filePath));
       const mergedFiles = [
-        ...files.filter(f => !existingPaths.has(f.filePath)),
+        ...currentFiles.filter(f => !existingPaths.has(f.filePath)),
         ...newFormattedFiles
       ];
 
@@ -1907,7 +1957,49 @@ export const IDEWorkspacePage = () => {
         handleSelectFile(newFormattedFiles[0]);
       }
 
-      setSaveSyncSuccessMsg(`[+] Staged ${newFormattedFiles.length} file(s) in Working Fork. Save to Local or Request Fork when ready.`);
+      // 1. Persist to Shared Working Fork in Firestore
+      try {
+        await setDoc(doc(db, 'projects', projectId), {
+          working_files: mergedFiles,
+          lastWorkingModifiedBy: userEmail,
+          lastWorkingModifiedByName: userName,
+          updatedAt: timestamp
+        }, { merge: true });
+
+        // 2. Persist to Backend REST API
+        await fetch('/api/projects/update-files', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            projectId,
+            working_files: mergedFiles,
+            userEmail,
+            isOwner: false // Staged in Working Fork until Owner merges
+          })
+        });
+
+        // 3. Broadcast FORK_REQUESTED over WebSocket so Editor / Owner sees the folder tree & files immediately
+        if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+          collaborationWsRef.current.send(JSON.stringify({
+            type: 'FORK_REQUESTED',
+            projectId,
+            working_files: mergedFiles,
+            requestedBy: userEmail,
+            user: {
+              email: userEmail,
+              displayName: userName,
+              role: activeUserRole || (isProjectOwner ? 'OWNER' : 'EDITOR')
+            }
+          }));
+        }
+      } catch (fsErr) {
+        console.warn('Import working copy sync notice:', fsErr);
+      }
+
+      setSaveSyncSuccessMsg(`⚡ Imported ${newFormattedFiles.length} file(s) into Working Copy! (${isProjectOwner ? 'Owner merge ready' : 'Pending Owner review'})`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error confirming import:', err);
