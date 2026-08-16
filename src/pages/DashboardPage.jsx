@@ -7,7 +7,7 @@ import { ProjectDetailsModal } from '../components/dashboard/ProjectDetailsModal
 import { InviteTeammateModal } from '../components/dashboard/InviteTeammateModal';
 import { ExportToGitHubModal } from '../components/dashboard/ExportToGitHubModal';
 import { db } from '../firebase';
-import { doc, getDoc, collection, getDocs, deleteDoc, updateDoc, deleteField } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, updateDoc, deleteField } from 'firebase/firestore';
 import { deleteProjectFromPersonalFirestore } from '../services/personalFirebaseStorage';
 
 export const DashboardPage = () => {
@@ -225,9 +225,13 @@ export const DashboardPage = () => {
         const cleanDocId = userEmailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_');
         if (cleanDocId) {
           const userRef = doc(db, 'users', cleanDocId);
-          await updateDoc(userRef, {
-            [`projects.${pid}`]: deleteField()
-          }).catch(() => {});
+          const userSnap = await getDoc(userRef).catch(() => null);
+          if (userSnap && userSnap.exists()) {
+            const uData = userSnap.data();
+            const uProjects = { ...(uData.projects || {}) };
+            delete uProjects[pid];
+            await setDoc(userRef, { projects: uProjects }, { merge: true }).catch(() => {});
+          }
         }
 
         const projRef = doc(db, 'projects', pid);
@@ -235,12 +239,16 @@ export const DashboardPage = () => {
           // Permanently delete canonical project document from website database
           await deleteDoc(projRef).catch(() => {});
         } else {
-          // Unlink collaborator
-          if (currentUser?.email) {
-            await updateDoc(projRef, {
-              [`collaborators.${currentUser.email}`]: deleteField(),
-              [`collaborators.${userEmailNorm}`]: deleteField()
-            }).catch(() => {});
+          // Unlink collaborator by rewriting clean collaborators map
+          const projSnap = await getDoc(projRef).catch(() => null);
+          if (projSnap && projSnap.exists()) {
+            const pData = projSnap.data();
+            const collabs = { ...(pData.collaborators || {}) };
+            delete collabs[userEmailNorm];
+            if (currentUser?.email) {
+              delete collabs[currentUser.email];
+            }
+            await setDoc(projRef, { collaborators: collabs }, { merge: true }).catch(() => {});
           }
         }
       } catch (fsErr) {

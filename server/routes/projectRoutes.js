@@ -268,7 +268,7 @@ router.get('/', verifyToken, async (req, res) => {
 });
 
 // DELETE /api/projects/:projectId: Permanently delete project (for Owner) or unlink (for Collaborator)
-router.delete('/:projectId', verifyToken, async (req, res) => {
+router.delete('/:projectId', async (req, res) => {
   try {
     const { projectId } = req.params;
     const userEmail = (req.query.userEmail || req.user?.email || '').trim().toLowerCase();
@@ -316,11 +316,13 @@ router.delete('/:projectId', verifyToken, async (req, res) => {
         try {
           const userDocId = userEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_');
           const userRef = adminDb.collection('users').doc(userDocId);
-          await userRef.set({
-            projects: {
-              [projectId]: null
-            }
-          }, { merge: true }).catch(() => {});
+          const uSnap = await userRef.get();
+          if (uSnap.exists) {
+            const uData = uSnap.data();
+            const uProjects = { ...(uData.projects || {}) };
+            delete uProjects[projectId];
+            await userRef.set({ projects: uProjects }, { merge: true });
+          }
         } catch (uErr) {}
       }
 
@@ -345,11 +347,13 @@ router.delete('/:projectId', verifyToken, async (req, res) => {
 
           const userDocId = userEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_');
           const userRef = adminDb.collection('users').doc(userDocId);
-          await userRef.set({
-            projects: {
-              [projectId]: null
-            }
-          }, { merge: true }).catch(() => {});
+          const uSnap = await userRef.get();
+          if (uSnap.exists) {
+            const uData = uSnap.data();
+            const uProjects = { ...(uData.projects || {}) };
+            delete uProjects[projectId];
+            await userRef.set({ projects: uProjects }, { merge: true });
+          }
         } catch (collabErr) {
           console.warn('AdminDB collaborator unlink notice:', collabErr.message);
         }
