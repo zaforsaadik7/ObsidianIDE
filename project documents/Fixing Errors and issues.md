@@ -1749,6 +1749,34 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Executed automated integration test simulating Owner initialization, file/folder creations (`src/utils.py`, `docs/.keep`), and code edits on `src/main.py`, verifying that the Editor receives all changes.
   - Production build `npm run build` completed with **0 errors in 10.11s**.
 
+
+---
+
+### Issue #136: Live Working Copy Visibility for Folder Uploads and Code Changes Before Master Merge
+* **Symptoms**:
+  - When the Project Owner uploaded folders or modified lines of code, the new folders were not visible in the Editor's panel before or after saving.
+  - Changes should appear in the Editor's workspace immediately upon upload/typing with change notes and diff badges, before the Owner merges into the Master baseline.
+  - Upon Master merge, the files should be displayed normally; upon rejection, they should disappear from both workspaces; and the Editor should be able to save them to their own local storage.
+* **Root Cause**:
+  1. `handleConfirmImport` in `IDEWorkspacePage.jsx` only set React component state in memory without writing to Firestore `working_files`, backend `/api/projects/update-files`, or broadcasting over WebSocket.
+  2. Missing debounced live synchronization for active editor typing buffers, preventing peer collaborators from observing live unmerged code edits in the working view.
+* **Solutions Implemented**:
+  1. **Working Copy Persistence & WebSocket Broadcast on Folder/File Upload**:
+     - Updated `handleConfirmImport` in `IDEWorkspacePage.jsx` to persist incoming folder hierarchies to `working_files` in Firestore (`lastWorkingModifiedBy: userEmail`), call `/api/projects/update-files`, and broadcast `FORK_REQUESTED` over WebSocket.
+  2. **Debounced Live Code Line Synchronization**:
+     - Added a 1.2s debounced live sync hook in `IDEWorkspacePage.jsx` that updates `working_files` in Firestore and emits `FORK_REQUESTED` over WebSocket during live coding, making code edits visible to connected editors before Master merge.
+  3. **Visual Change Notes & Life Cycle Transitions**:
+     - Pre-Merge: Editor sees uploaded folders/files and modified lines with `ADDED` ('A') / `MODIFIED` ('M') badges and author attribution notes ("by Owner" / "by Collaborator").
+     - Post-Merge (`handleSaveAndSyncMaster`): Baseline updates to canonical Master, diff badges disappear, and files render normally.
+     - Post-Reject (`handleRejectFork`): Working copy reverts back to Master baseline and unmerged files disappear across all workspaces.
+     - Personal Backup: Editor can save the working state to their isolated Personal Local Storage & Database anytime.
+* **QA & Automated Verification**:
+  - Ran comprehensive automated QA test (`test_upload_and_live_fork_flow.js`) verifying:
+    1. Folder uploads & live code edits are immediately visible to Editor before Master merge.
+    2. Master merge propagates canonical baseline and clears diff badges.
+    3. Reject fork cleans up unmerged files across all workspaces.
+  - Production build `npm run build` succeeded with **0 errors in 9.96s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
