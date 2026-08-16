@@ -1575,6 +1575,20 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Executed end-to-end multi-client simulation test: verified that upon Owner merge, the Editor's unmerged changes count drops from 15 to **0** and `masterFiles` updates to 15 files with **100% pass rate**.
   - Built with `npm run build` with **0 errors in 9.84s**.
 
+### 124. Immutable Project Owner Role Authority & Role Inversion Fix (v72)
+* **Problem / Bug**:
+  - Both users were showing as `EDITOR`. The actual Project Owner had a "Request Fork" button and the Editor panel looked like an Owner's panel.
+* **Root Causes**:
+  1. Collaborators Override in `onSnapshot` & `isProjectOwner`: `onSnapshot` checked `if (data.collaborators && userEmail)` before checking `data.ownerEmail`. When the project contained collaborator maps or legacy data, `serverUserRole` was set to `'EDITOR'`, and `isProjectOwner` returned `false` due to `if (serverUserRole && serverUserRole !== 'OWNER') return false;`.
+  2. Missing Owner Authority Guard: The Project Owner's email (`data.ownerEmail`) was not given absolute priority as the single immutable source of truth for the `OWNER` role.
+* **Solutions Implemented**:
+  1. Absolute Owner Authority: Updated `isProjectOwner`, `activeUserRole`, `onSnapshot`, and `syncFromServer` to check `ownerEmail === userEmail` first. If matching, the user is permanently and unconditionally assigned `role: 'OWNER'` with `isProjectOwner = true`.
+  2. Role Guard Synchronization: `activeUserRole` is computed as `isProjectOwner ? 'OWNER' : (serverUserRole || 'EDITOR')`.
+  3. Proper Action Button Allocation: The Owner is permanently provided with **"Save & Sync to Master" / "Merge to Master"** and **"Reject Fork"**, while Collaborators receive **"Request Fork"** and **"Save to Local"**.
+* **QA & Automated Verification**:
+  - Executed role authority test verifying that `ownerEmail` grants 100% `OWNER` permissions regardless of any corrupted entries in the collaborators map with **100% pass rate**.
+  - Built with `npm run build` with **0 errors in 9.94s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*

@@ -117,19 +117,21 @@ export const IDEWorkspacePage = () => {
   }, [isDraggingLeft, isDraggingRight]);
 
   const projectData = userProfile?.projects?.[projectId];
-  const activeUserRole = serverUserRole || projectData?.userRole || projectData?.role || 'EDITOR';
 
   const isProjectOwner = useMemo(() => {
     const userEmail = (currentUser?.email || '').trim().toLowerCase();
     if (!userEmail) return false;
+    
+    const ownerEmail = (projectData?.ownerEmail || '').trim().toLowerCase();
+    if (ownerEmail && ownerEmail === userEmail) return true;
     if (serverUserRole === 'OWNER') return true;
-    if (serverUserRole && serverUserRole !== 'OWNER') return false;
-    if (projectData?.ownerEmail && projectData.ownerEmail.toLowerCase() === userEmail) return true;
     if (projectData?.ownerId && projectData.ownerId === currentUser?.uid) return true;
-    if (projectData?.userRole === 'OWNER' || projectData?.role === 'OWNER') return true;
-    if (projectData?.isOwner === true) return true;
+    if (projectData?.userRole === 'OWNER' || projectData?.role === 'OWNER' || projectData?.isOwner === true) return true;
+    
     return false;
   }, [currentUser, serverUserRole, projectData]);
+
+  const activeUserRole = isProjectOwner ? 'OWNER' : (serverUserRole || projectData?.userRole || projectData?.role || 'EDITOR');
 
   const [saveSyncSuccessMsg, setSaveSyncSuccessMsg] = useState('');
 
@@ -162,16 +164,19 @@ export const IDEWorkspacePage = () => {
         if (snap.exists()) {
           const data = snap.data();
 
-          // 1. Resolve User Role
-          if (data.collaborators && userEmail) {
+          // 1. Resolve User Role (Project Owner email has absolute authority)
+          const docOwnerEmail = (data.ownerEmail || '').trim().toLowerCase();
+          if (docOwnerEmail && docOwnerEmail === userEmail) {
+            setServerUserRole('OWNER');
+          } else if (data.collaborators && userEmail) {
             const matchedKey = Object.keys(data.collaborators).find(k => k.toLowerCase() === userEmail);
             if (matchedKey) {
               const rv = data.collaborators[matchedKey];
               const roleName = typeof rv === 'string' ? rv.toUpperCase() : (rv?.role || 'EDITOR').toUpperCase();
               setServerUserRole(roleName);
+            } else {
+              setServerUserRole('EDITOR');
             }
-          } else if (data.ownerEmail && data.ownerEmail.toLowerCase() === userEmail) {
-            setServerUserRole('OWNER');
           }
 
           // 2. Resolve Master Baseline (Strictly from master_project_files, falling back to project_files or working_files)
@@ -262,7 +267,22 @@ export const IDEWorkspacePage = () => {
           const resData = await res.json();
           const proj = resData.project;
           if (proj) {
-            // Master baseline
+            // 1. Resolve User Role (Project Owner email has absolute authority)
+            const serverOwnerEmail = (proj.ownerEmail || '').trim().toLowerCase();
+            if (serverOwnerEmail && serverOwnerEmail === userEmail) {
+              setServerUserRole('OWNER');
+            } else if (proj.collaborators && userEmail) {
+              const matchedKey = Object.keys(proj.collaborators).find(k => k.toLowerCase() === userEmail);
+              if (matchedKey) {
+                const rv = proj.collaborators[matchedKey];
+                const roleName = typeof rv === 'string' ? rv.toUpperCase() : (rv?.role || 'EDITOR').toUpperCase();
+                setServerUserRole(roleName);
+              } else {
+                setServerUserRole('EDITOR');
+              }
+            }
+
+            // 2. Master baseline
             const serverMaster = (proj.master_project_files && proj.master_project_files.length > 0)
               ? proj.master_project_files
               : (proj.project_files && proj.project_files.length > 0)
@@ -306,18 +326,6 @@ export const IDEWorkspacePage = () => {
                   setSavedContent(matching.content);
                 }
               }
-            }
-
-            // Role detection
-            if (proj.collaborators && userEmail) {
-              const matchedKey = Object.keys(proj.collaborators).find(k => k.toLowerCase() === userEmail);
-              if (matchedKey) {
-                const rv = proj.collaborators[matchedKey];
-                const roleName = typeof rv === 'string' ? rv.toUpperCase() : (rv?.role || 'EDITOR').toUpperCase();
-                setServerUserRole(roleName);
-              }
-            } else if (proj.ownerEmail && proj.ownerEmail.toLowerCase() === userEmail) {
-              setServerUserRole('OWNER');
             }
           }
         }
