@@ -299,6 +299,14 @@ export const createCollaborationWebSocket = () => {
             },
             timestamp: new Date().toISOString()
           });
+        } else if (type === 'FORK_REQUESTED') {
+          broadcastToRoom(projectId, {
+            type: 'FORK_REQUESTED',
+            projectId,
+            requestedBy: email,
+            working_files: msg.working_files,
+            timestamp: new Date().toISOString()
+          });
         } else if (type === 'FORK_REJECTED') {
           broadcastToRoom(projectId, {
             type: 'FORK_REJECTED',
@@ -311,6 +319,8 @@ export const createCollaborationWebSocket = () => {
             type: 'FORK_ACCEPTED',
             projectId,
             acceptedBy: email,
+            master_project_files: msg.master_project_files,
+            working_files: msg.working_files,
             timestamp: new Date().toISOString()
           });
         }

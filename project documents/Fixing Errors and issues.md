@@ -1510,6 +1510,22 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Tested single-file and multi-file lifecycle workflows with added, modified, and deleted files: verified `POST /reject-fork` restores 100% of Master baseline files and prunes unauthorized additions.
   - Verified `npm run build` compiled with **0 errors in 16.25s**.
 
+### 120. Folder Upload Multi-File Merge Hanging & Live Real-Time Fork Sync Fix (v68)
+* **Problem / Bug**:
+  - When an Editor uploaded a folder containing multiple files and requested a fork, clicking "Save & Sync to Master" on the Owner's side caused the button to hang on "Merging..." without indicating completion.
+  - On the Editor's side, the "Working Fork Active / Pending Review" banner stayed stuck until a manual page refresh.
+* **Root Causes**:
+  1. Sequential Firestore Subcollection Writes: In `handleSaveAndSyncMaster`, the browser looped sequentially over every single file with `await setDoc(...)`. When uploading a folder with dozens of files, this caused 20+ sequential network round-trips that froze the UI.
+  2. Missing WebSocket Real-Time Broadcasts: `handleSaveAndSyncMaster` and `handleRequestFork` did not broadcast `FORK_ACCEPTED` or `FORK_REQUESTED` events over WebSockets.
+  3. Snapshot Mutation Lock: In `onSnapshot`, `hasUnsavedForkChangesRef.current` was never cleared on the Editor's client upon remote master sync, blocking the Editor's state from updating without F5.
+* **Solutions Implemented**:
+  1. Atomic Instant Master Commit: Replaced sequential blocking subcollection loops with an atomic primary document write and parallel non-blocking `Promise.allSettled` for subcollections.
+  2. Real-Time WebSocket Event Pipeline: Added `FORK_ACCEPTED` and `FORK_REQUESTED` event emission and message handling across `collaborationRoutes.js` and `IDEWorkspacePage.jsx`.
+  3. Automatic Stale Flag Clearing: When `FORK_ACCEPTED` is received or `master_project_files` matches `working_files` in Firestore, `hasUnsavedForkChangesRef.current` and `isLocalDirtyRef.current` are cleared, updating the Editor's repository instantaneously.
+* **QA & Automated Verification**:
+  - Executed two-client real-time WebSocket test: verified Editor `FORK_REQUESTED` and Owner `FORK_ACCEPTED` events are exchanged and handled in under 600ms without page reloads.
+  - Built with `npm run build` with **0 errors in 9.85s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*

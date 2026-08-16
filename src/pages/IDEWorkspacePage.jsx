@@ -193,13 +193,16 @@ export const IDEWorkspacePage = () => {
             ? data.working_files
             : master;
 
-          // 4. Update working files state with strict mutation protection (Never wipe staged local files/uploads)
-          const hasStagedModifications = hasUnsavedForkChangesRef.current || (currentContent !== savedContent);
-          const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 15000;
-          if (!isRecentLocalMutation && !hasStagedModifications) {
+          // 4. Update working files state with strict mutation protection (Never wipe active typing)
+          const hasLocalTypingDirty = (currentContent !== savedContent);
+          const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 5000;
+          if (!isRecentLocalMutation && !hasLocalTypingDirty) {
             if (working && working.length > 0) {
               setFiles(working);
               localFilesRef.current = working;
+              if (master && master.length === working.length) {
+                hasUnsavedForkChangesRef.current = false;
+              }
             }
           }
 
@@ -366,7 +369,33 @@ export const IDEWorkspacePage = () => {
           if ((msg.type === 'PEER_PRESENCE_UPDATE' || msg.type === 'PEER_DISCONNECTED') && Array.isArray(collabsList)) {
             const filtered = collabsList.filter(c => c.email && c.email.toLowerCase() !== userEmail);
             setRemoteCollaborators(filtered);
+          } else if (msg.type === 'FORK_ACCEPTED') {
+            if (msg.master_project_files && msg.master_project_files.length > 0) {
+              setMasterFiles(msg.master_project_files);
+              localMasterRef.current = msg.master_project_files;
+              setFiles(msg.master_project_files);
+              localFilesRef.current = msg.master_project_files;
+              hasUnsavedForkChangesRef.current = false;
+              isLocalDirtyRef.current = false;
+            }
+            setSaveSyncSuccessMsg('🎉 Fork request accepted & merged into Master Repository!');
+            setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+          } else if (msg.type === 'FORK_REQUESTED') {
+            if (msg.working_files && msg.working_files.length > 0) {
+              setFiles(msg.working_files);
+              localFilesRef.current = msg.working_files;
+            }
+            setSaveSyncSuccessMsg(`🔔 New fork request submitted by ${msg.requestedBy || 'collaborator'}!`);
+            setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
           } else if (msg.type === 'FORK_REJECTED') {
+            if (msg.master_project_files && msg.master_project_files.length > 0) {
+              setMasterFiles(msg.master_project_files);
+              localMasterRef.current = msg.master_project_files;
+              setFiles(msg.master_project_files);
+              localFilesRef.current = msg.master_project_files;
+              hasUnsavedForkChangesRef.current = false;
+              isLocalDirtyRef.current = false;
+            }
             setSaveSyncSuccessMsg('❌ Notice: Collaborator fork request was rejected by the Project Owner. Workspace restored to Master baseline.');
             setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
           }
@@ -736,6 +765,20 @@ export const IDEWorkspacePage = () => {
         } catch (attrErr) { }
       }
 
+      // Broadcast FORK_REQUESTED over WebSocket so Owner sees new proposal immediately
+      if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+        collaborationWsRef.current.send(JSON.stringify({
+          type: 'FORK_REQUESTED',
+          projectId,
+          working_files: updatedFiles,
+          user: {
+            email: userEmail,
+            displayName: currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0],
+            role: activeUserRole || 'EDITOR'
+          }
+        }));
+      }
+
       setSaveSyncSuccessMsg(`🍴 Fork requested! ${Object.keys(fileStatusMap).length || 1} change(s) submitted for Project Owner review.`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
     } catch (err) {
@@ -781,7 +824,7 @@ export const IDEWorkspacePage = () => {
         setSavedContent(currentContent);
       }
 
-      // 1. Commit to Client Firestore Master & Working files in Website Database
+      // 1. Commit to Client Firestore Master & Working files in Website Database (Instant atomic doc update)
       try {
         await setDoc(doc(db, 'projects', projectId), {
           master_project_files: targetWorkingFiles,
@@ -793,11 +836,11 @@ export const IDEWorkspacePage = () => {
           updatedAt: timestamp
         }, { merge: true });
 
-        // Update files subcollection so each file is directly visible in Firestore Console
-        for (const f of targetWorkingFiles) {
+        // Update files subcollection non-blocking in parallel
+        Promise.allSettled(targetWorkingFiles.map(f => {
           if (f && (f.fileId || f.filePath)) {
             const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-            await setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+            return setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
               fileId: fileDocId,
               projectId,
               filePath: f.filePath,
@@ -808,10 +851,11 @@ export const IDEWorkspacePage = () => {
               lastModifiedBy: userEmail
             }, { merge: true });
           }
-        }
+          return Promise.resolve();
+        })).catch(() => {});
 
         const ownerDocUsername = userEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
-        await setDoc(doc(db, 'users', ownerDocUsername), {
+        setDoc(doc(db, 'users', ownerDocUsername), {
           projects: {
             [projectId]: {
               projectId,
@@ -823,7 +867,7 @@ export const IDEWorkspacePage = () => {
               updatedAt: timestamp
             }
           }
-        }, { merge: true });
+        }, { merge: true }).catch(() => {});
       } catch (fsErr) {
         console.warn('Firestore master commit notice:', fsErr);
       }
@@ -846,9 +890,9 @@ export const IDEWorkspacePage = () => {
         console.warn('Backend sync-master notice:', apiErr);
       }
 
-      // 3. Commit to Personal Firebase Cloud Database (Owner's Database)
+      // 3. Commit to Personal Firebase Cloud Database (Owner's Database) non-blocking
       try {
-        await syncProjectToPersonalFirestore({
+        syncProjectToPersonalFirestore({
           projectId,
           title: projectData?.title || projectId,
           languageEnv: projectData?.languageEnv || 'PYTHON_3.11',
@@ -857,17 +901,35 @@ export const IDEWorkspacePage = () => {
           project_files: targetWorkingFiles,
           working_files: targetWorkingFiles,
           collaborators: projectData?.collaborators || { [userEmail]: 'OWNER' }
-        }, userProfile, userEmail);
+        }, userProfile, userEmail).catch(() => {});
       } catch (pErr) {
         console.warn('Personal Firestore master sync notice:', pErr);
       }
 
+      // 4. Broadcast FORK_ACCEPTED over WebSocket so all connected editors update immediately
+      if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+        collaborationWsRef.current.send(JSON.stringify({
+          type: 'FORK_ACCEPTED',
+          projectId,
+          master_project_files: targetWorkingFiles,
+          working_files: targetWorkingFiles,
+          user: {
+            email: userEmail,
+            displayName: currentUser?.displayName || 'Project Owner',
+            role: 'OWNER'
+          }
+        }));
+      }
+
       localMutationTimestampRef.current = Date.now();
       localFilesRef.current = targetWorkingFiles;
+      localMasterRef.current = targetWorkingFiles;
       setMasterFiles(targetWorkingFiles);
       setFiles(targetWorkingFiles);
+      hasUnsavedForkChangesRef.current = false;
+      isLocalDirtyRef.current = false;
       setIsDiffViewActive(false);
-      setSaveSyncSuccessMsg('🚀 All working changes merged and synchronized to Master Repository!');
+      setSaveSyncSuccessMsg('🎉 All working changes merged and synchronized to Master Repository!');
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error syncing master repository:', err);
