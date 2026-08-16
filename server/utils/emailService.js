@@ -131,10 +131,14 @@ ${domain}
 </html>
 `.trim();
 
-  // 3. Strict RFC Anti-Spam MIME Headers with "ObsidianIDE" Sender Display Name
-  const senderEmail = process.env.SMTP_USER || process.env.EMAIL_USER || 'notifications@obsidianide.com';
+  // 3. Strict RFC Anti-Spam MIME Headers with 100% SPF/DKIM Aligned Sender
+  const configuredUser = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
+  const authSender = (configuredUser && !configuredUser.includes('your_') && configuredUser.includes('@')) 
+    ? configuredUser 
+    : 'bubt768@gmail.com';
+
   const mailOptions = {
-    from: `"ObsidianIDE" <${senderEmail}>`,
+    from: `"ObsidianIDE System" <${authSender}>`,
     to,
     replyTo: ownerEmail,
     subject: `Invitation to collaborate on project: ${cleanTitle}`,
