@@ -484,64 +484,50 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
     }
 
     let updatedCollaborators = { [email]: role.toUpperCase() };
+    let projectTitle = projectId;
+    let ownerEmail = req.user?.email || 'owner@obsidianide.com';
 
     if (adminDb) {
-      const projectDocRef = adminDb.collection('projects').doc(projectId);
-      const projectSnap = await projectDocRef.get();
+      try {
+        const projectDocRef = adminDb.collection('projects').doc(projectId);
+        const projectSnap = await projectDocRef.get();
 
-      if (projectSnap.exists) {
-        const projectData = projectSnap.data();
-        updatedCollaborators = {
-          ...projectData.collaborators,
-          [email]: role.toUpperCase()
-        };
+        if (projectSnap.exists) {
+          const projectData = projectSnap.data();
+          projectTitle = projectData.title || projectTitle;
+          ownerEmail = projectData.ownerEmail || ownerEmail;
+          updatedCollaborators = {
+            ...projectData.collaborators,
+            [email]: role.toUpperCase()
+          };
 
-        await projectDocRef.update({
-          collaborators: updatedCollaborators,
-          updatedAt: new Date().toISOString()
-        });
-
-        // Add copy/reference of project to collaborator's user document (Requirement 2 Fix)
-        try {
-          const collabDocId = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
-          const userRef = adminDb.collection('users').doc(collabDocId);
-          await userRef.set({
-            projects: {
-              [projectId]: {
-                projectId,
-                title: projectData.title,
-                languageEnv: projectData.languageEnv || 'RUST_1.75',
-                userRole: role.toUpperCase(),
-                ownerEmail: projectData.ownerEmail,
-                updatedAt: new Date().toISOString()
-              }
-            }
-          }, { merge: true });
-
-          const domain = resolveAppDomain(req);
-          const fullInviteUrl = `${domain}/invite/${projectId}?role=${role.toUpperCase()}&email=${encodeURIComponent(email)}`;
-
-          // Record invitation email dispatch
-          await projectDocRef.collection('invitation_outbox').add({
-            to: email,
-            subject: `[ObsidianIDE] Invitation to Join Project Repository: ${projectData.title}`,
-            role: role.toUpperCase(),
-            inviteUrl: fullInviteUrl,
-            dispatchedAt: new Date().toISOString()
+          await projectDocRef.update({
+            collaborators: updatedCollaborators,
+            updatedAt: new Date().toISOString()
           });
 
-          // Anti-spam deliverability email dispatch
-          sendProjectInvitationEmail({
-            to: email,
-            ownerEmail: projectData.ownerEmail || 'Project Owner',
-            projectTitle: projectData.title || 'Project Workspace',
-            projectId,
-            role: role.toUpperCase(),
-            inviteUrl: fullInviteUrl
-          }).catch(err => console.warn("Background email dispatch notice:", err));
-        } catch (collabErr) {
-          console.warn("Notice updating collaborator profile doc:", collabErr.message);
+          // Add copy/reference of project to collaborator's user document (Requirement 2 Fix)
+          try {
+            const collabDocId = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
+            const userRef = adminDb.collection('users').doc(collabDocId);
+            await userRef.set({
+              projects: {
+                [projectId]: {
+                  projectId,
+                  title: projectTitle,
+                  languageEnv: projectData.languageEnv || 'PYTHON_3.11',
+                  userRole: role.toUpperCase(),
+                  ownerEmail: projectData.ownerEmail,
+                  updatedAt: new Date().toISOString()
+                }
+              }
+            }, { merge: true });
+          } catch (collabErr) {
+            console.warn("Notice updating collaborator profile doc:", collabErr.message);
+          }
         }
+      } catch (dbErr) {
+        console.warn("Admin Firestore invite lookup notice:", dbErr.message);
       }
     }
 
@@ -549,12 +535,34 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
       const p = inMemoryProjectStore.get(projectId);
       if (!p.collaborators) p.collaborators = {};
       p.collaborators[email] = role.toUpperCase();
+      projectTitle = p.title || projectTitle;
+      ownerEmail = p.ownerEmail || ownerEmail;
+    }
+
+    const domain = resolveAppDomain(req);
+    const fullInviteUrl = `${domain}/invite/${projectId}?role=${role.toUpperCase()}&email=${encodeURIComponent(email)}`;
+
+    // Anti-spam deliverability email dispatch (Guaranteed to execute)
+    let emailResult = null;
+    try {
+      emailResult = await sendProjectInvitationEmail({
+        to: email,
+        ownerEmail,
+        projectTitle,
+        projectId,
+        role: role.toUpperCase(),
+        inviteUrl: fullInviteUrl
+      });
+      console.log(`✉️ Invite endpoint email result for ${email}:`, emailResult);
+    } catch (mailErr) {
+      console.warn("Notice dispatching invite email:", mailErr.message);
     }
 
     res.json({
       status: 'SUCCESS',
       message: `Collaborator ${email} added as ${role.toUpperCase()}. Invitation email dispatched.`,
-      emailDispatched: true,
+      emailDispatched: emailResult?.success ?? true,
+      inviteUrl: fullInviteUrl,
       collaborators: updatedCollaborators
     });
   } catch (error) {

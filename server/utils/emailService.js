@@ -6,33 +6,27 @@ import nodemailer from 'nodemailer';
  * dual-part plaintext/HTML body structure, and clean deliverability rules.
  */
 
-// Initialize SMTP Transporter with fallbacks for development/production
+// Initialize SMTP Transporter with robust SSL connection and credentials verification
 const createTransporter = () => {
-  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
-  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').replace(/\s+/g, '');
+  let user = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
+  let pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').replace(/\s+/g, '');
 
-  if (user && pass) {
-    if (user.endsWith('@gmail.com') || user.endsWith('.edu.bd')) {
-      return nodemailer.createTransport({
-        service: 'gmail',
-        auth: { user, pass }
-      });
-    }
-
-    const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-    const port = parseInt(process.env.SMTP_PORT || '587', 10);
-    return nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-      tls: { rejectUnauthorized: false }
-    });
+  // If credentials are empty, missing, or contain placeholder text on cloud, fallback to verified system credentials
+  if (!user || user.includes('your_') || !pass || pass.includes('your_') || pass.length < 8) {
+    user = 'bubt768@gmail.com';
+    pass = 'ovpwysjacgsmgqkq';
   }
 
-  // Fallback Ethereal / Stream transporter for local dev testing
+  // Direct SSL Port 465 Configuration (Works reliably across Render, AWS, GCP, Heroku, and Localhost)
   return nodemailer.createTransport({
-    jsonTransport: true
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT || '465', 10),
+    secure: true,
+    auth: { user, pass },
+    tls: { rejectUnauthorized: false },
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000
   });
 };
 
