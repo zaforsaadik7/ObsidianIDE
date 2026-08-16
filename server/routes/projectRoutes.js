@@ -389,8 +389,110 @@ router.delete('/:projectId', async (req, res) => {
   }
 });
 
-// POST /api/projects/update-files: Directly save project_files array to Firestore via Admin SDK
-// ── Repository File & Staging Operations ──────────────────────────────────
+// POST /api/projects/update-files: Persist working_files or master_project_files
+router.post('/update-files', async (req, res) => {
+  try {
+    const {
+      projectId,
+      working_files,
+      master_project_files,
+      userEmail,
+      isOwner
+    } = req.body;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'Project ID is required.' });
+    }
+
+    const timestamp = new Date().toISOString();
+    const memProj = inMemoryProjectStore.get(projectId) || {};
+    const updatedProj = {
+      ...memProj,
+      projectId,
+      ...(working_files ? { working_files } : {}),
+      ...(master_project_files ? { master_project_files, project_files: master_project_files } : {}),
+      updatedAt: timestamp,
+      lastModifiedBy: userEmail || memProj.lastModifiedBy
+    };
+    inMemoryProjectStore.set(projectId, updatedProj);
+
+    if (adminDb) {
+      try {
+        const payload = {
+          ...(working_files ? { working_files } : {}),
+          ...(master_project_files ? { master_project_files, project_files: master_project_files } : {}),
+          updatedAt: timestamp,
+          lastModifiedBy: userEmail || 'developer@obsidian.io'
+        };
+        await adminDb.collection('projects').doc(projectId).set(payload, { merge: true });
+      } catch (dbErr) {
+        console.warn('AdminDB update-files notice:', dbErr.message);
+      }
+    }
+
+    res.json({
+      status: 'SUCCESS',
+      message: 'Project files updated successfully.',
+      projectId,
+      filesCount: (working_files || master_project_files || []).length
+    });
+  } catch (error) {
+    console.error('Error updating project files:', error);
+    res.status(500).json({ error: 'Failed to update files', details: error.message });
+  }
+});
+
+// POST /api/projects/sync-master: Save master repository baseline directly
+router.post('/sync-master', async (req, res) => {
+  try {
+    const { projectId, working_files, ownerEmail } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ error: 'Project ID is required.' });
+    }
+
+    const timestamp = new Date().toISOString();
+    const files = working_files || [];
+
+    const memProj = inMemoryProjectStore.get(projectId) || {};
+    inMemoryProjectStore.set(projectId, {
+      ...memProj,
+      projectId,
+      master_project_files: files,
+      project_files: files,
+      working_files: files,
+      pending_patches: [],
+      masterLastSyncedAt: timestamp,
+      masterLastSyncedBy: ownerEmail,
+      updatedAt: timestamp
+    });
+
+    if (adminDb) {
+      try {
+        await adminDb.collection('projects').doc(projectId).set({
+          master_project_files: files,
+          project_files: files,
+          working_files: files,
+          pending_patches: [],
+          masterLastSyncedAt: timestamp,
+          masterLastSyncedBy: ownerEmail,
+          updatedAt: timestamp
+        }, { merge: true });
+      } catch (dbErr) {
+        console.warn('AdminDB sync-master notice:', dbErr.message);
+      }
+    }
+
+    res.json({
+      status: 'SUCCESS',
+      message: 'Master repository synced successfully.',
+      projectId,
+      filesCount: files.length
+    });
+  } catch (error) {
+    console.error('Error in sync-master:', error);
+    res.status(500).json({ error: 'Failed to sync master', details: error.message });
+  }
+});
 
 // POST /api/projects/save-and-sync: Save & Sync staging patch submission
 // Supports all modification types: MODIFY_FILE, CREATE_FILE, DELETE_FILE, RENAME_FILE, MOVE_ITEM, IMPORT_BATCH

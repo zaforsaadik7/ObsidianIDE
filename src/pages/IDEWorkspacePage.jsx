@@ -378,18 +378,41 @@ export const IDEWorkspacePage = () => {
           if ((msg.type === 'PEER_PRESENCE_UPDATE' || msg.type === 'PEER_DISCONNECTED') && Array.isArray(collabsList)) {
             const filtered = collabsList.filter(c => c.email && c.email.toLowerCase() !== userEmail);
             setRemoteCollaborators(filtered);
-          } else if (msg.type === 'FORK_ACCEPTED') {
-            if (msg.master_project_files && msg.master_project_files.length > 0) {
-              setMasterFiles(msg.master_project_files);
-              localMasterRef.current = msg.master_project_files;
-              setFiles(msg.master_project_files);
-              localFilesRef.current = msg.master_project_files;
+          } else if (msg.type === 'FILES_UPDATED' || msg.type === 'FORK_ACCEPTED') {
+            const incomingFiles = msg.files || msg.master_project_files || msg.working_files;
+            if (Array.isArray(incomingFiles) && incomingFiles.length > 0) {
+              setFiles(incomingFiles);
+              localFilesRef.current = incomingFiles;
+              if (msg.master_project_files) {
+                setMasterFiles(msg.master_project_files);
+                localMasterRef.current = msg.master_project_files;
+              }
               hasUnsavedForkChangesRef.current = false;
-              isLocalDirtyRef.current = false;
               localMutationTimestampRef.current = 0;
+
+              // Seamlessly update active file content if user has no dirty unsaved buffer
+              if (activeFileRef.current) {
+                const matched = incomingFiles.find(f =>
+                  (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
+                  f.filePath === activeFileRef.current.filePath
+                );
+                if (matched) {
+                  setActiveFile(matched);
+                  activeFileRef.current = matched;
+                  setOpenFiles(prev => prev.map(of =>
+                    (of.filePath === matched.filePath || (matched.fileId && of.fileId === matched.fileId)) ? matched : of
+                  ));
+                  if (!isLocalDirtyRef.current && matched.content !== undefined) {
+                    setCurrentContent(matched.content);
+                    setSavedContent(matched.content);
+                  }
+                }
+              }
             }
-            setSaveSyncSuccessMsg('🎉 Fork request accepted & merged into Master Repository!');
-            setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+            if (msg.type === 'FORK_ACCEPTED') {
+              setSaveSyncSuccessMsg('🎉 Changes merged & synchronized to Master Repository!');
+              setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+            }
           } else if (msg.type === 'FORK_REQUESTED') {
             if (msg.working_files && msg.working_files.length > 0) {
               setFiles(msg.working_files);
@@ -1252,15 +1275,21 @@ export const IDEWorkspacePage = () => {
       localMutationTimestampRef.current = Date.now();
       localFilesRef.current = updatedFiles;
       setFiles(updatedFiles);
+      if (isProjectOwner) {
+        setMasterFiles(updatedFiles);
+        localMasterRef.current = updatedFiles;
+      }
       handleSelectFile(newFileObj);
 
-      // Persist to Shared Working Fork in Firestore & REST API (NOT project_files — that's the master baseline)
+      // Persist to Shared Working Fork & Master baseline in Firestore & REST API
       try {
-        await setDoc(doc(db, 'projects', projectId), {
+        const payload = {
           working_files: updatedFiles,
+          ...(isProjectOwner ? { master_project_files: updatedFiles, project_files: updatedFiles } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
-        }, { merge: true });
+        };
+        await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
@@ -1271,17 +1300,28 @@ export const IDEWorkspacePage = () => {
           body: JSON.stringify({
             projectId,
             working_files: updatedFiles,
-            master_project_files: masterFiles,
+            master_project_files: isProjectOwner ? updatedFiles : masterFiles,
             userEmail,
-            ownerEmail: projectData?.ownerEmail,
-            collaborators: projectData?.collaborators
+            isOwner: isProjectOwner
           })
         });
+
+        // Broadcast over WebSocket so connected editors see new files instantly
+        if (isProjectOwner && collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+          collaborationWsRef.current.send(JSON.stringify({
+            type: 'FILES_UPDATED',
+            projectId,
+            files: updatedFiles,
+            master_project_files: updatedFiles,
+            working_files: updatedFiles,
+            user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: 'OWNER' }
+          }));
+        }
       } catch (fsErr) {
         console.warn('Working create file sync notice:', fsErr);
       }
 
-      setSaveSyncSuccessMsg(`[+] Created '${cleanPath}' in Working Fork (${isProjectOwner ? 'Owner merge ready' : 'Pending Owner merge'})`);
+      setSaveSyncSuccessMsg(`[+] Created '${cleanPath}' (${isProjectOwner ? 'Live in Master' : 'In Working Fork'})`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
     } catch (err) {
       console.error('Error creating new file:', err);
@@ -1305,28 +1345,45 @@ export const IDEWorkspacePage = () => {
       localMutationTimestampRef.current = Date.now();
       localFilesRef.current = updatedFiles;
       setFiles(updatedFiles);
+      if (isProjectOwner) {
+        setMasterFiles(updatedFiles);
+        localMasterRef.current = updatedFiles;
+      }
 
       if (activeFile?.fileId === fileObj.fileId) {
         setActiveFile(prev => ({ ...prev, filePath: cleanNewPath, fileName: cleanNewPath.split('/').pop() }));
       }
       setOpenFiles(prev => prev.map(f => f.fileId === fileObj.fileId ? { ...f, filePath: cleanNewPath, fileName: cleanNewPath.split('/').pop() } : f));
 
-      // Persist to Shared Working Fork (NOT project_files — that's the master baseline)
+      // Persist to Shared Working Fork & Master
       try {
-        await setDoc(doc(db, 'projects', projectId), {
+        const payload = {
           working_files: updatedFiles,
+          ...(isProjectOwner ? { master_project_files: updatedFiles, project_files: updatedFiles } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
-        }, { merge: true });
+        };
+        await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ projectId, working_files: updatedFiles, master_project_files: masterFiles, userEmail, ownerEmail: projectData?.ownerEmail })
+          body: JSON.stringify({ projectId, working_files: updatedFiles, master_project_files: isProjectOwner ? updatedFiles : masterFiles, userEmail, isOwner: isProjectOwner })
         });
+
+        if (isProjectOwner && collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+          collaborationWsRef.current.send(JSON.stringify({
+            type: 'FILES_UPDATED',
+            projectId,
+            files: updatedFiles,
+            master_project_files: updatedFiles,
+            working_files: updatedFiles,
+            user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: 'OWNER' }
+          }));
+        }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[→] Renamed to '${cleanNewPath}' in Working Fork`);
+      setSaveSyncSuccessMsg(`[→] Renamed to '${cleanNewPath}'`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error renaming file:', err);
@@ -1343,6 +1400,10 @@ export const IDEWorkspacePage = () => {
       localMutationTimestampRef.current = Date.now();
       localFilesRef.current = remainingFiles;
       setFiles(remainingFiles);
+      if (isProjectOwner) {
+        setMasterFiles(remainingFiles);
+        localMasterRef.current = remainingFiles;
+      }
       handleCloseTab(fileObj);
       if (activeFile?.fileId === fileObj.fileId || activeFile?.filePath === fileObj.filePath) {
         const next = remainingFiles[0] || null;
@@ -1354,13 +1415,15 @@ export const IDEWorkspacePage = () => {
         }
       }
 
-      // Persist to Shared Working Fork (NOT project_files — that's the master baseline)
+      // Persist to Shared Working Fork & Master
       try {
-        await setDoc(doc(db, 'projects', projectId), {
+        const payload = {
           working_files: remainingFiles,
+          ...(isProjectOwner ? { master_project_files: remainingFiles, project_files: remainingFiles } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
-        }, { merge: true });
+        };
+        await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
@@ -1371,15 +1434,25 @@ export const IDEWorkspacePage = () => {
           body: JSON.stringify({
             projectId,
             working_files: remainingFiles,
-            master_project_files: masterFiles,
+            master_project_files: isProjectOwner ? remainingFiles : masterFiles,
             userEmail,
-            ownerEmail: projectData?.ownerEmail,
-            collaborators: projectData?.collaborators
+            isOwner: isProjectOwner
           })
         });
+
+        if (isProjectOwner && collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+          collaborationWsRef.current.send(JSON.stringify({
+            type: 'FILES_UPDATED',
+            projectId,
+            files: remainingFiles,
+            master_project_files: remainingFiles,
+            working_files: remainingFiles,
+            user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: 'OWNER' }
+          }));
+        }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[-] Deleted '${fileObj.fileName}' in Working Fork (${isProjectOwner ? 'Owner merge ready' : 'Pending Owner merge'})`);
+      setSaveSyncSuccessMsg(`[-] Deleted '${fileObj.fileName}'`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
     } catch (err) {
       console.error('Error deleting file:', err);
@@ -1412,6 +1485,10 @@ export const IDEWorkspacePage = () => {
       localMutationTimestampRef.current = Date.now();
       localFilesRef.current = updatedFiles;
       setFiles(updatedFiles);
+      if (isProjectOwner) {
+        setMasterFiles(updatedFiles);
+        localMasterRef.current = updatedFiles;
+      }
 
       if (activeFile && (activeFile.filePath === cleanOld || activeFile.filePath.startsWith(`${cleanOld}/`))) {
         const updatedPath = activeFile.filePath.replace(new RegExp(`^${cleanOld}`), cleanNew);
@@ -1425,13 +1502,15 @@ export const IDEWorkspacePage = () => {
         return f;
       }));
 
-      // Persist to Shared Working Fork (NOT project_files — that's the master baseline)
+      // Persist to Shared Working Fork & Master
       try {
-        await setDoc(doc(db, 'projects', projectId), {
+        const payload = {
           working_files: updatedFiles,
+          ...(isProjectOwner ? { master_project_files: updatedFiles, project_files: updatedFiles } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
-        }, { merge: true });
+        };
+        await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
@@ -1442,15 +1521,25 @@ export const IDEWorkspacePage = () => {
           body: JSON.stringify({
             projectId,
             working_files: updatedFiles,
-            master_project_files: masterFiles,
+            master_project_files: isProjectOwner ? updatedFiles : masterFiles,
             userEmail,
-            ownerEmail: projectData?.ownerEmail,
-            collaborators: projectData?.collaborators
+            isOwner: isProjectOwner
           })
         });
+
+        if (isProjectOwner && collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+          collaborationWsRef.current.send(JSON.stringify({
+            type: 'FILES_UPDATED',
+            projectId,
+            files: updatedFiles,
+            master_project_files: updatedFiles,
+            working_files: updatedFiles,
+            user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: 'OWNER' }
+          }));
+        }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[→] Renamed folder /${cleanOld} to /${cleanNew} in Working Fork`);
+      setSaveSyncSuccessMsg(`[→] Renamed folder /${cleanOld} to /${cleanNew}`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error renaming folder:', err);
@@ -1468,6 +1557,10 @@ export const IDEWorkspacePage = () => {
       localMutationTimestampRef.current = Date.now();
       localFilesRef.current = remaining;
       setFiles(remaining);
+      if (isProjectOwner) {
+        setMasterFiles(remaining);
+        localMasterRef.current = remaining;
+      }
 
       if (activeFile && (activeFile.filePath === cleanFolder || activeFile.filePath.startsWith(`${cleanFolder}/`))) {
         const next = remaining[0] || null;
@@ -1479,22 +1572,35 @@ export const IDEWorkspacePage = () => {
         }
       }
 
-      // Persist to Shared Working Fork (NOT project_files — that's the master baseline)
+      // Persist to Shared Working Fork & Master
       try {
-        await setDoc(doc(db, 'projects', projectId), {
+        const payload = {
           working_files: remaining,
+          ...(isProjectOwner ? { master_project_files: remaining, project_files: remaining } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
-        }, { merge: true });
+        };
+        await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ projectId, working_files: remaining, master_project_files: masterFiles, userEmail, ownerEmail: projectData?.ownerEmail })
+          body: JSON.stringify({ projectId, working_files: remaining, master_project_files: isProjectOwner ? remaining : masterFiles, userEmail, isOwner: isProjectOwner })
         });
+
+        if (isProjectOwner && collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+          collaborationWsRef.current.send(JSON.stringify({
+            type: 'FILES_UPDATED',
+            projectId,
+            files: remaining,
+            master_project_files: remaining,
+            working_files: remaining,
+            user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: 'OWNER' }
+          }));
+        }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[×] Deleted folder /${cleanFolder} from Working Fork`);
+      setSaveSyncSuccessMsg(`[×] Deleted folder /${cleanFolder}`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error deleting folder:', err);
@@ -1572,19 +1678,25 @@ export const IDEWorkspacePage = () => {
         localMutationTimestampRef.current = Date.now();
         localFilesRef.current = updatedFiles;
         setFiles(updatedFiles);
+        if (isProjectOwner) {
+          setMasterFiles(updatedFiles);
+          localMasterRef.current = updatedFiles;
+        }
 
         if (activeFile?.filePath === sourcePath) {
           setActiveFile(prev => ({ ...prev, filePath: newPath, fileName }));
         }
         setOpenFiles(prev => prev.map(f => f.filePath === sourcePath ? { ...f, filePath: newPath, fileName } : f));
 
-        // Persist to Shared Working Fork (NOT project_files — that's the master baseline)
+        // Persist to Shared Working Fork & Master
         try {
-          await setDoc(doc(db, 'projects', projectId), {
+          const payload = {
             working_files: updatedFiles,
+            ...(isProjectOwner ? { master_project_files: updatedFiles, project_files: updatedFiles } : {}),
             updatedAt: new Date().toISOString(),
             lastWorkingModifiedBy: userEmail
-          }, { merge: true });
+          };
+          await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
 
           await fetch('/api/projects/update-files', {
             method: 'POST',
@@ -1592,15 +1704,25 @@ export const IDEWorkspacePage = () => {
             body: JSON.stringify({
               projectId,
               working_files: updatedFiles,
-              master_project_files: masterFiles,
+              master_project_files: isProjectOwner ? updatedFiles : masterFiles,
               userEmail,
-              ownerEmail: projectData?.ownerEmail,
-              collaborators: projectData?.collaborators
+              isOwner: isProjectOwner
             })
           });
+
+          if (isProjectOwner && collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+            collaborationWsRef.current.send(JSON.stringify({
+              type: 'FILES_UPDATED',
+              projectId,
+              files: updatedFiles,
+              master_project_files: updatedFiles,
+              working_files: updatedFiles,
+              user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: 'OWNER' }
+            }));
+          }
         } catch (fsErr) { }
 
-        setSaveSyncSuccessMsg(`[→] Moved ${fileName} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'} in Working Fork`);
+        setSaveSyncSuccessMsg(`[→] Moved ${fileName} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'}`);
         setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
       } catch (err) {
         console.error('Error moving file:', err);

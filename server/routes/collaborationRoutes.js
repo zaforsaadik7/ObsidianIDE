@@ -323,6 +323,16 @@ export const createCollaborationWebSocket = () => {
             working_files: msg.working_files,
             timestamp: new Date().toISOString()
           });
+        } else if (type === 'FILES_UPDATED') {
+          broadcastToRoom(projectId, {
+            type: 'FILES_UPDATED',
+            projectId,
+            updatedBy: email,
+            files: msg.files,
+            master_project_files: msg.master_project_files,
+            working_files: msg.working_files,
+            timestamp: new Date().toISOString()
+          });
         }
       } catch (err) {
         console.warn('Collaboration WS message error:', err);
