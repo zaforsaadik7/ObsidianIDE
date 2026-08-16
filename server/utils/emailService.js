@@ -22,16 +22,30 @@ const getSmtpCredentials = () => {
   return { user, pass };
 };
 
-// Creates transport with explicit IPv4 DNS lookup to prevent cloud container ENETUNREACH errors
-const createTransporterForPort = (authUser, authPass, port = 465, secure = true) => {
+// Resolves hostname to an explicit IPv4 address to permanently eliminate cloud container IPv6 ENETUNREACH errors
+const resolveIpv4Host = async (hostname = 'smtp.gmail.com') => {
+  try {
+    const addresses = await dns.promises.resolve4(hostname);
+    if (addresses && addresses.length > 0) {
+      return addresses[0];
+    }
+  } catch (e) {}
+  return hostname;
+};
+
+// Creates transport with explicit IPv4 address to guarantee zero IPv6 socket attempts
+const createTransporterForPort = async (authUser, authPass, port = 465, secure = true) => {
+  const baseHost = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const ipv4Host = await resolveIpv4Host(baseHost);
+
   return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    host: ipv4Host,
     port,
     secure,
     auth: { user: authUser, pass: authPass },
-    tls: { rejectUnauthorized: false },
-    lookup: (hostname, options, callback) => {
-      dns.lookup(hostname, { family: 4 }, callback);
+    tls: {
+      servername: baseHost,
+      rejectUnauthorized: false
     },
     connectionTimeout: 15000,
     greetingTimeout: 10000,
@@ -158,7 +172,7 @@ ${domain}
 
   // Primary Attempt: Port 465 Direct SSL
   try {
-    const primaryTransporter = createTransporterForPort(authUser, authPass, 465, true);
+    const primaryTransporter = await createTransporterForPort(authUser, authPass, 465, true);
     const info = await primaryTransporter.sendMail(mailOptions);
     console.log(`✉️ [EMAIL DISPATCH SUCCESS - Port 465 SSL] Sent from ${authUser} to ${to} for project "${cleanTitle}" [MessageId: ${info.messageId}]`);
     return { success: true, port: 465, messageId, info };
@@ -167,7 +181,7 @@ ${domain}
     
     // Fallback Attempt: Port 587 STARTTLS (Works across cloud environments where 465 is restricted)
     try {
-      const fallbackTransporter = createTransporterForPort(authUser, authPass, 587, false);
+      const fallbackTransporter = await createTransporterForPort(authUser, authPass, 587, false);
       const fallbackInfo = await fallbackTransporter.sendMail(mailOptions);
       console.log(`✉️ [EMAIL DISPATCH SUCCESS - Port 587 TLS] Sent from ${authUser} to ${to} for project "${cleanTitle}" [MessageId: ${fallbackInfo.messageId}]`);
       return { success: true, port: 587, messageId, info: fallbackInfo };
