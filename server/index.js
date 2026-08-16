@@ -1,6 +1,14 @@
 import 'dotenv/config';
+import dns from 'dns';
 import express from 'express';
 import cors from 'cors';
+
+// Force IPv4 First DNS Resolution to eliminate cloud container ENETUNREACH errors on Render/AWS/Docker
+try {
+  if (dns.setDefaultResultOrder) {
+    dns.setDefaultResultOrder('ipv4first');
+  }
+} catch (dnsErr) {}
 
 // Global Unhandled Exception & Rejection Handlers
 process.on('unhandledRejection', (reason, promise) => {

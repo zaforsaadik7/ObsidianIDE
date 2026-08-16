@@ -1649,6 +1649,20 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Validated that SMTP transporter and `From` header are 100% matched to `bubt768@gmail.com`.
   - Built with `npm run build` with **0 errors in 9.92s**.
 
+### 129. Cloud IPv4-First DNS & Dual-Port SSL/TLS Failover for Live Email Delivery (v77)
+* **Problem / Bug**:
+  - Outbound invitation emails triggered on Render production failed with error: `connect ENETUNREACH 2607:f8b0:4004:c23::6c:465`.
+* **Root Causes**:
+  1. Cloud Container IPv6 Network Unreachability: Node 18+ resolves `smtp.gmail.com` using IPv6 addresses by default (`order: 'verbatim'`). Render cloud container instances do not have outbound IPv6 routing enabled, resulting in an immediate kernel `ENETUNREACH` error when opening socket connections.
+  2. Single Port Lock: Transporters only attempted Port 465 without falling back to Port 587 STARTTLS if the cloud container had specific port blocks or timeouts.
+* **Solutions Implemented**:
+  1. Global IPv4 DNS Priority: Added `dns.setDefaultResultOrder('ipv4first')` in `server/index.js` to ensure all DNS lookups prioritize IPv4 addresses across the entire server.
+  2. Forced IPv4 Transporter Lookup: Configured explicit `lookup: (hostname, options, callback) => dns.lookup(hostname, { family: 4 }, callback)` in `server/utils/emailService.js`.
+  3. Dual-Port Automatic Failover: Implemented primary dispatch on SSL Port 465 with automatic graceful failover to TLS Port 587 STARTTLS if port 465 is blocked by network infrastructure.
+* **QA & Automated Verification**:
+  - Live Render diagnostic test confirmed the exact `ENETUNREACH` failure and verified the IPv4 resolution fix.
+  - Built with `npm run build` with **0 errors in 9.35s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*

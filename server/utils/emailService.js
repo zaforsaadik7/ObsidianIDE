@@ -1,9 +1,11 @@
 import nodemailer from 'nodemailer';
+import dns from 'dns';
 
 /**
  * ObsidianIDE Anti-Spam Transactional Email Dispatcher
  * Implements RFC 2822 MIME headers, DKIM/SPF alignment,
- * dual-part plaintext/HTML body structure, and clean deliverability rules.
+ * IPv4-first cloud routing, dual-port fallback (465 SSL / 587 STARTTLS),
+ * and clean deliverability rules.
  */
 
 // Helper to resolve validated SMTP credentials with automatic fallback
@@ -20,6 +22,23 @@ const getSmtpCredentials = () => {
   return { user, pass };
 };
 
+// Creates transport with explicit IPv4 DNS lookup to prevent cloud container ENETUNREACH errors
+const createTransporterForPort = (authUser, authPass, port = 465, secure = true) => {
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port,
+    secure,
+    auth: { user: authUser, pass: authPass },
+    tls: { rejectUnauthorized: false },
+    lookup: (hostname, options, callback) => {
+      dns.lookup(hostname, { family: 4 }, callback);
+    },
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000
+  });
+};
+
 export const sendProjectInvitationEmail = async ({
   to,
   ownerEmail,
@@ -29,18 +48,6 @@ export const sendProjectInvitationEmail = async ({
   inviteUrl
 }) => {
   const { user: authUser, pass: authPass } = getSmtpCredentials();
-
-  // Direct SSL Port 465 Configuration (Works reliably across Render, AWS, GCP, Heroku, and Localhost)
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '465', 10),
-    secure: true,
-    auth: { user: authUser, pass: authPass },
-    tls: { rejectUnauthorized: false },
-    connectionTimeout: 15000,
-    greetingTimeout: 10000,
-    socketTimeout: 20000
-  });
 
   const domain = process.env.APP_DOMAIN || 'obsidianide.com';
   const cleanTitle = (projectTitle || 'Project Workspace').trim();
@@ -149,12 +156,24 @@ ${domain}
     }
   };
 
+  // Primary Attempt: Port 465 Direct SSL
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`✉️ [EMAIL DISPATCH SUCCESS] Sent from ${authUser} to ${to} for project "${cleanTitle}" [MessageId: ${info.messageId}]`);
-    return { success: true, messageId, info };
-  } catch (err) {
-    console.error(`❌ [EMAIL DISPATCH ERROR] Failed sending to ${to}:`, err.message);
-    return { success: false, error: err.message, messageId };
+    const primaryTransporter = createTransporterForPort(authUser, authPass, 465, true);
+    const info = await primaryTransporter.sendMail(mailOptions);
+    console.log(`✉️ [EMAIL DISPATCH SUCCESS - Port 465 SSL] Sent from ${authUser} to ${to} for project "${cleanTitle}" [MessageId: ${info.messageId}]`);
+    return { success: true, port: 465, messageId, info };
+  } catch (primaryErr) {
+    console.warn(`⚠️ [Port 465 Notice] Attempting fallback to Port 587 STARTTLS:`, primaryErr.message);
+    
+    // Fallback Attempt: Port 587 STARTTLS (Works across cloud environments where 465 is restricted)
+    try {
+      const fallbackTransporter = createTransporterForPort(authUser, authPass, 587, false);
+      const fallbackInfo = await fallbackTransporter.sendMail(mailOptions);
+      console.log(`✉️ [EMAIL DISPATCH SUCCESS - Port 587 TLS] Sent from ${authUser} to ${to} for project "${cleanTitle}" [MessageId: ${fallbackInfo.messageId}]`);
+      return { success: true, port: 587, messageId, info: fallbackInfo };
+    } catch (fallbackErr) {
+      console.error(`❌ [EMAIL DISPATCH ERROR - Both Ports Failed] Failed sending to ${to}:`, fallbackErr.message);
+      return { success: false, error: fallbackErr.message, messageId };
+    }
   }
 };
