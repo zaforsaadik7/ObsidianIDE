@@ -10,7 +10,9 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
 
   if (!isOpen || !project) return null;
 
-  const inviteUrl = `${window.location.origin}/invite/${project.projectId}?role=${role}&email=${encodeURIComponent(email || '')}`;
+  const projTitle = project.title || project.projectId;
+  const projOwner = project.ownerEmail || currentUser?.email || 'owner@obsidianide.com';
+  const inviteUrl = `${window.location.origin}/invite/${project.projectId}?role=${role}&email=${encodeURIComponent(email || '')}&title=${encodeURIComponent(projTitle)}&owner=${encodeURIComponent(projOwner)}`;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(inviteUrl);
@@ -37,7 +39,12 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ email: email.trim(), role })
+        body: JSON.stringify({
+          email: email.trim(),
+          role,
+          projectTitle: projTitle,
+          ownerEmail: projOwner
+        })
       });
 
       const data = await res.json();

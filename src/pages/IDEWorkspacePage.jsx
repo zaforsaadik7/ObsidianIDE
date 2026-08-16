@@ -1071,6 +1071,9 @@ export const IDEWorkspacePage = () => {
     const roleInput = window.prompt("Enter access role (EDITOR, REVIEWER, OWNER):", "REVIEWER");
     const role = (roleInput || 'REVIEWER').toUpperCase().trim();
 
+    const projTitle = projectData?.title || title || projectId;
+    const projOwner = projectData?.ownerEmail || currentUser?.email || 'owner@obsidianide.com';
+
     try {
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
       const res = await fetch(`/api/projects/${projectId}/invite`, {
@@ -1079,13 +1082,18 @@ export const IDEWorkspacePage = () => {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ email: email.trim(), role })
+        body: JSON.stringify({
+          email: email.trim(),
+          role,
+          projectTitle: projTitle,
+          ownerEmail: projOwner
+        })
       });
       const data = await res.json();
       if (res.ok) {
-        const inviteUrl = `${window.location.origin}/invite/${projectId}?role=${role}&email=${encodeURIComponent(email.trim())}`;
+        const inviteUrl = data.inviteUrl || `${window.location.origin}/invite/${projectId}?role=${role}&email=${encodeURIComponent(email.trim())}&title=${encodeURIComponent(projTitle)}&owner=${encodeURIComponent(projOwner)}`;
         navigator.clipboard.writeText(inviteUrl);
-        alert(`✓ Collaborator ${email} added as ${role}!\n\nInvitation link copied to clipboard:\n${inviteUrl}`);
+        alert(`✓ Collaborator ${email} added as ${role} to ${projTitle}!\n\nInvitation link copied to clipboard:\n${inviteUrl}`);
       } else {
         alert(`Error inviting teammate: ${data.error || 'Server error'}`);
       }

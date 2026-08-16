@@ -108,7 +108,7 @@ router.post('/', verifyToken, async (req, res) => {
     const domain = resolveAppDomain(req);
     Object.entries(normalizedCollabs).forEach(([email, role]) => {
       if (role.toUpperCase() !== 'OWNER' || (email !== ownerEmail && Object.keys(normalizedCollabs).length > 1)) {
-        const invitePath = `/invite/${projectId}?role=${role}&email=${encodeURIComponent(email)}`;
+        const invitePath = `/invite/${projectId}?role=${role}&email=${encodeURIComponent(email)}&title=${encodeURIComponent(title)}&owner=${encodeURIComponent(ownerEmail)}`;
         const fullInviteUrl = `${domain}${invitePath}`;
 
         emailDispatchLogs.push({
@@ -477,15 +477,15 @@ router.post('/resolve-patch', verifyToken, async (req, res) => {
 router.post('/:id/invite', verifyToken, async (req, res) => {
   try {
     const { id: projectId } = req.params;
-    const { email, role = 'EDITOR' } = req.body;
+    const { email, role = 'EDITOR', projectTitle: reqTitle, ownerEmail: reqOwner } = req.body;
 
     if (!email) {
       return res.status(400).json({ error: 'Collaborator email is required.' });
     }
 
     let updatedCollaborators = { [email]: role.toUpperCase() };
-    let projectTitle = projectId;
-    let ownerEmail = req.user?.email || 'owner@obsidianide.com';
+    let projectTitle = reqTitle || projectId;
+    let ownerEmail = reqOwner || req.user?.email || 'owner@obsidianide.com';
 
     if (adminDb) {
       try {
@@ -494,8 +494,8 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
 
         if (projectSnap.exists) {
           const projectData = projectSnap.data();
-          projectTitle = projectData.title || projectTitle;
-          ownerEmail = projectData.ownerEmail || ownerEmail;
+          projectTitle = reqTitle || projectData.title || projectTitle;
+          ownerEmail = reqOwner || projectData.ownerEmail || ownerEmail;
           updatedCollaborators = {
             ...projectData.collaborators,
             [email]: role.toUpperCase()
@@ -517,7 +517,7 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
                   title: projectTitle,
                   languageEnv: projectData.languageEnv || 'PYTHON_3.11',
                   userRole: role.toUpperCase(),
-                  ownerEmail: projectData.ownerEmail,
+                  ownerEmail: projectData.ownerEmail || ownerEmail,
                   updatedAt: new Date().toISOString()
                 }
               }
@@ -535,12 +535,12 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
       const p = inMemoryProjectStore.get(projectId);
       if (!p.collaborators) p.collaborators = {};
       p.collaborators[email] = role.toUpperCase();
-      projectTitle = p.title || projectTitle;
-      ownerEmail = p.ownerEmail || ownerEmail;
+      projectTitle = reqTitle || p.title || projectTitle;
+      ownerEmail = reqOwner || p.ownerEmail || ownerEmail;
     }
 
     const domain = resolveAppDomain(req);
-    const fullInviteUrl = `${domain}/invite/${projectId}?role=${role.toUpperCase()}&email=${encodeURIComponent(email)}`;
+    const fullInviteUrl = `${domain}/invite/${projectId}?role=${role.toUpperCase()}&email=${encodeURIComponent(email)}&title=${encodeURIComponent(projectTitle)}&owner=${encodeURIComponent(ownerEmail)}`;
 
     // Anti-spam deliverability email dispatch (Guaranteed to execute)
     let emailResult = null;
@@ -869,7 +869,7 @@ router.post('/reject-fork', async (req, res) => {
 router.get('/:projectId', verifyToken, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { userEmail } = req.query;
+    const { userEmail, isInvite } = req.query;
     const requestingEmail = (userEmail || req.user?.email || '').trim().toLowerCase();
 
     let projData = null;
@@ -895,6 +895,23 @@ router.get('/:projectId', verifyToken, async (req, res) => {
         status: 'NOT_FOUND',
         isAuthorized: false,
         error: `Project '${projectId}' was not found in the backend repository.`
+      });
+    }
+
+    // Invitation Preview Bypass: Allow unauthenticated visitors to inspect public repository metadata
+    if (isInvite === 'true') {
+      return res.json({
+        status: 'SUCCESS',
+        isAuthorized: true,
+        isInvitePreview: true,
+        project: {
+          projectId: projData.projectId || projectId,
+          title: projData.title || projectId,
+          description: projData.description || '',
+          ownerEmail: projData.ownerEmail || 'Project Owner',
+          languageEnv: projData.languageEnv || 'PYTHON_3.11',
+          collaborators: projData.collaborators || {}
+        }
       });
     }
 
@@ -936,17 +953,19 @@ router.get('/:projectId', verifyToken, async (req, res) => {
 router.post('/send-invite-email', async (req, res) => {
   try {
     const { to, ownerEmail, projectTitle, projectId, role = 'REVIEWER' } = req.body;
-    if (!to || !projectTitle || !projectId) {
+    if (!to || !projectId) {
       return res.status(400).json({ error: 'Missing required invitation payload fields.' });
     }
 
+    const cleanTitle = projectTitle || projectId;
+    const cleanOwner = ownerEmail || req.user?.email || 'owner@obsidianide.com';
     const domain = resolveAppDomain(req);
-    const inviteUrl = `${domain}/invite/${projectId}?role=${role}&email=${encodeURIComponent(to)}`;
+    const inviteUrl = `${domain}/invite/${projectId}?role=${role}&email=${encodeURIComponent(to)}&title=${encodeURIComponent(cleanTitle)}&owner=${encodeURIComponent(cleanOwner)}`;
 
     const result = await sendProjectInvitationEmail({
       to,
-      ownerEmail: ownerEmail || 'owner@obsidian.io',
-      projectTitle,
+      ownerEmail: cleanOwner,
+      projectTitle: cleanTitle,
       projectId,
       role,
       inviteUrl

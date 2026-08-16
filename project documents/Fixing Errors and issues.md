@@ -1605,6 +1605,22 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Executed end-to-end invite API test verifying both `POST /api/projects` and `POST /api/projects/:id/invite` dispatch emails with **100% pass rate**.
   - Built with `npm run build` with **0 errors in 9.68s**.
 
+### 126. Invitation Link Metadata, Real Project Names & Preview Integrity (v74)
+* **Problem / Bug**:
+  - Invited users received links displaying raw project IDs (`proj_...`) instead of the actual project name, and the owner was displayed as `"Project Owner"` instead of the actual owner's email / name.
+  - Pre-acceptance visitors to the `/invite/:id` portal encountered 403 authorization rejections when fetching project details before joining.
+* **Root Causes**:
+  1. 403 Authorization Block on Invite Preview: `GET /api/projects/:projectId` required the requesting email to already be a confirmed collaborator or owner. Unauthenticated visitors or newly invited users failed this check with 403, causing `InvitePortalPage.jsx` to fall back to `projTitle = inviteId` and `projOwner = 'Project Owner'`.
+  2. Missing URL Query Param Metadata: Invitation URLs lacked URL-encoded query parameters for `title` and `owner`, meaning the invite portal could not display human-readable metadata until database queries resolved.
+  3. Missing Parameters in Invite Modals: `handleInviteTeammate` in `IDEWorkspacePage.jsx` and `InviteTeammateModal.jsx` did not pass `projectTitle` and `ownerEmail` in their payload.
+* **Solutions Implemented**:
+  1. Invitation Preview Bypass (`?isInvite=true`): Updated `GET /api/projects/:projectId` to allow public inspection of public project metadata (`title`, `ownerEmail`, `languageEnv`, `description`) when `isInvite=true` is requested.
+  2. Rich URL Metadata Encoding: Updated `POST /api/projects`, `POST /:id/invite`, and `POST /send-invite-email` to generate invitation URLs formatted as: `/invite/:id?role=...&email=...&title=:encodedTitle&owner=:encodedOwner`.
+  3. Instant UI Metadata Rendering: Updated `InvitePortalPage.jsx` to parse `paramTitle` and `paramOwner` immediately on mount and fetch with `&isInvite=true`.
+* **QA & Automated Verification**:
+  - Executed automated metadata and preview test verifying that `GET /api/projects/:id?isInvite=true` successfully returns human-readable project title and owner email without authorization errors with **100% pass rate**.
+  - Built with `npm run build` with **0 errors in 9.10s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*

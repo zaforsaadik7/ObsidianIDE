@@ -15,6 +15,8 @@ export const InvitePortalPage = () => {
   const queryParams = new URLSearchParams(location.search);
   const paramRole = (queryParams.get('role') || 'REVIEWER').toUpperCase();
   const paramEmail = (queryParams.get('email') || '').trim().toLowerCase();
+  const paramTitle = (queryParams.get('title') || '').trim();
+  const paramOwner = (queryParams.get('owner') || '').trim();
 
   const isStorageConnected = userProfile?.info?.personalStorageConnected === true;
 
@@ -24,8 +26,8 @@ export const InvitePortalPage = () => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [projectInfo, setProjectInfo] = useState({
     projectId: inviteId || '',
-    title: inviteId || 'Project Workspace',
-    ownerEmail: 'Project Owner',
+    title: paramTitle || inviteId || 'Project Workspace',
+    ownerEmail: paramOwner || 'Project Owner',
     assignedRole: paramRole
   });
   const [loading, setLoading] = useState(false);
@@ -51,11 +53,11 @@ export const InvitePortalPage = () => {
         console.warn("Client Firestore invite lookup notice:", fsErr);
       }
 
-      // 2. Fallback to REST API
+      // 2. Fallback to REST API (with isInvite=true preview bypass)
       if (!pData) {
         try {
           const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
-          const res = await fetch(`/api/projects/${inviteId}?userEmail=${encodeURIComponent(currentUser?.email || paramEmail || '')}`, {
+          const res = await fetch(`/api/projects/${inviteId}?userEmail=${encodeURIComponent(currentUser?.email || paramEmail || '')}&isInvite=true`, {
             headers: token ? { 'Authorization': `Bearer ${token}` } : {}
           });
           if (res.ok) {
@@ -67,8 +69,8 @@ export const InvitePortalPage = () => {
         }
       }
 
-      const projTitle = pData?.title || inviteId;
-      const projOwner = pData?.ownerEmail || 'Project Owner';
+      const projTitle = pData?.title || paramTitle || inviteId;
+      const projOwner = pData?.ownerEmail || paramOwner || 'Project Owner';
       const userCollabRole = pData?.collaborators && currentUser?.email 
         ? (pData.collaborators[currentUser.email.toLowerCase()] || pData.collaborators[currentUser.email])
         : null;

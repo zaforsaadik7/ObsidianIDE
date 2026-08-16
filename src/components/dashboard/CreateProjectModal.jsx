@@ -68,7 +68,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
 
     const inviteLinks = {};
     collaborators.forEach((c) => {
-      inviteLinks[c.email] = `/invite/${pid}?role=${c.role}&email=${encodeURIComponent(c.email)}`;
+      inviteLinks[c.email] = `/invite/${pid}?role=${c.role}&email=${encodeURIComponent(c.email)}&title=${encodeURIComponent(title.trim())}&owner=${encodeURIComponent(ownerEmail)}`;
     });
 
     // 1. Client Firestore Direct Write Guarantee
