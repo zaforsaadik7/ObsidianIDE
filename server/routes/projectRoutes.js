@@ -711,11 +711,29 @@ router.post('/sync-master', verifyToken, async (req, res) => {
       existing.masterLastSyncedAt = timestamp;
       existing.masterLastSyncedBy = ownerEmail || 'owner@obsidian.io';
       existing.updatedAt = timestamp;
+    } else {
+      inMemoryProjectStore.set(projectId, {
+        projectId,
+        title: req.body.title || projectId,
+        ownerEmail: ownerEmail || 'owner@obsidian.io',
+        collaborators: req.body.collaborators || { [ownerEmail || 'owner@obsidian.io']: 'OWNER' },
+        master_project_files: working_files,
+        project_files: working_files,
+        working_files: working_files,
+        pending_patches: [],
+        masterLastSyncedAt: timestamp,
+        masterLastSyncedBy: ownerEmail || 'owner@obsidian.io',
+        updatedAt: timestamp
+      });
     }
 
     if (adminDb) {
       const projRef = adminDb.collection('projects').doc(projectId);
       await projRef.set({
+        master_project_files: working_files,
+        project_files: working_files,
+        working_files: working_files,
+        pending_patches: [],
         masterLastSyncedAt: timestamp,
         masterLastSyncedBy: ownerEmail || 'owner@obsidian.io',
         updatedAt: timestamp
@@ -746,6 +764,108 @@ router.post('/sync-master', verifyToken, async (req, res) => {
   } catch (err) {
     console.error('Error syncing master project files:', err);
     res.status(500).json({ error: 'Failed to sync master repository', details: err.message });
+  }
+});
+
+// POST /api/projects/reject-fork: Project Owner declines collaborator working fork changes and restores Master baseline
+router.post('/reject-fork', async (req, res) => {
+  try {
+    const { projectId, ownerEmail, reason = 'Fork changes declined by Project Owner' } = req.body;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    const timestamp = new Date().toISOString();
+    let masterFiles = [];
+
+    // 1. Retrieve canonical master baseline
+    if (adminDb) {
+      const projRef = adminDb.collection('projects').doc(projectId);
+      const snap = await projRef.get();
+      if (snap.exists) {
+        const data = snap.data();
+        masterFiles = data.master_project_files || data.project_files || [];
+      }
+    }
+
+    if ((!masterFiles || masterFiles.length === 0) && inMemoryProjectStore.has(projectId)) {
+      const existing = inMemoryProjectStore.get(projectId);
+      masterFiles = existing.master_project_files || existing.project_files || [];
+    }
+
+    // 2. Reset working_files and project_files back to canonical master_project_files
+    if (inMemoryProjectStore.has(projectId)) {
+      const existing = inMemoryProjectStore.get(projectId);
+      existing.working_files = masterFiles;
+      existing.project_files = masterFiles;
+      existing.pending_patches = [];
+      existing.lastForkRejectedAt = timestamp;
+      existing.lastForkRejectedBy = ownerEmail || 'owner@obsidian.io';
+      existing.updatedAt = timestamp;
+    }
+
+    if (adminDb) {
+      const projRef = adminDb.collection('projects').doc(projectId);
+      await projRef.set({
+        working_files: masterFiles,
+        project_files: masterFiles,
+        pending_patches: [],
+        lastForkRejectedAt: timestamp,
+        lastForkRejectedBy: ownerEmail || 'owner@obsidian.io',
+        updatedAt: timestamp
+      }, { merge: true });
+
+      // Reconcile files subcollection
+      try {
+        const filesSubRef = projRef.collection('files');
+        const existingDocs = await filesSubRef.get();
+        const batch = adminDb.batch();
+        existingDocs.docs.forEach(docSnap => batch.delete(docSnap.ref));
+        for (const f of masterFiles) {
+          if (f && (f.fileId || f.filePath)) {
+            const docId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+            const newDocRef = filesSubRef.doc(docId);
+            batch.set(newDocRef, {
+              ...f,
+              fileId: docId,
+              projectId,
+              updatedAt: timestamp
+            });
+          }
+        }
+        await batch.commit();
+      } catch (subErr) {
+        console.warn('Subcollection reconciliation notice:', subErr.message);
+      }
+    }
+
+    // 3. Sync restored master working copy to Owner Personal Firestore
+    const resolvedOwnerEmail = (ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || 'owner@obsidian.io').trim().toLowerCase();
+    try {
+      await syncToOwnerPersonalFirestore({
+        ownerEmail: resolvedOwnerEmail,
+        projectId,
+        projectTitle: inMemoryProjectStore.get(projectId)?.title || projectId,
+        files: masterFiles,
+        isMasterSync: false,
+        modifiedBy: ownerEmail
+      });
+    } catch (syncErr) {
+      console.warn('Notice syncing rejected fork reset to owner personal Firestore:', syncErr.message);
+    }
+
+    res.json({
+      status: 'SUCCESS',
+      message: 'Fork request successfully rejected. Shared working copy restored to Master baseline.',
+      master_project_files: masterFiles,
+      working_files: masterFiles,
+      rejectedAt: timestamp,
+      reason
+    });
+  } catch (err) {
+    console.error('Error rejecting fork request:', err);
+    res.status(500).json({ error: 'Failed to reject fork request', details: err.message });
   }
 });
 

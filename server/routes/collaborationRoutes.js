@@ -299,6 +299,20 @@ export const createCollaborationWebSocket = () => {
             },
             timestamp: new Date().toISOString()
           });
+        } else if (type === 'FORK_REJECTED') {
+          broadcastToRoom(projectId, {
+            type: 'FORK_REJECTED',
+            projectId,
+            rejectedBy: email,
+            timestamp: new Date().toISOString()
+          });
+        } else if (type === 'FORK_ACCEPTED') {
+          broadcastToRoom(projectId, {
+            type: 'FORK_ACCEPTED',
+            projectId,
+            acceptedBy: email,
+            timestamp: new Date().toISOString()
+          });
         }
       } catch (err) {
         console.warn('Collaboration WS message error:', err);

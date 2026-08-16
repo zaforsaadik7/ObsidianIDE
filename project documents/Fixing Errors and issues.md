@@ -1490,6 +1490,26 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Tested Editor editing scenarios: Verified Editor has `hasEditorForkChanges === true` (Request Fork rendered) and Owner receives `collaboratorPendingChangesCount === 1`.
   - Built with `npm run build` with **0 errors in 9.52s**.
 
+### 119. Project Owner "Reject Fork Request" Feature & Master Rollback (v67)
+* **Problem / Feature Gap**:
+  - The Project Owner had no option to reject or decline collaborator-submitted fork requests. If an Editor submitted undesirable or broken code, the Owner could only accept/merge or manually edit the code.
+* **Solutions Implemented**:
+  1. Backend API Endpoint (`POST /api/projects/reject-fork` in `projectRoutes.js`):
+     - Validates project and owner authorization.
+     - Retrieves canonical `master_project_files` and resets `working_files` and `project_files` back to the Master baseline.
+     - Prunes added fork files and clears `pending_patches`.
+     - Reconciles Firestore `files` subcollection and synchronizes the reset state to the Owner's personal database (`syncToOwnerPersonalFirestore`).
+  2. WebSocket Real-Time Broadcasts:
+     - Added `FORK_REJECTED` and `FORK_ACCEPTED` message handling in `collaborationRoutes.js`.
+     - All active collaborators connected to the project are immediately notified when a fork is declined, cleanly refreshing their shared workspace to Master without needing a page reload.
+  3. Frontend UI Action Buttons (`IDEWorkspacePage.jsx`):
+     - Added a dedicated red/rose **"Reject Fork"** button in the Top Header alongside **"Save & Sync to Master"** when collaborator changes are pending review.
+     - Added quick **"Merge to Master"** and **"Reject Fork"** buttons directly inside the Pane B Owner Review Banner.
+     - Added confirmation prompt and toast feedback (*"❌ Fork request rejected. Shared workspace restored to Master baseline."*).
+* **QA & Automated Verification**:
+  - Tested single-file and multi-file lifecycle workflows with added, modified, and deleted files: verified `POST /reject-fork` restores 100% of Master baseline files and prunes unauthorized additions.
+  - Verified `npm run build` compiled with **0 errors in 16.25s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*

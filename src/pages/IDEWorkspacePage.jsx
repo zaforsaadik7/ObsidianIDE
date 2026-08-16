@@ -14,11 +14,11 @@ import { db } from '../firebase';
 import { doc, getDoc, setDoc, deleteDoc, updateDoc, collection, getDocs, onSnapshot } from 'firebase/firestore';
 import { exportSingleFile, exportProjectZip } from '../utils/fileExporter';
 import { ImportAnalysisModal } from '../components/ide/ImportAnalysisModal';
-import { 
-  processLocalFiles, 
-  processLocalFolder, 
-  processZipArchive, 
-  analyzeImportConstraints 
+import {
+  processLocalFiles,
+  processLocalFolder,
+  processZipArchive,
+  analyzeImportConstraints
 } from '../utils/fileImporter';
 import { syncProjectToPersonalFirestore, syncWorkingFilesToPersonalFirestore } from '../services/personalFirebaseStorage';
 
@@ -88,11 +88,11 @@ export const IDEWorkspacePage = () => {
       if (isDraggingLeft) {
         const newWidth = Math.max(160, Math.min(480, e.clientX));
         setLeftWidth(newWidth);
-        try { localStorage.setItem('obsidian_pane_left_width', newWidth); } catch {}
+        try { localStorage.setItem('obsidian_pane_left_width', newWidth); } catch { }
       } else if (isDraggingRight) {
         const newWidth = Math.max(220, Math.min(750, window.innerWidth - e.clientX));
         setRightWidth(newWidth);
-        try { localStorage.setItem('obsidian_pane_right_width', newWidth); } catch {}
+        try { localStorage.setItem('obsidian_pane_right_width', newWidth); } catch { }
       }
     };
 
@@ -212,14 +212,14 @@ export const IDEWorkspacePage = () => {
             setCurrentContent(first.content || '');
             setSavedContent(first.content || '');
           } else if (activeFileRef.current && working && working.length > 0) {
-            const matching = working.find(f => 
-              (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) || 
+            const matching = working.find(f =>
+              (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
               f.filePath === activeFileRef.current.filePath
             );
             if (matching && !isRecentLocalMutation) {
               setActiveFile(matching);
               activeFileRef.current = matching;
-              setOpenFiles(prev => prev.map(of => 
+              setOpenFiles(prev => prev.map(of =>
                 (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? matching : of
               ));
               // ONLY update editor text if the local user is NOT actively typing unsaved changes
@@ -265,7 +265,7 @@ export const IDEWorkspacePage = () => {
               : (proj.project_files && proj.project_files.length > 0)
                 ? proj.project_files
                 : [];
-            
+
             // Protect master baseline from being downgraded by stale server polling
             if (serverMaster && serverMaster.length >= localMasterRef.current.length) {
               setMasterFiles(serverMaster);
@@ -288,14 +288,14 @@ export const IDEWorkspacePage = () => {
 
             // Sync active file metadata (content only if not dirty and no local mutation)
             if (activeFileRef.current && serverWorking && serverWorking.length > 0 && !isRecentLocalMutation && !hasStagedModifications) {
-              const matching = serverWorking.find(f => 
-                (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) || 
+              const matching = serverWorking.find(f =>
+                (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
                 f.filePath === activeFileRef.current.filePath
               );
               if (matching) {
                 setActiveFile(matching);
                 activeFileRef.current = matching;
-                setOpenFiles(prev => prev.map(of => 
+                setOpenFiles(prev => prev.map(of =>
                   (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? matching : of
                 ));
                 if (!isLocalDirtyRef.current && matching.content !== undefined) {
@@ -318,7 +318,7 @@ export const IDEWorkspacePage = () => {
             }
           }
         }
-      } catch (e) {}
+      } catch (e) { }
       setLoading(false);
     };
 
@@ -366,12 +366,15 @@ export const IDEWorkspacePage = () => {
           if ((msg.type === 'PEER_PRESENCE_UPDATE' || msg.type === 'PEER_DISCONNECTED') && Array.isArray(collabsList)) {
             const filtered = collabsList.filter(c => c.email && c.email.toLowerCase() !== userEmail);
             setRemoteCollaborators(filtered);
+          } else if (msg.type === 'FORK_REJECTED') {
+            setSaveSyncSuccessMsg('❌ Notice: Collaborator fork request was rejected by the Project Owner. Workspace restored to Master baseline.');
+            setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
           }
         } catch (e) {}
       };
 
-      ws.onerror = () => {};
-    } catch (e) {}
+      ws.onerror = () => { };
+    } catch (e) { }
 
     // 2. HTTP Polling Fallback for Presence & Attribution Heartbeat
     const syncPresenceAndAttribution = async () => {
@@ -401,7 +404,7 @@ export const IDEWorkspacePage = () => {
         if (attrData?.attributions) {
           setFileAttributions(attrData.attributions);
         }
-      } catch (e) {}
+      } catch (e) { }
     };
 
     syncPresenceAndAttribution();
@@ -412,7 +415,7 @@ export const IDEWorkspacePage = () => {
       if (collaborationWsRef.current) {
         try {
           collaborationWsRef.current.close();
-        } catch (e) {}
+        } catch (e) { }
       }
     };
   }, [projectId, currentUser?.email, activeFile?.filePath, activeUserRole]);
@@ -624,7 +627,7 @@ export const IDEWorkspacePage = () => {
       // 1. Persist local offline draft in browser localStorage
       try {
         localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(updatedFiles));
-      } catch (e) {}
+      } catch (e) { }
 
       // 2. Persist to Editor's Own Personal Firebase Database
       try {
@@ -654,7 +657,7 @@ export const IDEWorkspacePage = () => {
             }
           }
         }, { merge: true });
-      } catch (uErr) {}
+      } catch (uErr) { }
 
       setSaveSyncSuccessMsg(`💾 Saved ${changedFilesCount || updatedFiles.length} file(s) to your Personal Local Storage & Database!`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
@@ -730,7 +733,7 @@ export const IDEWorkspacePage = () => {
               changeSummary: `Submitted fork updates for ${targetFile.filePath}`
             })
           });
-        } catch (attrErr) {}
+        } catch (attrErr) { }
       }
 
       setSaveSyncSuccessMsg(`🍴 Fork requested! ${Object.keys(fileStatusMap).length || 1} change(s) submitted for Project Owner review.`);
@@ -874,6 +877,123 @@ export const IDEWorkspacePage = () => {
     }
   };
 
+  // ── 3. Reject Fork (Project Owner Declines Collaborator Changes & Restores Master) ──
+  const handleRejectFork = async () => {
+    if (!isProjectOwner) {
+      alert('🔒 Access Restricted: Only the Project Owner can decline or reject collaborator fork requests.');
+      return;
+    }
+
+    const confirmReject = window.confirm(
+      'Are you sure you want to reject this collaborator fork request?\n\nThis will decline the working changes and revert the shared workspace back to the canonical Master Baseline.'
+    );
+    if (!confirmReject) return;
+
+    setIsSaving(true);
+    setSaveSyncSuccessMsg('');
+    try {
+      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const userEmail = (currentUser?.email || 'owner@obsidian.io').trim().toLowerCase();
+      const timestamp = new Date().toISOString();
+
+      // Master baseline is the source of truth to restore
+      const targetMasterFiles = masterFiles && masterFiles.length > 0 ? masterFiles : files;
+
+      // 1. Reset working_files and pending_patches in Firestore
+      try {
+        await setDoc(doc(db, 'projects', projectId), {
+          working_files: targetMasterFiles,
+          project_files: targetMasterFiles,
+          pending_patches: [],
+          lastForkRejectedAt: timestamp,
+          lastForkRejectedBy: userEmail,
+          updatedAt: timestamp
+        }, { merge: true });
+
+        // Reset files subcollection to match canonical master
+        for (const f of targetMasterFiles) {
+          if (f && (f.fileId || f.filePath)) {
+            const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+            await setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+              fileId: fileDocId,
+              projectId,
+              filePath: f.filePath,
+              fileName: f.fileName || f.filePath.split('/').pop(),
+              content: f.content || '',
+              fileType: f.fileType || 'plaintext',
+              updatedAt: timestamp,
+              lastModifiedBy: userEmail
+            }, { merge: true });
+          }
+        }
+      } catch (fsErr) {
+        console.warn('Firestore reject fork reset notice:', fsErr);
+      }
+
+      // 2. Call backend reject-fork endpoint
+      try {
+        await fetch('/api/projects/reject-fork', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            projectId,
+            ownerEmail: userEmail,
+            reason: 'Fork changes declined by Project Owner'
+          })
+        });
+      } catch (apiErr) {
+        console.warn('Backend reject-fork notice:', apiErr);
+      }
+
+      // 3. Broadcast FORK_REJECTED over WebSocket
+      if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+        collaborationWsRef.current.send(JSON.stringify({
+          type: 'FORK_REJECTED',
+          projectId,
+          user: {
+            email: userEmail,
+            displayName: currentUser?.displayName || 'Project Owner',
+            role: 'OWNER'
+          }
+        }));
+      }
+
+      // 4. Update local state and editor buffers
+      localMutationTimestampRef.current = Date.now();
+      localFilesRef.current = targetMasterFiles;
+      setFiles(targetMasterFiles);
+      hasUnsavedForkChangesRef.current = false;
+      isLocalDirtyRef.current = false;
+
+      if (activeFile) {
+        const restoredActive = targetMasterFiles.find(f => f.filePath === activeFile.filePath || f.fileId === activeFile.fileId);
+        if (restoredActive) {
+          setActiveFile(restoredActive);
+          activeFileRef.current = restoredActive;
+          setCurrentContent(restoredActive.content || '');
+          setSavedContent(restoredActive.content || '');
+        } else if (targetMasterFiles.length > 0) {
+          setActiveFile(targetMasterFiles[0]);
+          activeFileRef.current = targetMasterFiles[0];
+          setCurrentContent(targetMasterFiles[0].content || '');
+          setSavedContent(targetMasterFiles[0].content || '');
+        }
+      }
+
+      setIsDiffViewActive(false);
+      setSaveSyncSuccessMsg('❌ Fork request rejected. Shared workspace restored to Master baseline.');
+      setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+    } catch (err) {
+      console.error('Error rejecting fork request:', err);
+      alert(`Failed to reject fork request: ${err.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleInviteTeammate = async () => {
     const email = window.prompt("Enter teammate email address:");
     if (!email || !email.includes('@')) return;
@@ -918,23 +1038,23 @@ export const IDEWorkspacePage = () => {
       const existingFile = files.find(f => {
         const fPath = clean(f.filePath);
         const fName = clean(f.fileName);
-        return fPath === targetClean || 
-               fName === targetClean || 
-               fName === targetBase ||
-               fPath.endsWith('/' + targetClean) || 
-               targetClean.endsWith('/' + fPath) ||
-               fPath.endsWith('/' + targetBase);
+        return fPath === targetClean ||
+          fName === targetClean ||
+          fName === targetBase ||
+          fPath.endsWith('/' + targetClean) ||
+          targetClean.endsWith('/' + fPath) ||
+          fPath.endsWith('/' + targetBase);
       });
 
       const actualFilePath = existingFile ? existingFile.filePath : targetFilePath;
       let updatedFiles;
 
       if (existingFile) {
-        updatedFiles = files.map(f => f.fileId === existingFile.fileId ? { 
-          ...f, 
-          content: newContent, 
-          updatedAt: new Date().toISOString(), 
-          lastModifiedBy: userEmail 
+        updatedFiles = files.map(f => f.fileId === existingFile.fileId ? {
+          ...f,
+          content: newContent,
+          updatedAt: new Date().toISOString(),
+          lastModifiedBy: userEmail
         } : f);
       } else {
         const fileExt = targetFilePath.split('.').pop() || 'txt';
@@ -1005,7 +1125,7 @@ export const IDEWorkspacePage = () => {
             ownerEmail: projectData?.ownerEmail
           })
         });
-      } catch (fsErr) {}
+      } catch (fsErr) { }
 
       setSaveSyncSuccessMsg(`⚡ Applied AI edits to ${actualFilePath}`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
@@ -1112,7 +1232,7 @@ export const IDEWorkspacePage = () => {
           headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
           body: JSON.stringify({ projectId, working_files: updatedFiles, master_project_files: masterFiles, userEmail, ownerEmail: projectData?.ownerEmail })
         });
-      } catch (fsErr) {}
+      } catch (fsErr) { }
 
       setSaveSyncSuccessMsg(`[→] Renamed to '${cleanNewPath}' in Working Fork`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
@@ -1165,7 +1285,7 @@ export const IDEWorkspacePage = () => {
             collaborators: projectData?.collaborators
           })
         });
-      } catch (fsErr) {}
+      } catch (fsErr) { }
 
       setSaveSyncSuccessMsg(`[-] Deleted '${fileObj.fileName}' in Working Fork (${isProjectOwner ? 'Owner merge ready' : 'Pending Owner merge'})`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
@@ -1236,7 +1356,7 @@ export const IDEWorkspacePage = () => {
             collaborators: projectData?.collaborators
           })
         });
-      } catch (fsErr) {}
+      } catch (fsErr) { }
 
       setSaveSyncSuccessMsg(`[→] Renamed folder /${cleanOld} to /${cleanNew} in Working Fork`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
@@ -1280,7 +1400,7 @@ export const IDEWorkspacePage = () => {
           headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
           body: JSON.stringify({ projectId, working_files: remaining, master_project_files: masterFiles, userEmail, ownerEmail: projectData?.ownerEmail })
         });
-      } catch (fsErr) {}
+      } catch (fsErr) { }
 
       setSaveSyncSuccessMsg(`[×] Deleted folder /${cleanFolder} from Working Fork`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
@@ -1351,8 +1471,8 @@ export const IDEWorkspacePage = () => {
         const targetFile = files.find(f => f.filePath === sourcePath);
         if (!targetFile) return;
 
-        const updatedFiles = files.map(f => 
-          f.filePath === sourcePath 
+        const updatedFiles = files.map(f =>
+          f.filePath === sourcePath
             ? { ...f, filePath: newPath, fileName, updatedAt: new Date().toISOString(), lastModifiedBy: userEmail }
             : f
         );
@@ -1386,7 +1506,7 @@ export const IDEWorkspacePage = () => {
               collaborators: projectData?.collaborators
             })
           });
-        } catch (fsErr) {}
+        } catch (fsErr) { }
 
         setSaveSyncSuccessMsg(`[→] Moved ${fileName} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'} in Working Fork`);
         setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
@@ -1459,7 +1579,7 @@ export const IDEWorkspacePage = () => {
               collaborators: projectData?.collaborators
             })
           });
-        } catch (fsErr) {}
+        } catch (fsErr) { }
 
         setSaveSyncSuccessMsg(`[→] Moved folder /${cleanOld} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'} in Working Fork`);
         setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
@@ -1651,9 +1771,9 @@ export const IDEWorkspacePage = () => {
       } else if (e.key === 'F11') {
         e.preventDefault();
         if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(() => {});
+          document.documentElement.requestFullscreen().catch(() => { });
         } else {
-          document.exitFullscreen().catch(() => {});
+          document.exitFullscreen().catch(() => { });
         }
       }
     };
@@ -1697,7 +1817,7 @@ export const IDEWorkspacePage = () => {
       <header className="fixed top-0 left-0 w-full z-[200] flex justify-between items-center px-4 h-11 bg-[#101015]/95 backdrop-blur-xl border-b border-white/10 shadow-md select-none font-mono text-xs">
         <div className="flex items-center gap-6">
           {/* Logo */}
-          <Link 
+          <Link
             to="/dashboard"
             onClick={() => navigate('/dashboard')}
             className="flex items-center gap-2 cursor-pointer group no-underline"
@@ -1715,7 +1835,7 @@ export const IDEWorkspacePage = () => {
           <nav className="hidden lg:flex items-center gap-1 text-[11px] text-zinc-400 relative z-[210]">
             {/* 1. File Menu */}
             <div className="relative">
-              <button 
+              <button
                 onClick={() => toggleMenu('file')}
                 className={`px-2.5 py-1 rounded hover:text-white hover:bg-white/5 transition-all cursor-pointer ${activeMenu === 'file' ? 'bg-white/10 text-cyan-300 font-bold' : ''}`}
               >
@@ -1724,12 +1844,12 @@ export const IDEWorkspacePage = () => {
               {activeMenu === 'file' && (
                 <div className="absolute top-8 left-0 w-64 bg-[#12131A]/98 backdrop-blur-2xl border border-white/[0.12] rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in font-sans text-xs">
                   <div className="py-1">
-                    <button 
-                      onClick={() => { 
+                    <button
+                      onClick={() => {
                         setActiveMenu(null);
                         const name = window.prompt("Enter new file path (e.g. src/module.cpp):", "src/new_file.py");
                         if (name && name.trim()) handleCreateFile(name.trim());
-                      }} 
+                      }}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer"
                     >
                       <span className="flex items-center gap-2">
@@ -1738,12 +1858,12 @@ export const IDEWorkspacePage = () => {
                       </span>
                       <span className="text-[10px] text-zinc-500 font-mono">Ctrl+N</span>
                     </button>
-                    <button 
-                      onClick={() => { 
+                    <button
+                      onClick={() => {
                         setActiveMenu(null);
                         const folder = window.prompt("Enter new folder path (e.g. src/components):", "src/utils");
                         if (folder && folder.trim()) handleCreateFolder(folder.trim());
-                      }} 
+                      }}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer"
                     >
                       <span className="flex items-center gap-2">
@@ -1756,22 +1876,22 @@ export const IDEWorkspacePage = () => {
 
                   {/* Import Submenu */}
                   <div className="py-1">
-                    <button 
-                      onClick={() => { handleTriggerImport('files', ''); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { handleTriggerImport('files', ''); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-sm text-cyan-400">file_upload</span>
                       <span>Import File(s)...</span>
                     </button>
-                    <button 
-                      onClick={() => { handleTriggerImport('folder', ''); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { handleTriggerImport('folder', ''); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-sm text-emerald-400">drive_folder_upload</span>
                       <span>Import Folder Project...</span>
                     </button>
-                    <button 
-                      onClick={() => { handleTriggerImport('zip', ''); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { handleTriggerImport('zip', ''); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-sm text-amber-400">folder_zip</span>
@@ -1780,8 +1900,8 @@ export const IDEWorkspacePage = () => {
                   </div>
 
                   <div className="py-1">
-                    <button 
-                      onClick={() => { handleSaveFile(); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { handleSaveFile(); setActiveMenu(null); }}
                       disabled={!activeFile}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center disabled:opacity-40 cursor-pointer"
                     >
@@ -1792,8 +1912,8 @@ export const IDEWorkspacePage = () => {
                       </span>
                       <span className="text-[10px] text-zinc-500 font-mono">Ctrl+S</span>
                     </button>
-                    <button 
-                      onClick={() => { handleSaveAs(); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { handleSaveAs(); setActiveMenu(null); }}
                       disabled={!activeFile}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center disabled:opacity-40 cursor-pointer"
                     >
@@ -1805,13 +1925,12 @@ export const IDEWorkspacePage = () => {
                     </button>
                   </div>
                   <div className="py-1">
-                    <button 
-                      onClick={() => { handleDownloadProjectZip(); setActiveMenu(null); }} 
-                      className={`w-full text-left px-3 py-1.5 flex justify-between items-center cursor-pointer transition-colors ${
-                        activeUserRole === 'OWNER' || projectData?.ownerId === currentUser?.uid || projectData?.ownerEmail === currentUser?.email
+                    <button
+                      onClick={() => { handleDownloadProjectZip(); setActiveMenu(null); }}
+                      className={`w-full text-left px-3 py-1.5 flex justify-between items-center cursor-pointer transition-colors ${activeUserRole === 'OWNER' || projectData?.ownerId === currentUser?.uid || projectData?.ownerEmail === currentUser?.email
                           ? 'text-cyan-300 hover:bg-cyan-500/20'
                           : 'text-zinc-500 hover:bg-white/5 opacity-70'
-                      }`}
+                        }`}
                       title={activeUserRole === 'OWNER' || projectData?.ownerId === currentUser?.uid || projectData?.ownerEmail === currentUser?.email ? "Package entire project as a compressed ZIP" : "Owner permission required"}
                     >
                       <span className="flex items-center gap-2">
@@ -1824,8 +1943,8 @@ export const IDEWorkspacePage = () => {
                         <span className="material-symbols-outlined text-xs text-zinc-500">lock</span>
                       )}
                     </button>
-                    <button 
-                      onClick={() => { handleExportProjectJson(); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { handleExportProjectJson(); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-emerald-500/15 hover:text-emerald-300 flex items-center gap-2 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-sm text-emerald-400">data_object</span>
@@ -1833,8 +1952,8 @@ export const IDEWorkspacePage = () => {
                     </button>
                   </div>
                   <div className="py-1">
-                    <button 
-                      onClick={() => { if (activeFile) handleCloseTab(activeFile); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { if (activeFile) handleCloseTab(activeFile); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer"
                     >
                       <span className="flex items-center gap-2">
@@ -1843,8 +1962,8 @@ export const IDEWorkspacePage = () => {
                       </span>
                       <span className="text-[10px] text-zinc-500 font-mono">Ctrl+W</span>
                     </button>
-                    <button 
-                      onClick={() => { window.location.reload(); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { window.location.reload(); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-sm text-zinc-400">refresh</span>
@@ -1852,8 +1971,8 @@ export const IDEWorkspacePage = () => {
                     </button>
                   </div>
                   <div className="py-1">
-                    <button 
-                      onClick={() => { navigate('/dashboard'); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { navigate('/dashboard'); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/15 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-sm text-zinc-400">dashboard</span>
@@ -1866,7 +1985,7 @@ export const IDEWorkspacePage = () => {
 
             {/* 2. Edit Menu */}
             <div className="relative">
-              <button 
+              <button
                 onClick={() => toggleMenu('edit')}
                 className={`px-2.5 py-1 rounded hover:text-white hover:bg-white/5 transition-all cursor-pointer ${activeMenu === 'edit' ? 'bg-white/10 text-cyan-300 font-bold' : ''}`}
               >
@@ -1875,19 +1994,19 @@ export const IDEWorkspacePage = () => {
               {activeMenu === 'edit' && (
                 <div className="absolute top-8 left-0 w-56 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
                   <div className="py-0.5">
-                    <button 
-                      onClick={() => { 
-                        navigator.clipboard.writeText(currentContent); 
-                        alert('Copied active editor buffer to clipboard'); 
-                        setActiveMenu(null); 
-                      }} 
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(currentContent);
+                        alert('Copied active editor buffer to clipboard');
+                        setActiveMenu(null);
+                      }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer"
                     >
                       <span>Copy Buffer</span>
                       <span className="text-[10px] text-zinc-500">Ctrl+C</span>
                     </button>
-                    <button 
-                      onClick={() => { 
+                    <button
+                      onClick={() => {
                         try {
                           const parsed = JSON.parse(currentContent);
                           setCurrentContent(JSON.stringify(parsed, null, 2));
@@ -1895,7 +2014,7 @@ export const IDEWorkspacePage = () => {
                           alert('Indentation structured.');
                         }
                         setActiveMenu(null);
-                      }} 
+                      }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer"
                     >
                       <span>Format Document</span>
@@ -1903,8 +2022,8 @@ export const IDEWorkspacePage = () => {
                     </button>
                   </div>
                   <div className="py-0.5">
-                    <button 
-                      onClick={() => { setCurrentContent(''); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { setCurrentContent(''); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 cursor-pointer"
                     >
                       Clear Buffer Content
@@ -1916,7 +2035,7 @@ export const IDEWorkspacePage = () => {
 
             {/* 3. Selection Menu */}
             <div className="relative">
-              <button 
+              <button
                 onClick={() => toggleMenu('selection')}
                 className={`px-2.5 py-1 rounded hover:text-white hover:bg-white/5 transition-all cursor-pointer ${activeMenu === 'selection' ? 'bg-white/10 text-cyan-300 font-bold' : ''}`}
               >
@@ -1924,21 +2043,21 @@ export const IDEWorkspacePage = () => {
               </button>
               {activeMenu === 'selection' && (
                 <div className="absolute top-8 left-0 w-52 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] animate-fade-in">
-                  <button 
-                    onClick={() => { 
-                      navigator.clipboard.writeText(currentContent); 
-                      setActiveMenu(null); 
-                    }} 
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(currentContent);
+                      setActiveMenu(null);
+                    }}
                     className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer"
                   >
                     <span>Select All</span>
                     <span className="text-[10px] text-zinc-500">Ctrl+A</span>
                   </button>
-                  <button 
-                    onClick={() => { 
-                      setIsShortcutsOpen(true); 
-                      setActiveMenu(null); 
-                    }} 
+                  <button
+                    onClick={() => {
+                      setIsShortcutsOpen(true);
+                      setActiveMenu(null);
+                    }}
                     className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 cursor-pointer"
                   >
                     Multi-Cursor Controls
@@ -1949,7 +2068,7 @@ export const IDEWorkspacePage = () => {
 
             {/* 4. View Menu */}
             <div className="relative">
-              <button 
+              <button
                 onClick={() => toggleMenu('view')}
                 className={`px-2.5 py-1 rounded hover:text-white hover:bg-white/5 transition-all cursor-pointer ${activeMenu === 'view' ? 'bg-white/10 text-cyan-300 font-bold' : ''}`}
               >
@@ -1959,26 +2078,25 @@ export const IDEWorkspacePage = () => {
                 <div className="absolute top-8 left-0 w-64 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
                   <div className="py-0.5">
                     {/* Live Sandbox Preview Toggle */}
-                    <button 
-                      onClick={() => { setIsSandboxOpen(prev => !prev); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { setIsSandboxOpen(prev => !prev); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer font-sans"
                     >
                       <span className="flex items-center gap-2">
                         <span className="material-symbols-outlined text-sm text-emerald-400">preview</span>
                         <span>Live Sandbox Preview</span>
                       </span>
-                      <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${
-                        isSandboxOpen 
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
+                      <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${isSandboxOpen
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                           : 'bg-white/5 text-zinc-500 border-white/5'
-                      }`}>
+                        }`}>
                         {isSandboxOpen ? '✓ ON' : 'OFF'}
                       </span>
                     </button>
 
                     {/* Integrated Terminal Toggle */}
-                    <button 
-                      onClick={() => { setIsExecTerminalOpen(prev => !prev); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { setIsExecTerminalOpen(prev => !prev); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer font-sans"
                     >
                       <span className="flex items-center gap-2">
@@ -1989,26 +2107,25 @@ export const IDEWorkspacePage = () => {
                     </button>
 
                     {/* AI Assistant Sidebar Toggle */}
-                    <button 
-                      onClick={() => { setIsAIChatOpen(prev => !prev); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { setIsAIChatOpen(prev => !prev); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer font-sans"
                     >
                       <span className="flex items-center gap-2">
                         <span className="material-symbols-outlined text-sm text-purple-400">auto_awesome</span>
                         <span>AI Assistant Sidebar</span>
                       </span>
-                      <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${
-                        isAIChatOpen 
-                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' 
+                      <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${isAIChatOpen
+                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
                           : 'bg-white/5 text-zinc-500 border-white/5'
-                      }`}>
+                        }`}>
                         {isAIChatOpen ? '✓ ON' : 'OFF'}
                       </span>
                     </button>
 
                     {/* Live Repository Diffs */}
-                    <button 
-                      onClick={() => { setIsDiffViewActive(prev => !prev); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { setIsDiffViewActive(prev => !prev); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer font-sans"
                     >
                       <span className="flex items-center gap-2">
@@ -2021,33 +2138,32 @@ export const IDEWorkspacePage = () => {
                     </button>
 
                     {/* Active Collaborators Toggle */}
-                    <button 
-                      onClick={() => { setShowActiveCollaborators(prev => !prev); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { setShowActiveCollaborators(prev => !prev); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer font-sans"
                     >
                       <span className="flex items-center gap-2">
                         <span className="material-symbols-outlined text-sm text-sky-400">group</span>
                         <span>Active Collaborators</span>
                       </span>
-                      <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${
-                        showActiveCollaborators 
-                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' 
+                      <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${showActiveCollaborators
+                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
                           : 'bg-white/5 text-zinc-500 border-white/5'
-                      }`}>
+                        }`}>
                         {showActiveCollaborators ? `✓ ON (${remoteCollaborators.length + 1})` : 'OFF'}
                       </span>
                     </button>
                   </div>
                   <div className="py-0.5">
-                    <button 
-                      onClick={() => { 
+                    <button
+                      onClick={() => {
                         if (!document.fullscreenElement) {
-                          document.documentElement.requestFullscreen().catch(() => {});
+                          document.documentElement.requestFullscreen().catch(() => { });
                         } else {
-                          document.exitFullscreen().catch(() => {});
+                          document.exitFullscreen().catch(() => { });
                         }
                         setActiveMenu(null);
-                      }} 
+                      }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer"
                     >
                       <span>Toggle Fullscreen</span>
@@ -2060,7 +2176,7 @@ export const IDEWorkspacePage = () => {
 
             {/* 5. Run Menu */}
             <div className="relative">
-              <button 
+              <button
                 onClick={() => toggleMenu('run')}
                 className={`px-2.5 py-1 rounded hover:text-white hover:bg-white/5 transition-all cursor-pointer ${activeMenu === 'run' ? 'bg-white/10 text-cyan-300 font-bold' : ''}`}
               >
@@ -2069,27 +2185,27 @@ export const IDEWorkspacePage = () => {
               {activeMenu === 'run' && (
                 <div className="absolute top-8 left-0 w-60 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
                   <div className="py-0.5">
-                    <button 
-                      onClick={() => { handleRunCode(); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { handleRunCode(); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 font-bold flex justify-between items-center cursor-pointer"
                     >
                       <span>▶ Run Code</span>
                       <span className="text-[10px] text-zinc-500">Ctrl+R / F5</span>
                     </button>
-                    <button 
-                      onClick={() => { 
-                        setIsExecTerminalOpen(true); 
-                        setActiveTerminalTab('interactive'); 
-                        setActiveMenu(null); 
-                      }} 
+                    <button
+                      onClick={() => {
+                        setIsExecTerminalOpen(true);
+                        setActiveTerminalTab('interactive');
+                        setActiveMenu(null);
+                      }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 cursor-pointer"
                     >
                       Interactive Terminal Execution
                     </button>
                   </div>
                   <div className="py-0.5">
-                    <button 
-                      onClick={() => { setExecutionOutput(null); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { setExecutionOutput(null); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-400 hover:bg-white/5 hover:text-zinc-200 cursor-pointer"
                     >
                       Clear Output Console
@@ -2101,7 +2217,7 @@ export const IDEWorkspacePage = () => {
 
             {/* 6. Terminal Menu */}
             <div className="relative">
-              <button 
+              <button
                 onClick={() => toggleMenu('terminal')}
                 className={`px-2.5 py-1 rounded hover:text-white hover:bg-white/5 transition-all cursor-pointer ${activeMenu === 'terminal' ? 'bg-white/10 text-cyan-300 font-bold' : ''}`}
               >
@@ -2109,22 +2225,22 @@ export const IDEWorkspacePage = () => {
               </button>
               {activeMenu === 'terminal' && (
                 <div className="absolute top-8 left-0 w-56 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] animate-fade-in">
-                  <button 
-                    onClick={() => { 
-                      setIsExecTerminalOpen(true); 
-                      setActiveTerminalTab('interactive'); 
-                      setActiveMenu(null); 
-                    }} 
+                  <button
+                    onClick={() => {
+                      setIsExecTerminalOpen(true);
+                      setActiveTerminalTab('interactive');
+                      setActiveMenu(null);
+                    }}
                     className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 flex justify-between items-center cursor-pointer"
                   >
                     <span>New Terminal</span>
                     <span className="text-[10px] text-zinc-500">Ctrl+`</span>
                   </button>
-                  <button 
-                    onClick={() => { 
+                  <button
+                    onClick={() => {
                       handleRunCode();
-                      setActiveMenu(null); 
-                    }} 
+                      setActiveMenu(null);
+                    }}
                     className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 cursor-pointer"
                   >
                     Run Active File
@@ -2135,7 +2251,7 @@ export const IDEWorkspacePage = () => {
 
             {/* 7. Help Menu */}
             <div className="relative">
-              <button 
+              <button
                 onClick={() => toggleMenu('help')}
                 className={`px-2.5 py-1 rounded hover:text-white hover:bg-white/5 transition-all cursor-pointer ${activeMenu === 'help' ? 'bg-white/10 text-cyan-300 font-bold' : ''}`}
               >
@@ -2144,26 +2260,26 @@ export const IDEWorkspacePage = () => {
               {activeMenu === 'help' && (
                 <div className="absolute top-8 left-0 w-60 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
                   <div className="py-0.5">
-                    <button 
-                      onClick={() => { setIsShortcutsOpen(true); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { setIsShortcutsOpen(true); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-cyan-300 hover:bg-cyan-500/15 hover:text-cyan-200 flex justify-between items-center cursor-pointer font-bold"
                     >
                       <span>Keyboard Shortcuts</span>
                       <span className="text-[10px] text-zinc-500">Ctrl+K</span>
                     </button>
-                    <button 
-                      onClick={() => { window.open('https://github.com', '_blank'); setActiveMenu(null); }} 
+                    <button
+                      onClick={() => { window.open('https://github.com', '_blank'); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-cyan-500/15 hover:text-cyan-300 cursor-pointer"
                     >
                       Documentation & Guide
                     </button>
                   </div>
                   <div className="py-0.5">
-                    <button 
-                      onClick={() => { 
-                        alert('ObsidianIDE v2.0\nCloud-Powered Collaborative Development Engine with Secure Sandboxed Terminal.'); 
-                        setActiveMenu(null); 
-                      }} 
+                    <button
+                      onClick={() => {
+                        alert('ObsidianIDE v2.0\nCloud-Powered Collaborative Development Engine with Secure Sandboxed Terminal.');
+                        setActiveMenu(null);
+                      }}
                       className="w-full text-left px-3 py-1.5 text-zinc-400 hover:bg-white/5 hover:text-zinc-200 cursor-pointer"
                     >
                       About ObsidianIDE
@@ -2178,18 +2294,17 @@ export const IDEWorkspacePage = () => {
         {/* Right Actions: Role Badge, Run Code Play Button, Link Meet, AI Assistant, Master Save & Sync, Theme Toggle */}
         <div className="flex items-center gap-3">
           {/* Active User Access Role Badge */}
-          <span className={`px-2.5 py-1 text-[10px] font-bold uppercase rounded-md border font-mono ${
-            activeUserRole === 'OWNER' 
-              ? 'bg-amber-950/60 text-amber-300 border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.2)]' 
-              : activeUserRole === 'REVIEWER' 
-                ? 'bg-purple-950/60 text-purple-300 border-purple-500/40' 
+          <span className={`px-2.5 py-1 text-[10px] font-bold uppercase rounded-md border font-mono ${activeUserRole === 'OWNER'
+              ? 'bg-amber-950/60 text-amber-300 border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.2)]'
+              : activeUserRole === 'REVIEWER'
+                ? 'bg-purple-950/60 text-purple-300 border-purple-500/40'
                 : 'bg-cyan-950/60 text-cyan-300 border-cyan-500/40'
-          }`}>
+            }`}>
             {activeUserRole}
           </span>
 
           {/* ── Single Unified Clean Play Button (Run Code) ── */}
-          <button 
+          <button
             onClick={handleRunCode}
             disabled={isExecuting || !activeFile}
             className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border border-emerald-400/40 px-3.5 py-1 text-xs rounded-md font-bold transition-all shadow-[0_0_14px_rgba(16,185,129,0.35)] hover:shadow-[0_0_20px_rgba(16,185,129,0.5)] cursor-pointer disabled:opacity-50 active:scale-95 font-mono"
@@ -2261,7 +2376,7 @@ export const IDEWorkspacePage = () => {
 
                   {/* Remote Active Collaborators */}
                   {remoteCollaborators.map(c => (
-                    <div 
+                    <div
                       key={c.email}
                       onClick={() => {
                         if (c.activeFilePath) {
@@ -2273,7 +2388,7 @@ export const IDEWorkspacePage = () => {
                       className="flex items-center justify-between p-1.5 rounded hover:bg-white/5 border border-white/[0.04] text-xs cursor-pointer transition-colors"
                     >
                       <div className="flex items-center gap-2">
-                        <div 
+                        <div
                           className="w-6 h-6 rounded-full text-black font-bold flex items-center justify-center text-[10px]"
                           style={{ backgroundColor: c.color || '#00DCE5' }}
                         >
@@ -2295,7 +2410,7 @@ export const IDEWorkspacePage = () => {
           </div>
 
           {/* Invite Teammate */}
-          <button 
+          <button
             onClick={handleInviteTeammate}
             className="flex items-center gap-1.5 bg-zinc-900/90 text-zinc-300 border border-white/10 px-2.5 py-1 text-xs rounded-md hover:border-cyan-400/50 hover:text-cyan-300 transition-colors cursor-pointer"
             title="Invite Teammate to Project Workspace"
@@ -2304,7 +2419,7 @@ export const IDEWorkspacePage = () => {
             <span className="hidden sm:inline">Invite</span>
           </button>
 
-          <button 
+          <button
             onClick={() => window.open('https://meet.google.com/new', '_blank')}
             className="flex items-center gap-2 bg-cyan-950/40 text-primary-fixed-dim border border-cyan-800/40 px-3 py-1 text-xs rounded hover:bg-cyan-900/50 transition-colors cursor-pointer"
           >
@@ -2313,7 +2428,7 @@ export const IDEWorkspacePage = () => {
           </button>
 
           {/* Agentic AI Assistant Trigger Button (Top Right) */}
-          <button 
+          <button
             onClick={() => setIsAIChatOpen(!isAIChatOpen)}
             className="flex items-center gap-1.5 bg-gradient-to-r from-cyan-600 to-purple-600 text-white px-3 py-1 text-xs rounded font-bold hover:brightness-110 transition-all shadow-[0_0_12px_#00dce5] cursor-pointer"
           >
@@ -2323,20 +2438,33 @@ export const IDEWorkspacePage = () => {
 
           {/* ── Dual-Tier Architecture: Owner Master Commit vs Editor Local Save & Fork Request ── */}
           {isProjectOwner ? (
-            <button
-              onClick={handleSaveAndSyncMaster}
-              disabled={isSaving}
-              className="flex items-center gap-1.5 bg-gradient-to-r from-cyan-600 via-teal-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white px-3.5 py-1 text-xs rounded-md font-bold transition-all shadow-[0_0_15px_rgba(6,182,212,0.4)] cursor-pointer font-mono active:scale-95 disabled:opacity-50"
-              title="Commit and merge all live Working Fork modifications into the canonical Master Repository"
-            >
-              <span className="material-symbols-outlined text-sm">{isSaving ? 'sync' : 'cloud_sync'}</span>
-              <span>{isSaving ? 'Merging...' : 'Save & Sync to Master'}</span>
-              {Object.keys(fileStatusMap).length > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-black/40 text-[10px] font-mono border border-white/20">
-                  {Object.keys(fileStatusMap).length}
-                </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSaveAndSyncMaster}
+                disabled={isSaving}
+                className="flex items-center gap-1.5 bg-gradient-to-r from-cyan-600 via-teal-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white px-3.5 py-1 text-xs rounded-md font-bold transition-all shadow-[0_0_15px_rgba(6,182,212,0.4)] cursor-pointer font-mono active:scale-95 disabled:opacity-50"
+                title="Commit and merge all live Working Fork modifications into the canonical Master Repository"
+              >
+                <span className="material-symbols-outlined text-sm">{isSaving ? 'sync' : 'cloud_sync'}</span>
+                <span>{isSaving ? 'Merging...' : 'Save & Sync to Master'}</span>
+                {Object.keys(fileStatusMap).length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-black/40 text-[10px] font-mono border border-white/20">
+                    {Object.keys(fileStatusMap).length}
+                  </span>
+                )}
+              </button>
+              {collaboratorPendingChangesCount > 0 && (
+                <button
+                  onClick={handleRejectFork}
+                  disabled={isSaving}
+                  className="flex items-center gap-1 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-500/40 hover:border-rose-400 px-2.5 py-1 text-xs rounded-md font-bold transition-all shadow-sm cursor-pointer font-mono active:scale-95 disabled:opacity-50 animate-fade-in"
+                  title="Decline collaborator working fork and restore shared workspace to Master baseline"
+                >
+                  <span className="material-symbols-outlined text-sm">{isSaving ? 'sync' : 'cancel'}</span>
+                  <span>Reject Fork</span>
+                </button>
               )}
-            </button>
+            </div>
           ) : (
             <div className="flex items-center gap-2">
               <button
@@ -2387,7 +2515,7 @@ export const IDEWorkspacePage = () => {
         ) : (
           <>
             {/* Pane A: Left-Hand Directory Explorer */}
-            <FileExplorer 
+            <FileExplorer
               files={files}
               activeFile={activeFile}
               onSelectFile={handleSelectFile}
@@ -2407,11 +2535,10 @@ export const IDEWorkspacePage = () => {
             />
 
             {/* ── Left Draggable Partition Splitter (Explorer <-> Editor) ── */}
-            <div 
+            <div
               onMouseDown={() => setIsDraggingLeft(true)}
-              className={`w-1.5 hover:w-2 bg-white/[0.06] hover:bg-cyan-500 cursor-col-resize z-40 transition-all select-none relative group shrink-0 ${
-                isDraggingLeft ? 'bg-cyan-400 !w-2 shadow-[0_0_10px_#06b6d4]' : ''
-              }`}
+              className={`w-1.5 hover:w-2 bg-white/[0.06] hover:bg-cyan-500 cursor-col-resize z-40 transition-all select-none relative group shrink-0 ${isDraggingLeft ? 'bg-cyan-400 !w-2 shadow-[0_0_10px_#06b6d4]' : ''
+                }`}
               title="Drag to resize Directory Explorer"
             >
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-0.5 h-6 bg-zinc-600 group-hover:bg-black rounded-full pointer-events-none" />
@@ -2447,13 +2574,33 @@ export const IDEWorkspacePage = () => {
 
               {/* 3. Owner Pending Merge Review Banner (Shown to Owner when Collaborators submitted changes) */}
               {isProjectOwner && collaboratorPendingChangesCount > 0 && (
-                <div className="bg-cyan-950/80 border-b border-cyan-500/40 px-4 py-1.5 flex items-center justify-between text-xs font-mono text-cyan-200 shrink-0 z-20 shadow-md">
+                <div className="bg-cyan-950/90 border-b border-cyan-500/40 px-4 py-1.5 flex items-center justify-between text-xs font-mono text-cyan-200 shrink-0 z-20 shadow-md flex-wrap gap-2">
                   <div className="flex items-center gap-2.5">
                     <span className="material-symbols-outlined text-base text-cyan-400">rate_review</span>
                     <div>
                       <span className="font-bold text-cyan-300">Pending Review:</span>{' '}
-                      <span>{collaboratorPendingChangesCount} collaborator working change(s) pending your merge into the Master Repository.</span>
+                      <span>{collaboratorPendingChangesCount} collaborator working change(s) pending your review.</span>
                     </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleSaveAndSyncMaster}
+                      disabled={isSaving}
+                      className="px-2.5 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                      title="Approve and merge collaborator changes into Master"
+                    >
+                      <span className="material-symbols-outlined text-xs">check_circle</span>
+                      <span>Merge to Master</span>
+                    </button>
+                    <button
+                      onClick={handleRejectFork}
+                      disabled={isSaving}
+                      className="px-2.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                      title="Decline changes and restore Master baseline"
+                    >
+                      <span className="material-symbols-outlined text-xs">cancel</span>
+                      <span>Reject Fork</span>
+                    </button>
                   </div>
                 </div>
               )}
@@ -2466,13 +2613,12 @@ export const IDEWorkspacePage = () => {
                       {activeFile.fileName || activeFile.filePath.split('/').pop()}
                     </span>
                     {fileStatusMap[activeFile.filePath] && (
-                      <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
-                        fileStatusMap[activeFile.filePath] === 'ADDED'
+                      <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${fileStatusMap[activeFile.filePath] === 'ADDED'
                           ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'
                           : fileStatusMap[activeFile.filePath] === 'MODIFIED'
                             ? 'bg-amber-950 text-amber-300 border border-amber-500/40'
                             : 'bg-rose-950 text-rose-300 border border-rose-500/40'
-                      }`}>
+                        }`}>
                         {fileStatusMap[activeFile.filePath] === 'ADDED' ? '• NEW FILE' : '• MODIFIED'}
                       </span>
                     )}
@@ -2482,22 +2628,20 @@ export const IDEWorkspacePage = () => {
                   <div className="flex items-center bg-black/50 p-0.5 rounded-lg border border-white/10 text-[11px]">
                     <button
                       onClick={() => setIsDiffViewActive(false)}
-                      className={`px-2.5 py-0.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
-                        !isDiffViewActive 
-                          ? 'bg-cyan-600 text-white font-bold shadow' 
+                      className={`px-2.5 py-0.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${!isDiffViewActive
+                          ? 'bg-cyan-600 text-white font-bold shadow'
                           : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
+                        }`}
                     >
                       <span className="material-symbols-outlined text-xs">code</span>
                       <span>Edit Code</span>
                     </button>
                     <button
                       onClick={() => setIsDiffViewActive(true)}
-                      className={`px-2.5 py-0.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
-                        isDiffViewActive 
-                          ? 'bg-purple-600 text-white font-bold shadow' 
+                      className={`px-2.5 py-0.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${isDiffViewActive
+                          ? 'bg-purple-600 text-white font-bold shadow'
                           : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
+                        }`}
                     >
                       <span className="material-symbols-outlined text-xs">difference</span>
                       <span>View Diff vs Master</span>
@@ -2522,7 +2666,7 @@ export const IDEWorkspacePage = () => {
                   onClose={() => setIsDiffViewActive(false)}
                 />
               ) : (
-                <MonacoEditorCanvas 
+                <MonacoEditorCanvas
                   openFiles={openFiles}
                   activeFile={activeFile}
                   onSelectTab={handleSelectTab}
@@ -2543,11 +2687,10 @@ export const IDEWorkspacePage = () => {
 
             {/* ── Right Draggable Partition Splitter (Editor <-> Live Sandbox) ── */}
             {isSandboxOpen && (
-              <div 
+              <div
                 onMouseDown={() => setIsDraggingRight(true)}
-                className={`w-1.5 hover:w-2 bg-white/[0.06] hover:bg-cyan-500 cursor-col-resize z-40 transition-all select-none relative group shrink-0 ${
-                  isDraggingRight ? 'bg-cyan-400 !w-2 shadow-[0_0_10px_#06b6d4]' : ''
-                }`}
+                className={`w-1.5 hover:w-2 bg-white/[0.06] hover:bg-cyan-500 cursor-col-resize z-40 transition-all select-none relative group shrink-0 ${isDraggingRight ? 'bg-cyan-400 !w-2 shadow-[0_0_10px_#06b6d4]' : ''
+                  }`}
                 title="Drag to resize Live Sandbox"
               >
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-0.5 h-6 bg-zinc-600 group-hover:bg-black rounded-full pointer-events-none" />
@@ -2556,9 +2699,9 @@ export const IDEWorkspacePage = () => {
 
             {/* Pane C: Right-Hand Live Preview Sandbox Frame (Toggleable via View Menu) */}
             {isSandboxOpen && (
-              <SandboxPreview 
-                content={currentContent} 
-                activeFilePath={activeFile?.filePath || ''} 
+              <SandboxPreview
+                content={currentContent}
+                activeFilePath={activeFile?.filePath || ''}
                 onClose={() => setIsSandboxOpen(false)}
                 width={rightWidth}
               />
@@ -2566,12 +2709,12 @@ export const IDEWorkspacePage = () => {
 
             {/* ── Integrated Terminal Bottom Drawer ── */}
             {isExecTerminalOpen && (
-              <div 
+              <div
                 className="absolute bottom-8 bg-[#0A0A0D] border-t border-white/[0.08] shadow-2xl z-[150] flex flex-col transition-all duration-75"
-                style={{ 
-                  left: `${leftWidth}px`, 
-                  right: isSandboxOpen ? `${rightWidth}px` : '0px', 
-                  height: '300px' 
+                style={{
+                  left: `${leftWidth}px`,
+                  right: isSandboxOpen ? `${rightWidth}px` : '0px',
+                  height: '300px'
                 }}
               >
                 {/* Terminal Header */}
@@ -2673,28 +2816,28 @@ export const IDEWorkspacePage = () => {
       />
 
       {/* Hidden File Input Pickers */}
-      <input 
-        type="file" 
-        multiple 
-        ref={fileInputRef} 
-        onChange={handleFilePickerChange} 
-        className="hidden" 
+      <input
+        type="file"
+        multiple
+        ref={fileInputRef}
+        onChange={handleFilePickerChange}
+        className="hidden"
       />
-      <input 
-        type="file" 
-        webkitdirectory="" 
-        directory="" 
-        multiple 
-        ref={folderInputRef} 
-        onChange={handleFolderPickerChange} 
-        className="hidden" 
+      <input
+        type="file"
+        webkitdirectory=""
+        directory=""
+        multiple
+        ref={folderInputRef}
+        onChange={handleFolderPickerChange}
+        className="hidden"
       />
-      <input 
-        type="file" 
-        accept=".zip" 
-        ref={zipInputRef} 
-        onChange={handleZipPickerChange} 
-        className="hidden" 
+      <input
+        type="file"
+        accept=".zip"
+        ref={zipInputRef}
+        onChange={handleZipPickerChange}
+        className="hidden"
       />
     </div>
   );
