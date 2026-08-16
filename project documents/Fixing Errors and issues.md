@@ -1732,6 +1732,23 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Automated integration test verified project creation, editor modifications (`/api/projects/save-and-sync`), owner permanent deletion (`DELETE /api/projects/:projectId`), and verified the project does NOT exist on refresh.
   - Built with `npm run build` with **0 errors in 9.58s**.
 
+
+---
+
+### Issue #135: Real-Time Synchronization of Owner File, Folder, and Code Mutations to Connected Collaborators
+* **Symptoms**: When the Project Owner created new files, added directories, renamed files/folders, deleted files/folders, or made live code updates in the IDE workspace, these changes did not appear in real time on the Editor's workspace.
+* **Root Cause**:
+  1. `handleCreateFile`, `handleCreateFolder`, `handleRenameFile`, `handleDeleteFile`, `handleRenameFolder`, `handleDeleteFolder`, and `handleMoveItem` in `IDEWorkspacePage.jsx` were targeting only `working_files` without committing to the canonical `master_project_files` / `project_files` baseline in Firestore when executed by the Project Owner.
+  2. The REST endpoint `POST /api/projects/update-files` was invoked by client file mutations but did not exist on the backend router, causing background HTTP errors.
+  3. The WebSocket server and client did not broadcast or listen for a dedicated `FILES_UPDATED` event during file tree mutations.
+* **Solutions Implemented**:
+  1. **Dual Baseline Synchronization in `IDEWorkspacePage.jsx`**: Updated all file and folder mutation handlers (`handleCreateFile`, `handleCreateFolder`, `handleRenameFile`, `handleDeleteFile`, `handleRenameFolder`, `handleDeleteFolder`, `handleMoveItem`) so that when the Project Owner modifies the file tree or code, changes are committed simultaneously to `working_files`, `master_project_files`, and `project_files` in Firestore.
+  2. **Backend Endpoints `POST /api/projects/update-files` & `POST /api/projects/sync-master`**: Created resilient backend routes in `server/routes/projectRoutes.js` that update in-memory caches and Firestore Admin collections for both working files and master project baselines.
+  3. **Real-Time WebSocket Protocol (`FILES_UPDATED`)**: Added `FILES_UPDATED` message broadcast in `server/routes/collaborationRoutes.js` and listener in `IDEWorkspacePage.jsx` `ws.onmessage`. Connected collaborators' `FileExplorer` tree, active tabs, and editor buffers update instantly without requiring manual page reloads.
+* **QA & Automated Verification**:
+  - Executed automated integration test simulating Owner initialization, file/folder creations (`src/utils.py`, `docs/.keep`), and code edits on `src/main.py`, verifying that the Editor receives all changes.
+  - Production build `npm run build` completed with **0 errors in 10.11s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
