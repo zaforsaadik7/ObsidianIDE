@@ -351,17 +351,20 @@ export const IDEWorkspacePage = () => {
 
       ws.onopen = () => {
         ws.send(JSON.stringify({
-          type: 'JOIN_PROJECT',
+          type: 'JOIN_ROOM',
           projectId,
-          user: userPayload
+          user: userPayload,
+          activeFilePath: activeFileRef.current?.filePath || activeFile?.filePath || '',
+          cursor: localCursorRef.current || { lineNumber: 1, column: 1 }
         }));
       };
 
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'PEER_PRESENCE_UPDATE' && Array.isArray(msg.collaborators)) {
-            const filtered = msg.collaborators.filter(c => c.email && c.email.toLowerCase() !== userEmail);
+          const collabsList = msg.activeCollaborators || msg.collaborators;
+          if ((msg.type === 'PEER_PRESENCE_UPDATE' || msg.type === 'PEER_DISCONNECTED') && Array.isArray(collabsList)) {
+            const filtered = collabsList.filter(c => c.email && c.email.toLowerCase() !== userEmail);
             setRemoteCollaborators(filtered);
           }
         } catch (e) {}
@@ -373,14 +376,24 @@ export const IDEWorkspacePage = () => {
     // 2. HTTP Polling Fallback for Presence & Attribution Heartbeat
     const syncPresenceAndAttribution = async () => {
       try {
-        await fetch(`/api/collaboration/${projectId}/presence`, {
+        const presRes = await fetch(`/api/collaboration/${projectId}/presence`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ...userPayload,
-            activeFilePath: activeFileRef.current?.filePath || ''
+            activeFilePath: activeFileRef.current?.filePath || activeFile?.filePath || '',
+            cursor: localCursorRef.current || { lineNumber: 1, column: 1 }
           })
         });
+
+        if (presRes.ok) {
+          const presData = await presRes.json();
+          const collabsList = presData?.activeCollaborators || presData?.collaborators;
+          if (Array.isArray(collabsList)) {
+            const filtered = collabsList.filter(c => c.email && c.email.toLowerCase() !== userEmail);
+            setRemoteCollaborators(filtered);
+          }
+        }
 
         // Fetch attribution changelog
         const attrRes = await fetch(`/api/collaboration/${projectId}/attribution`);
@@ -392,7 +405,7 @@ export const IDEWorkspacePage = () => {
     };
 
     syncPresenceAndAttribution();
-    const heartbeatInterval = setInterval(syncPresenceAndAttribution, 5000);
+    const heartbeatInterval = setInterval(syncPresenceAndAttribution, 3000);
 
     return () => {
       clearInterval(heartbeatInterval);
@@ -407,6 +420,7 @@ export const IDEWorkspacePage = () => {
   // Handler for local cursor position update from Monaco editor
   const handleLocalCursorChange = (cursorPos) => {
     localCursorRef.current = cursorPos;
+    const currentPath = activeFileRef.current?.filePath || activeFile?.filePath || '';
     if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
       collaborationWsRef.current.send(JSON.stringify({
         type: 'CURSOR_MOVE',
@@ -414,9 +428,11 @@ export const IDEWorkspacePage = () => {
         user: {
           email: currentUser?.email,
           displayName: currentUser?.displayName || userProfile?.info?.fullName || currentUser?.email?.split('@')[0],
-          role: activeUserRole
+          username: userProfile?.info?.username || `@${currentUser?.email?.split('@')[0]}`,
+          avatarUrl: currentUser?.photoURL || userProfile?.info?.avatarUrl || '',
+          role: activeUserRole || 'EDITOR'
         },
-        activeFilePath: activeFile?.filePath || '',
+        activeFilePath: currentPath,
         cursor: cursorPos
       }));
     }

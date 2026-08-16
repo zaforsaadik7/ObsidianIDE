@@ -1453,6 +1453,26 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Pushed to `origin/main`. Render automatically re-built and deployed the React frontend.
   - Production build `npm run build` compiled with **0 errors in 10.29s**.
 
+### 117. Real-Time Multi-Collaborator Presence Count & Remote Cursor Line Tags Fix (v65)
+* **Problem / Bug**:
+  - In an active project with 2 collaborators working online, the top bar presence indicator showed only the user himself (1 Online) instead of showing all active peers (2 Online).
+  - In Monaco Editor, when a collaborator moved their cursor or typed code on a file, their remote cursor and floating name tag widget ("Sayhito Saadik - Ln 25") did not show up on the current line.
+* **Root Causes Identified**:
+  1. Frontend sent WebSocket message type `JOIN_PROJECT`, while backend `collaborationRoutes.js` expected `JOIN_ROOM`, causing initial WebSocket room subscriptions to be ignored.
+  2. Backend broadcasted `activeCollaborators`, while frontend `ws.onmessage` checked `msg.collaborators`, causing `setRemoteCollaborators` to never be called.
+  3. HTTP presence polling (`POST /api/collaboration/:projectId/presence`) did not parse the response JSON, so `remoteCollaborators` remained an empty array `[]`.
+  4. In `MonacoEditorCanvas.jsx`, `widget.getPosition()` captured `line` and `col` in the initial closure, returning stale line coordinates on subsequent cursor moves.
+  5. `activeFileRef` was not tracked during presence heartbeats, resulting in empty `activeFilePath` payloads that failed file matching.
+* **Solutions Implemented**:
+  1. Updated `collaborationRoutes.js` to accept both `JOIN_PROJECT` and `JOIN_ROOM`, and broadcast both `activeCollaborators` and `collaborators`.
+  2. Updated `IDEWorkspacePage.jsx` to parse presence payloads from both WebSocket events and HTTP polling, filtering out self and storing all active peers in `remoteCollaborators`.
+  3. Updated `MonacoEditorCanvas.jsx` to dynamically update `widget.currentPosition` and improved file path normalization (`isSameFile`).
+  4. Synced `activeFileRef.current = activeFile` and broadcasted real-time cursor events on line/column shifts and file switches.
+* **QA & Automated Verification**:
+  - Simulated two concurrent users (Owner & Editor) joining over WebSockets. Verified Owner received Editor's presence on `src/main.py` and cursor jump to Line 25, Col 8 in real time.
+  - Verified REST presence endpoint returns `activeCollaborators.length === 2`.
+  - Built with `npm run build` with **0 errors in 11.29s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*

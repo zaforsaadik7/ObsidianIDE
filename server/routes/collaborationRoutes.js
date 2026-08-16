@@ -101,7 +101,8 @@ router.post('/:projectId/presence', (req, res) => {
       status: 'SUCCESS',
       projectId,
       self: presenceData,
-      activeCollaborators: activePeers
+      activeCollaborators: activePeers,
+      collaborators: activePeers
     });
   } catch (err) {
     console.error('Collaboration presence heartbeat error:', err);
@@ -258,7 +259,7 @@ export const createCollaborationWebSocket = () => {
         }
         const room = projectRooms.get(projectId);
 
-        if (type === 'JOIN_ROOM' || type === 'HEARTBEAT' || type === 'CURSOR_MOVE') {
+        if (type === 'JOIN_ROOM' || type === 'JOIN_PROJECT' || type === 'HEARTBEAT' || type === 'CURSOR_MOVE') {
           const presenceData = {
             email,
             displayName: user.displayName || email.split('@')[0],
@@ -275,12 +276,14 @@ export const createCollaborationWebSocket = () => {
           room.set(email, presenceData);
           clientSockets.set(ws, { projectId, email });
 
+          const activeList = Array.from(room.values());
           // Broadcast to everyone else in this project
           broadcastToRoom(projectId, {
             type: 'PEER_PRESENCE_UPDATE',
             projectId,
             user: presenceData,
-            activeCollaborators: Array.from(room.values())
+            activeCollaborators: activeList,
+            collaborators: activeList
           });
         } else if (type === 'FILE_MODIFIED') {
           // Log attribution
@@ -311,11 +314,13 @@ export const createCollaborationWebSocket = () => {
         const room = projectRooms.get(projectId);
         if (room) {
           room.delete(email);
+          const activeList = Array.from(room.values());
           broadcastToRoom(projectId, {
             type: 'PEER_DISCONNECTED',
             projectId,
             email,
-            activeCollaborators: Array.from(room.values())
+            activeCollaborators: activeList,
+            collaborators: activeList
           });
         }
       }

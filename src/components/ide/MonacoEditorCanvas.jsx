@@ -244,12 +244,21 @@ export const MonacoEditorCanvas = ({
     // Filter peers active in the same file (excluding self)
     const activePeersOnSameFile = (showActiveCollaborators ? remoteCollaborators : []).filter(c => {
       const isSelf = currentUserEmail && c.email && c.email.toLowerCase() === currentUserEmail.toLowerCase();
-      const isSameFile = activeFile && (
-        c.activeFilePath === activeFile.filePath ||
-        c.activeFilePath === activeFile.fileName ||
-        (activeFile.filePath && c.activeFilePath && c.activeFilePath.endsWith(activeFile.filePath))
+      if (isSelf) return false;
+      if (!activeFile) return false;
+
+      const currentFilePath = (activeFile.filePath || activeFile.fileName || '').replace(/^[\\\/]+/, '');
+      const peerFilePath = (c.activeFilePath || '').replace(/^[\\\/]+/, '');
+
+      if (!peerFilePath) return true;
+
+      const isSameFile = (
+        peerFilePath === currentFilePath ||
+        peerFilePath.endsWith(currentFilePath) ||
+        currentFilePath.endsWith(peerFilePath) ||
+        peerFilePath.split('/').pop() === currentFilePath.split('/').pop()
       );
-      return !isSelf && isSameFile;
+      return isSameFile;
     });
 
     // 1. Update Monaco Line/Glyph Decorations
@@ -328,13 +337,16 @@ export const MonacoEditorCanvas = ({
         widget = {
           getId: () => widgetId,
           getDomNode: () => domNode,
-          getPosition: () => ({
-            position: { lineNumber: line, column: col },
-            preference: [
-              monaco.editor.ContentWidgetPositionPreference.ABOVE,
-              monaco.editor.ContentWidgetPositionPreference.BELOW
-            ]
-          })
+          currentPosition: { lineNumber: line, column: col },
+          getPosition: function() {
+            return {
+              position: this.currentPosition,
+              preference: [
+                monaco.editor.ContentWidgetPositionPreference.ABOVE,
+                monaco.editor.ContentWidgetPositionPreference.BELOW
+              ]
+            };
+          }
         };
 
         contentWidgetsRef.current.set(collab.email, widget);
@@ -342,6 +354,9 @@ export const MonacoEditorCanvas = ({
           editor.addContentWidget(widget);
         } catch (e) {}
       }
+
+      // Dynamically update current position
+      widget.currentPosition = { lineNumber: line, column: col };
 
       // Update widget DOM representation
       const domNode = widget.getDomNode();
