@@ -1473,6 +1473,23 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Verified REST presence endpoint returns `activeCollaborators.length === 2`.
   - Built with `npm run build` with **0 errors in 11.29s**.
 
+### 118. Owner vs Editor Fork Request & Review Permissions Isolation Fix (v66)
+* **Problem / Bug**:
+  - When the Project Owner made changes or uploaded files, the Editor was incorrectly prompted to "Request Fork" to the Owner, and the Editor saw the "Working Fork Active (Pending Owner Review)" banner for changes made by the Owner.
+* **Root Cause**:
+  - `fileStatusMap` was computed purely based on differences between working files and master files, without checking who authored the modifications (`wf.lastModifiedBy`). As a result, any unmerged change in the shared workspace was treated as a pending fork by the viewer.
+* **Solutions Implemented**:
+  1. Author Attribution Gating: Analyzed `wf.lastModifiedBy` and active editor buffer state to separate Editor-authored changes (`hasEditorForkChanges`) from Owner-authored master changes (`hasOwnerAuthoredChanges`).
+  2. "Request Fork" Button Gating: The "Request Fork" button now ONLY renders for non-owner collaborators who have authored staged or uncommitted local changes.
+  3. Dynamic Banner Gating:
+     - For Editors with uncommitted working changes: Displays the amber "Working Fork Active" banner with a "Request Fork" action.
+     - For Editors viewing Owner updates: Displays the cyan "Master Updated by Owner" notice and provides a "Save to Local" action without showing a fork request.
+     - For Project Owner: Displays the cyan "Pending Review" banner only when non-owner collaborators have submitted working changes.
+* **QA & Automated Verification**:
+  - Tested Owner editing scenarios: Verified Owner has `hasEditorForkChanges === false` and Editor has `hasEditorForkChanges === false` (0 fork request prompts).
+  - Tested Editor editing scenarios: Verified Editor has `hasEditorForkChanges === true` (Request Fork rendered) and Owner receives `collaboratorPendingChangesCount === 1`.
+  - Built with `npm run build` with **0 errors in 9.52s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*

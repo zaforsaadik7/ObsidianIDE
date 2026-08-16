@@ -470,6 +470,57 @@ export const IDEWorkspacePage = () => {
     return status;
   }, [files, masterFiles, activeFile, currentContent]);
 
+  // Detect who authored the unmerged changes in the workspace
+  const { hasEditorForkChanges, hasOwnerAuthoredChanges, editorAuthoredChangesCount, collaboratorPendingChangesCount } = useMemo(() => {
+    const ownerEmail = (projectData?.ownerEmail || '').toLowerCase().trim();
+    const userEmail = (currentUser?.email || '').toLowerCase().trim();
+
+    if (!masterFiles || masterFiles.length === 0) {
+      return { hasEditorForkChanges: false, hasOwnerAuthoredChanges: false, editorAuthoredChangesCount: 0, collaboratorPendingChangesCount: 0 };
+    }
+
+    const masterPathMap = new Map(masterFiles.map(f => [f.filePath, f]));
+    const hasLocalBufferDirty = Boolean(isLocalDirtyRef.current || hasUnsavedForkChangesRef.current || (activeFile && currentContent !== savedContent));
+
+    let editorCount = 0;
+    let ownerChangesExist = false;
+    let collabCount = 0;
+
+    (files || []).forEach(wf => {
+      const mf = masterPathMap.get(wf.filePath);
+      const isEffectiveMod = !mf || mf.content !== (activeFile && wf.filePath === activeFile.filePath && currentContent !== undefined ? currentContent : wf.content);
+      if (isEffectiveMod) {
+        const author = (wf.lastModifiedBy || '').toLowerCase().trim();
+        if (author === ownerEmail) {
+          ownerChangesExist = true;
+        } else if (author === userEmail) {
+          editorCount++;
+        } else if (author && author !== ownerEmail) {
+          collabCount++;
+        } else {
+          // If no author recorded, treat as current user's local working change
+          if (!isProjectOwner) editorCount++;
+        }
+      }
+    });
+
+    (masterFiles || []).forEach(mf => {
+      const isDeletedInWorking = !files.some(wf => wf.filePath === mf.filePath);
+      if (isDeletedInWorking) {
+        if (!isProjectOwner) editorCount++;
+      }
+    });
+
+    const hasForkChanges = !isProjectOwner && (hasLocalBufferDirty || editorCount > 0);
+
+    return {
+      hasEditorForkChanges: hasForkChanges,
+      hasOwnerAuthoredChanges: ownerChangesExist,
+      editorAuthoredChangesCount: editorCount,
+      collaboratorPendingChangesCount: collabCount + (isProjectOwner ? editorCount : 0)
+    };
+  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner]);
+
   const activeMasterFile = useMemo(() => {
     if (!activeFile) return null;
     return (masterFiles || []).find(f => f.filePath === activeFile.filePath) || null;
@@ -2297,8 +2348,8 @@ export const IDEWorkspacePage = () => {
                 <span className="material-symbols-outlined text-sm">{isSaving ? 'sync' : 'save'}</span>
                 <span>Save to Local</span>
               </button>
-              {/* Request Fork button dynamically appears whenever code is modified or files are staged/forked */}
-              {(Object.keys(fileStatusMap).length > 0 || isLocalDirtyRef.current || hasUnsavedForkChangesRef.current) && (
+              {/* Request Fork button ONLY appears when Editor has modified code or staged uncommitted changes */}
+              {hasEditorForkChanges && (
                 <button
                   onClick={handleRequestFork}
                   disabled={isSaving}
@@ -2307,9 +2358,9 @@ export const IDEWorkspacePage = () => {
                 >
                   <span className="material-symbols-outlined text-sm">{isSaving ? 'sync' : 'fork_right'}</span>
                   <span>Request Fork</span>
-                  {Object.keys(fileStatusMap).length > 0 && (
+                  {editorAuthoredChangesCount > 0 && (
                     <span className="px-1.5 py-0.2 rounded-full bg-black/40 text-[10px] font-mono border border-white/20">
-                      {Object.keys(fileStatusMap).length}
+                      {editorAuthoredChangesCount}
                     </span>
                   )}
                 </button>
@@ -2368,27 +2419,40 @@ export const IDEWorkspacePage = () => {
 
             {/* Pane B: Central Development Area (Monaco Editor / GitHub Diff / Binary Asset Viewer) */}
             <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-[#0E0E12]">
-              {/* Working Fork & Pending Owner Acceptance Banner */}
-              {!isProjectOwner && Object.keys(fileStatusMap).length > 0 && (
+              {/* 1. Working Fork Active (Shown to Editor ONLY when Editor has staged changes) */}
+              {!isProjectOwner && hasEditorForkChanges && (
                 <div className="bg-amber-950/80 border-b border-amber-500/40 px-4 py-1.5 flex items-center justify-between text-xs font-mono text-amber-200 shrink-0 z-20 shadow-md">
                   <div className="flex items-center gap-2.5">
                     <span className="material-symbols-outlined text-base text-amber-400 animate-pulse">fork_right</span>
                     <div>
                       <span className="font-bold text-amber-300">Working Fork Active:</span>{' '}
-                      <span>{Object.keys(fileStatusMap).length} file change{Object.keys(fileStatusMap).length > 1 ? 's' : ''} staged (Pending Project Owner review & merge into Master).</span>
+                      <span>{editorAuthoredChangesCount || 1} file change(s) staged by you (Pending Project Owner review & merge into Master).</span>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Owner Pending Merge Review Banner */}
-              {isProjectOwner && Object.keys(fileStatusMap).length > 0 && (
+              {/* 2. Master Updated by Owner (Shown to Editor when Owner modified files) */}
+              {!isProjectOwner && !hasEditorForkChanges && hasOwnerAuthoredChanges && (
+                <div className="bg-cyan-950/80 border-b border-cyan-500/40 px-4 py-1.5 flex items-center justify-between text-xs font-mono text-cyan-200 shrink-0 z-20 shadow-md">
+                  <div className="flex items-center gap-2.5">
+                    <span className="material-symbols-outlined text-base text-cyan-400">cloud_download</span>
+                    <div>
+                      <span className="font-bold text-cyan-300">Master Updated by Owner:</span>{' '}
+                      <span>The Project Owner updated repository files. Click &apos;Save to Local&apos; to save a copy into your personal storage.</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. Owner Pending Merge Review Banner (Shown to Owner when Collaborators submitted changes) */}
+              {isProjectOwner && collaboratorPendingChangesCount > 0 && (
                 <div className="bg-cyan-950/80 border-b border-cyan-500/40 px-4 py-1.5 flex items-center justify-between text-xs font-mono text-cyan-200 shrink-0 z-20 shadow-md">
                   <div className="flex items-center gap-2.5">
                     <span className="material-symbols-outlined text-base text-cyan-400">rate_review</span>
                     <div>
                       <span className="font-bold text-cyan-300">Pending Review:</span>{' '}
-                      <span>{Object.keys(fileStatusMap).length} working change{Object.keys(fileStatusMap).length > 1 ? 's' : ''} pending your merge into the Master Repository.</span>
+                      <span>{collaboratorPendingChangesCount} collaborator working change(s) pending your merge into the Master Repository.</span>
                     </div>
                   </div>
                 </div>
