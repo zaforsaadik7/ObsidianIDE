@@ -33,6 +33,17 @@ export const DashboardPage = () => {
     const userEmailNorm = (currentUser.email || '').trim().toLowerCase();
     const projectMap = {};
 
+    // Per-user deleted project tracking to guarantee unlinked projects never resurrect
+    const deletedMap = {
+      ...(userProfile?.deletedProjects || {})
+    };
+    try {
+      const storedDeleted = localStorage.getItem(`obsidian_deleted_projects_${userEmailNorm}`);
+      if (storedDeleted) {
+        Object.assign(deletedMap, JSON.parse(storedDeleted));
+      }
+    } catch (e) {}
+
     const formatProjectTitle = (rawTitle, fallbackId) => {
       if (rawTitle && typeof rawTitle === 'string' && rawTitle.trim()) {
         const t = rawTitle.trim();
@@ -70,6 +81,11 @@ export const DashboardPage = () => {
       const pid = p.projectId || p.id || fallbackId;
       if (!pid) return;
 
+      // Filter out projects deleted by this user
+      if (deletedMap[pid] || deletedMap[fallbackId] || deletedMap[p.projectId]) {
+        return;
+      }
+
       // Filter out legacy template mocks unless genuinely associated with user
       if (pid === 'quantum-router-01' || pid === 'nexus-graph-db-02') {
         const ownerNorm = (p.ownerEmail || '').trim().toLowerCase();
@@ -91,6 +107,10 @@ export const DashboardPage = () => {
         : (existing.projectId && String(existing.projectId).startsWith('proj_'))
           ? existing.projectId
           : pid;
+
+      if (deletedMap[chosenPid]) {
+        return;
+      }
 
       const rawTitle = p.title || existing.title;
       const resolvedTitle = formatProjectTitle(rawTitle, chosenPid);
@@ -120,8 +140,14 @@ export const DashboardPage = () => {
       const cleanDocId = userEmailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_');
       const userDocRef = doc(db, 'users', cleanDocId);
       const userDocSnap = await getDoc(userDocRef);
-      if (userDocSnap.exists() && userDocSnap.data().projects) {
-        Object.entries(userDocSnap.data().projects).forEach(([key, p]) => upsertProject(p, key));
+      if (userDocSnap.exists()) {
+        const uData = userDocSnap.data();
+        if (uData.deletedProjects) {
+          Object.assign(deletedMap, uData.deletedProjects);
+        }
+        if (uData.projects) {
+          Object.entries(uData.projects).forEach(([key, p]) => upsertProject(p, key));
+        }
       }
     } catch (fsErr) {
       console.warn("Client Firestore user projects lookup notice:", fsErr);
@@ -197,6 +223,11 @@ export const DashboardPage = () => {
 
     try {
       // 1. Purge from AuthContext userProfile state & LocalStorage Cache
+      const updatedDeleted = { ...(userProfile?.deletedProjects || {}), [pid]: true };
+      try {
+        localStorage.setItem(`obsidian_deleted_projects_${userEmailNorm}`, JSON.stringify(updatedDeleted));
+      } catch (e) {}
+
       if (setUserProfile) {
         setUserProfile(prev => {
           if (!prev) return prev;
@@ -204,7 +235,11 @@ export const DashboardPage = () => {
           delete updatedProjects[pid];
           return {
             ...prev,
-            projects: updatedProjects
+            projects: updatedProjects,
+            deletedProjects: {
+              ...(prev.deletedProjects || {}),
+              [pid]: true
+            }
           };
         });
       }
@@ -215,8 +250,9 @@ export const DashboardPage = () => {
           const parsed = JSON.parse(rawProfile);
           if (parsed?.projects?.[pid]) {
             delete parsed.projects[pid];
-            localStorage.setItem('obsidian_active_profile', JSON.stringify(parsed));
           }
+          parsed.deletedProjects = { ...(parsed.deletedProjects || {}), [pid]: true };
+          localStorage.setItem('obsidian_active_profile', JSON.stringify(parsed));
         }
       } catch (e) {}
 
@@ -226,30 +262,22 @@ export const DashboardPage = () => {
         if (cleanDocId) {
           const userRef = doc(db, 'users', cleanDocId);
           const userSnap = await getDoc(userRef).catch(() => null);
-          if (userSnap && userSnap.exists()) {
-            const uData = userSnap.data();
-            const uProjects = { ...(uData.projects || {}) };
-            delete uProjects[pid];
-            await setDoc(userRef, { projects: uProjects }, { merge: true }).catch(() => {});
-          }
+          const uData = userSnap?.exists() ? userSnap.data() : {};
+          const uProjects = { ...(uData.projects || {}) };
+          delete uProjects[pid];
+          await setDoc(userRef, {
+            projects: uProjects,
+            deletedProjects: {
+              ...(uData.deletedProjects || {}),
+              [pid]: true
+            }
+          }, { merge: true }).catch(() => {});
         }
 
         const projRef = doc(db, 'projects', pid);
         if (isOwner) {
           // Permanently delete canonical project document from website database
           await deleteDoc(projRef).catch(() => {});
-        } else {
-          // Unlink collaborator by rewriting clean collaborators map
-          const projSnap = await getDoc(projRef).catch(() => null);
-          if (projSnap && projSnap.exists()) {
-            const pData = projSnap.data();
-            const collabs = { ...(pData.collaborators || {}) };
-            delete collabs[userEmailNorm];
-            if (currentUser?.email) {
-              delete collabs[currentUser.email];
-            }
-            await setDoc(projRef, { collaborators: collabs }, { merge: true }).catch(() => {});
-          }
         }
       } catch (fsErr) {
         console.warn('Firestore project deletion notice:', fsErr);
@@ -260,7 +288,7 @@ export const DashboardPage = () => {
         await deleteProjectFromPersonalFirestore(pid, userProfile, currentUser?.email);
       } catch (pErr) {}
 
-      // 4. Call backend REST DELETE endpoint
+      // 4. Call backend REST DELETE endpoint (unlinks collaborator from server & repository)
       try {
         const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
         await fetch(`/api/projects/${pid}?userEmail=${encodeURIComponent(currentUser?.email || '')}`, {
@@ -275,7 +303,7 @@ export const DashboardPage = () => {
 
       // 5. Remove from UI state for this user
       setProjects(prev => prev.filter(p => p.projectId !== pid));
-      showToast(isOwner ? `✓ Repository '${title}' permanently deleted.` : `✓ Repository '${title}' unlinked from your workspace.`);
+      showToast(isOwner ? `✓ Repository '${title}' permanently deleted.` : `✓ Repository '${title}' removed from your workspace.`);
       setDeleteTargetProject(null);
     } catch (err) {
       alert(`Failed to remove project: ${err.message}`);

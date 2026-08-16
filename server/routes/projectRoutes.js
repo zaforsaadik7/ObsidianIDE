@@ -333,6 +333,15 @@ router.delete('/:projectId', async (req, res) => {
       });
     } else {
       // If collaborator: unlink collaborator from the project
+      const memProj = inMemoryProjectStore.get(projectId);
+      if (memProj && memProj.collaborators) {
+        Object.keys(memProj.collaborators).forEach(key => {
+          if (key.trim().toLowerCase() === userEmail) {
+            delete memProj.collaborators[key];
+          }
+        });
+      }
+
       if (adminDb) {
         try {
           const projRef = adminDb.collection('projects').doc(projectId);
@@ -340,8 +349,11 @@ router.delete('/:projectId', async (req, res) => {
           if (projSnap.exists) {
             const data = projSnap.data();
             const collabs = { ...(data.collaborators || {}) };
-            delete collabs[userEmail];
-            delete collabs[req.query.userEmail];
+            Object.keys(collabs).forEach(key => {
+              if (key.trim().toLowerCase() === userEmail) {
+                delete collabs[key];
+              }
+            });
             await projRef.set({ collaborators: collabs }, { merge: true });
           }
 
@@ -352,7 +364,13 @@ router.delete('/:projectId', async (req, res) => {
             const uData = uSnap.data();
             const uProjects = { ...(uData.projects || {}) };
             delete uProjects[projectId];
-            await userRef.set({ projects: uProjects }, { merge: true });
+            await userRef.set({
+              projects: uProjects,
+              deletedProjects: {
+                ...(uData.deletedProjects || {}),
+                [projectId]: true
+              }
+            }, { merge: true });
           }
         } catch (collabErr) {
           console.warn('AdminDB collaborator unlink notice:', collabErr.message);
