@@ -161,22 +161,28 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
         })
       });
 
-      // Send live invitation emails to all added collaborators
-      for (const c of collaborators) {
-        fetch('/api/projects/send-invite-email', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({
-            to: c.email,
-            ownerEmail,
-            projectTitle: title.trim(),
-            projectId: pid,
-            role: c.role || 'EDITOR'
+      // Send live invitation emails to all added collaborators and await resolution
+      if (collaborators.length > 0) {
+        const emailPromises = collaborators.map(c => 
+          fetch('/api/projects/send-invite-email', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify({
+              to: c.email,
+              ownerEmail,
+              projectTitle: title.trim(),
+              projectId: pid,
+              role: c.role || 'EDITOR'
+            })
+          }).then(r => r.json()).catch(e => {
+            console.warn('Direct invite email dispatch notice:', e);
+            return { success: false, error: e.message };
           })
-        }).catch(e => console.warn('Direct invite email dispatch notice:', e));
+        );
+        await Promise.allSettled(emailPromises);
       }
     } catch (err) {
       console.warn('Backend project creation notice:', err);

@@ -6,8 +6,8 @@ import nodemailer from 'nodemailer';
  * dual-part plaintext/HTML body structure, and clean deliverability rules.
  */
 
-// Initialize SMTP Transporter with robust SSL connection and credentials verification
-const createTransporter = () => {
+// Helper to resolve validated SMTP credentials with automatic fallback
+const getSmtpCredentials = () => {
   let user = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
   let pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').replace(/\s+/g, '');
 
@@ -17,17 +17,7 @@ const createTransporter = () => {
     pass = 'ovpwysjacgsmgqkq';
   }
 
-  // Direct SSL Port 465 Configuration (Works reliably across Render, AWS, GCP, Heroku, and Localhost)
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '465', 10),
-    secure: true,
-    auth: { user, pass },
-    tls: { rejectUnauthorized: false },
-    connectionTimeout: 15000,
-    greetingTimeout: 10000,
-    socketTimeout: 20000
-  });
+  return { user, pass };
 };
 
 export const sendProjectInvitationEmail = async ({
@@ -38,10 +28,22 @@ export const sendProjectInvitationEmail = async ({
   role,
   inviteUrl
 }) => {
-  const transporter = createTransporter();
+  const { user: authUser, pass: authPass } = getSmtpCredentials();
+
+  // Direct SSL Port 465 Configuration (Works reliably across Render, AWS, GCP, Heroku, and Localhost)
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT || '465', 10),
+    secure: true,
+    auth: { user: authUser, pass: authPass },
+    tls: { rejectUnauthorized: false },
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000
+  });
+
   const domain = process.env.APP_DOMAIN || 'obsidianide.com';
   const cleanTitle = (projectTitle || 'Project Workspace').trim();
-  const timestamp = new Date().toISOString();
   const messageId = `<inv-${projectId}-${Date.now()}@${domain}>`;
 
   // 1. Plain Text Alternative Body (Crucial for Anti-Spam Scores & High Deliverability)
@@ -131,14 +133,9 @@ ${domain}
 </html>
 `.trim();
 
-  // 3. Strict RFC Anti-Spam MIME Headers with 100% SPF/DKIM Aligned Sender
-  const configuredUser = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
-  const authSender = (configuredUser && !configuredUser.includes('your_') && configuredUser.includes('@')) 
-    ? configuredUser 
-    : 'bubt768@gmail.com';
-
+  // 3. Strict RFC Anti-Spam MIME Headers with 100% Matching Authenticated Sender Address
   const mailOptions = {
-    from: `"ObsidianIDE System" <${authSender}>`,
+    from: `"ObsidianIDE" <${authUser}>`,
     to,
     replyTo: ownerEmail,
     subject: `Invitation to collaborate on project: ${cleanTitle}`,
@@ -154,10 +151,10 @@ ${domain}
 
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log(`✉️ [EMAIL DISPATCH] Invitation sent from "ObsidianIDE" to ${to} [Subject: ${mailOptions.subject}]`);
+    console.log(`✉️ [EMAIL DISPATCH SUCCESS] Sent from ${authUser} to ${to} for project "${cleanTitle}" [MessageId: ${info.messageId}]`);
     return { success: true, messageId, info };
   } catch (err) {
-    console.warn(`Notice sending invitation email to ${to}:`, err.message);
+    console.error(`❌ [EMAIL DISPATCH ERROR] Failed sending to ${to}:`, err.message);
     return { success: false, error: err.message, messageId };
   }
 };
