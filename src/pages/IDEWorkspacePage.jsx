@@ -377,6 +377,7 @@ export const IDEWorkspacePage = () => {
               localFilesRef.current = msg.master_project_files;
               hasUnsavedForkChangesRef.current = false;
               isLocalDirtyRef.current = false;
+              localMutationTimestampRef.current = 0;
             }
             setSaveSyncSuccessMsg('🎉 Fork request accepted & merged into Master Repository!');
             setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
@@ -482,7 +483,8 @@ export const IDEWorkspacePage = () => {
     // Added or Modified in Working Fork
     (files || []).forEach(wf => {
       const mf = masterPathMap.get(wf.filePath);
-      const effectiveContent = (activeFile && wf.filePath === activeFile.filePath && currentContent !== undefined)
+      const isBinary = isBinaryFile(wf.filePath);
+      const effectiveContent = (activeFile && wf.filePath === activeFile.filePath && !isBinary && currentContent !== undefined)
         ? currentContent
         : wf.content;
       if (!mf) {
@@ -512,7 +514,7 @@ export const IDEWorkspacePage = () => {
     }
 
     const masterPathMap = new Map(masterFiles.map(f => [f.filePath, f]));
-    const hasLocalBufferDirty = Boolean(isLocalDirtyRef.current || hasUnsavedForkChangesRef.current || (activeFile && currentContent !== savedContent));
+    const hasLocalBufferDirty = Boolean(isLocalDirtyRef.current || hasUnsavedForkChangesRef.current || (activeFile && !isBinaryFile(activeFile?.filePath) && currentContent !== savedContent));
 
     let editorCount = 0;
     let ownerChangesExist = false;
@@ -520,7 +522,8 @@ export const IDEWorkspacePage = () => {
 
     (files || []).forEach(wf => {
       const mf = masterPathMap.get(wf.filePath);
-      const isEffectiveMod = !mf || mf.content !== (activeFile && wf.filePath === activeFile.filePath && currentContent !== undefined ? currentContent : wf.content);
+      const isBinary = isBinaryFile(wf.filePath);
+      const isEffectiveMod = !mf || mf.content !== (activeFile && wf.filePath === activeFile.filePath && !isBinary && currentContent !== undefined ? currentContent : wf.content);
       if (isEffectiveMod) {
         const author = (wf.lastModifiedBy || '').toLowerCase().trim();
         if (author === ownerEmail) {
@@ -543,7 +546,8 @@ export const IDEWorkspacePage = () => {
       }
     });
 
-    const hasForkChanges = !isProjectOwner && (hasLocalBufferDirty || editorCount > 0);
+    // If all working files match master baseline 1:1, fork changes is false
+    const hasForkChanges = !isProjectOwner && (editorCount > 0 || (hasLocalBufferDirty && Object.keys(fileStatusMap).length > 0));
 
     return {
       hasEditorForkChanges: hasForkChanges,
@@ -551,7 +555,7 @@ export const IDEWorkspacePage = () => {
       editorAuthoredChangesCount: editorCount,
       collaboratorPendingChangesCount: collabCount + (isProjectOwner ? editorCount : 0)
     };
-  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner]);
+  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner, fileStatusMap]);
 
   const activeMasterFile = useMemo(() => {
     if (!activeFile) return null;

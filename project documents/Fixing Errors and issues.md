@@ -1560,6 +1560,21 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Executed two-client real-time WebSocket and database verification test: confirmed single-click `FORK_REQUESTED` delivery, 100% database Master baseline isolation (unmerged until approved), and clean reset upon `POST /reject-fork`.
   - Built with `npm run build` with **0 errors in 9.97s**.
 
+### 123. Real-Time Editor Fork Banner & Diff Clearance on Owner Merge (v71)
+* **Problem / Bug**:
+  - When the Project Owner accepted and merged fork changes, the Master repository updated, but the Editor's panel continued showing "Fork: 15 changes" and the amber "Working Fork Active" banner remained on screen.
+* **Root Causes**:
+  1. Active File Text Buffer Leak in Diff Calculation: In `fileStatusMap` and `hasEditorForkChanges`, `effectiveContent` was evaluated using `currentContent` (the Monaco text buffer) even when an active binary asset (.png image) was selected. This falsely flagged binary assets as `MODIFIED` instead of recognizing they matched Master.
+  2. Local Buffer Flag Lock: `hasEditorForkChanges` checked `hasLocalBufferDirty` without verifying if `Object.keys(fileStatusMap).length > 0`, keeping the fork banner active even after files matched Master 1:1.
+  3. WebSocket Master Sync State: `FORK_ACCEPTED` handler needed to explicitly clear `localMutationTimestampRef.current = 0` to prevent temporary mutation guards from blocking snapshot updates.
+* **Solutions Implemented**:
+  1. Binary File Isolation in Diffing: Updated `fileStatusMap` and `hasEditorForkChanges` to strictly check `!isBinaryFile(wf.filePath)` before reading `currentContent`, ensuring image assets evaluate cleanly against `mf.content`.
+  2. Fork Banner Auto-Dismissal: `hasForkChanges` now requires `editorCount > 0 || (hasLocalBufferDirty && Object.keys(fileStatusMap).length > 0)`. When Master files match working files, all 15 changes immediately drop to 0 and the amber banner dismisses.
+  3. Clean State Reset on `FORK_ACCEPTED`: `ws.onmessage` sets `masterFiles = msg.master_project_files`, `files = msg.master_project_files`, clears `hasUnsavedForkChangesRef.current = false`, `isLocalDirtyRef.current = false`, and resets `localMutationTimestampRef.current = 0`.
+* **QA & Automated Verification**:
+  - Executed end-to-end multi-client simulation test: verified that upon Owner merge, the Editor's unmerged changes count drops from 15 to **0** and `masterFiles` updates to 15 files with **100% pass rate**.
+  - Built with `npm run build` with **0 errors in 9.84s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
