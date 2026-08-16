@@ -2453,11 +2453,11 @@ export const IDEWorkspacePage = () => {
                   </span>
                 )}
               </button>
-              {collaboratorPendingChangesCount > 0 && (
+              {Object.keys(fileStatusMap).length > 0 && (
                 <button
                   onClick={handleRejectFork}
                   disabled={isSaving}
-                  className="flex items-center gap-1 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-500/40 hover:border-rose-400 px-2.5 py-1 text-xs rounded-md font-bold transition-all shadow-sm cursor-pointer font-mono active:scale-95 disabled:opacity-50 animate-fade-in"
+                  className="flex items-center gap-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white px-3 py-1 text-xs rounded-md font-bold transition-all shadow-[0_0_12px_rgba(239,68,68,0.4)] cursor-pointer font-mono active:scale-95 disabled:opacity-50 animate-fade-in"
                   title="Decline collaborator working fork and restore shared workspace to Master baseline"
                 >
                   <span className="material-symbols-outlined text-sm">{isSaving ? 'sync' : 'cancel'}</span>
@@ -2572,21 +2572,21 @@ export const IDEWorkspacePage = () => {
                 </div>
               )}
 
-              {/* 3. Owner Pending Merge Review Banner (Shown to Owner when Collaborators submitted changes) */}
-              {isProjectOwner && collaboratorPendingChangesCount > 0 && (
-                <div className="bg-cyan-950/90 border-b border-cyan-500/40 px-4 py-1.5 flex items-center justify-between text-xs font-mono text-cyan-200 shrink-0 z-20 shadow-md flex-wrap gap-2">
+              {/* 3. Owner Pending Merge Review Banner (Shown to Owner when workspace has changes) */}
+              {isProjectOwner && Object.keys(fileStatusMap).length > 0 && (
+                <div className="bg-cyan-950/95 border-b border-cyan-500/50 px-4 py-1.5 flex items-center justify-between text-xs font-mono text-cyan-200 shrink-0 z-20 shadow-lg flex-wrap gap-2 animate-fade-in">
                   <div className="flex items-center gap-2.5">
-                    <span className="material-symbols-outlined text-base text-cyan-400">rate_review</span>
+                    <span className="material-symbols-outlined text-base text-cyan-400 animate-pulse">rate_review</span>
                     <div>
                       <span className="font-bold text-cyan-300">Pending Review:</span>{' '}
-                      <span>{collaboratorPendingChangesCount} collaborator working change(s) pending your review.</span>
+                      <span>{Object.keys(fileStatusMap).length} working change{Object.keys(fileStatusMap).length > 1 ? 's' : ''} staged (Accept & Merge or Reject & Restore Master).</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleSaveAndSyncMaster}
                       disabled={isSaving}
-                      className="px-2.5 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                      className="px-3 py-1 rounded bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shadow-md active:scale-95"
                       title="Approve and merge collaborator changes into Master"
                     >
                       <span className="material-symbols-outlined text-xs">check_circle</span>
@@ -2595,7 +2595,7 @@ export const IDEWorkspacePage = () => {
                     <button
                       onClick={handleRejectFork}
                       disabled={isSaving}
-                      className="px-2.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                      className="px-3 py-1 rounded bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shadow-md active:scale-95"
                       title="Decline changes and restore Master baseline"
                     >
                       <span className="material-symbols-outlined text-xs">cancel</span>
