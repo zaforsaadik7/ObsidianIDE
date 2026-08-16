@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { db } from '../../firebase';
 import { doc, setDoc } from 'firebase/firestore';
 import { syncProjectToPersonalFirestore } from '../../services/personalFirebaseStorage';
+import { stageAndDispatchInvitationEmail } from '../../utils/emailQueueService';
 
 export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
   const { currentUser, userProfile } = useAuth();
@@ -161,24 +162,19 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
         })
       });
 
-      // Send live invitation emails to all added collaborators and await resolution
+      // Stage and dispatch live invitation emails via Firebase Outbox Queue
       if (collaborators.length > 0) {
         const emailPromises = collaborators.map(c => 
-          fetch('/api/projects/send-invite-email', {
-            method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json',
-              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-            },
-            body: JSON.stringify({
-              to: c.email,
-              ownerEmail,
-              projectTitle: title.trim(),
-              projectId: pid,
-              role: c.role || 'EDITOR'
-            })
-          }).then(r => r.json()).catch(e => {
-            console.warn('Direct invite email dispatch notice:', e);
+          stageAndDispatchInvitationEmail({
+            to: c.email,
+            ownerEmail,
+            projectTitle: title.trim(),
+            projectId: pid,
+            role: c.role || 'EDITOR',
+            inviteUrl: inviteLinks[c.email],
+            currentUser
+          }).catch(e => {
+            console.warn('Queue invite email notice:', e);
             return { success: false, error: e.message };
           })
         );

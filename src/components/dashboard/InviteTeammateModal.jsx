@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { stageAndDispatchInvitationEmail } from '../../utils/emailQueueService';
 
 export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) => {
   const [email, setEmail] = useState('');
@@ -32,6 +33,18 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
     setSuccessMsg('');
 
     try {
+      // 1. Stage in Firebase Queue and dispatch
+      await stageAndDispatchInvitationEmail({
+        to: email.trim(),
+        ownerEmail: projOwner,
+        projectTitle: projTitle,
+        projectId: project.projectId,
+        role,
+        inviteUrl,
+        currentUser
+      });
+
+      // 2. Register collaborator on backend API
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
       const res = await fetch(`/api/projects/${project.projectId}/invite`, {
         method: 'POST',
