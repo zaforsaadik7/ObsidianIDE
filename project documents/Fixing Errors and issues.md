@@ -1690,6 +1690,19 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Verified pre-filled Gmail Compose URL parameters across all invitation flows.
   - Built with `npm run build` with **0 errors in 9.37s**.
 
+### 132. Restored Pure Google Mail SMTP Dispatcher with Full Metadata (v80)
+* **Problem / Bug**:
+  - Resend interceptor caused 403 sandbox restrictions when inviting external collaborator emails.
+* **Root Causes**:
+  - Resend sandbox mode intercepted outgoing dispatch calls and rejected non-owner email recipients with 403 errors.
+* **Solutions Implemented**:
+  1. Restored Pure Google Gmail SMTP Dispatch: Removed Resend and Brevo interceptors from `server/utils/emailService.js` and restored Google's direct SMTP dispatcher (`bubt768@gmail.com`).
+  2. Complete Metadata Formatting: Ensured all generated invitation emails contain the exact project title, owner account, assigned role, and exact repository URL (`https://obsidianide.onrender.com/invite/...`).
+  3. Integrated Multi-Channel Accessibility: Provided direct 1-Click Copy and 1-Click Gmail Web Compose buttons across all creation and invitation modals.
+* **QA & Automated Verification**:
+  - Verified that SMTP parameters match Google Mail specifications.
+  - Built with `npm run build` with **0 errors in 9.84s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
