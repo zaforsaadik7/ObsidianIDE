@@ -255,12 +255,22 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
                         type="button"
                         onClick={() => {
                           navigator.clipboard.writeText(fullUrl);
-                          alert(`Invite link copied for ${c.email}:\n${fullUrl}`);
+                          alert(`✓ Invite link copied to clipboard for ${c.email}:\n\n${fullUrl}`);
                         }}
-                        className="bg-cyan-950 text-cyan-300 border border-cyan-700 px-2 py-1 text-[10px] font-bold hover:bg-cyan-900 transition-colors"
+                        className="bg-cyan-950 text-cyan-300 border border-cyan-700 px-2 py-1 text-[10px] font-bold hover:bg-cyan-900 transition-colors cursor-pointer"
+                        title="Copy direct invite link"
                       >
                         Copy
                       </button>
+                      <a
+                        href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(c.email)}&su=${encodeURIComponent(`[ObsidianIDE] Invitation to Collaborate on ${title.trim()}`)}&body=${encodeURIComponent(`Hello,\n\nYou have been invited to join the project workspace "${title.trim()}" on ObsidianIDE as a ${c.role}.\n\nClick the link below to accept and enter the live IDE workspace:\n${fullUrl}\n\nBest regards,\n${currentUser?.email || 'ObsidianIDE Owner'}`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-red-950 text-red-300 border border-red-800 px-2 py-1 text-[10px] font-bold hover:bg-red-900 transition-colors flex items-center gap-1 cursor-pointer no-underline"
+                        title="Open in Gmail Web Compose"
+                      >
+                        ✉️ Gmail
+                      </a>
                     </div>
                   </div>
                 );

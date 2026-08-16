@@ -136,7 +136,7 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
           {/* Shareable Link Box */}
           <div className="p-3 bg-purple-950/20 border border-purple-500/30 rounded-lg space-y-1.5">
             <span className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block font-mono">
-              Direct Shareable Link
+              Direct Shareable Link & Instant Dispatch
             </span>
             <div className="flex gap-2">
               <input
@@ -149,10 +149,20 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
                 type="button"
                 onClick={handleCopyLink}
                 className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-mono font-bold text-[10px] rounded transition-all cursor-pointer flex items-center gap-1"
+                title="Copy link to clipboard"
               >
                 <span className="material-symbols-outlined text-xs">content_copy</span>
                 {copied ? 'COPIED!' : 'COPY'}
               </button>
+              <a
+                href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email || '')}&su=${encodeURIComponent(`[ObsidianIDE] Invitation to Collaborate on ${projTitle}`)}&body=${encodeURIComponent(`Hello,\n\nYou have been invited to join the project workspace "${projTitle}" on ObsidianIDE as a ${role}.\n\nClick the link below to accept and enter the live IDE workspace:\n${inviteUrl}\n\nBest regards,\n${currentUser?.email || projOwner}`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2.5 py-1 bg-red-950 hover:bg-red-900 text-red-300 border border-red-800 font-mono font-bold text-[10px] rounded transition-all cursor-pointer flex items-center gap-1 no-underline"
+                title="Open in Gmail Web Compose"
+              >
+                ✉️ Gmail
+              </a>
             </div>
           </div>
 
