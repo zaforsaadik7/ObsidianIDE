@@ -665,20 +665,16 @@ router.post('/update-files', async (req, res) => {
       }
     }
 
-    // Sync exclusively to Owner's Personal Firebase Database
+    // Sync exclusively to Owner's Personal Firebase Database (Non-blocking background)
     const resolvedOwnerEmail = (req.body.ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || userEmail || '').trim().toLowerCase();
-    try {
-      await syncToOwnerPersonalFirestore({
-        ownerEmail: resolvedOwnerEmail,
-        projectId,
-        projectTitle: req.body.title || inMemoryProjectStore.get(projectId)?.title || projectId,
-        files: filesToPersist,
-        isMasterSync: false,
-        modifiedBy: userEmail
-      });
-    } catch (syncErr) {
-      console.warn('Notice syncing working files to owner personal Firestore:', syncErr.message);
-    }
+    syncToOwnerPersonalFirestore({
+      ownerEmail: resolvedOwnerEmail,
+      projectId,
+      projectTitle: req.body.title || inMemoryProjectStore.get(projectId)?.title || projectId,
+      files: filesToPersist,
+      isMasterSync: false,
+      modifiedBy: userEmail
+    }).catch(syncErr => console.warn('Notice syncing working files to owner personal Firestore:', syncErr.message));
 
     res.json({
       status: 'SUCCESS',
@@ -740,20 +736,16 @@ router.post('/sync-master', verifyToken, async (req, res) => {
       }, { merge: true });
     }
 
-    // Sync canonical master baseline exclusively to Owner's Personal Firebase Database
-    const resolvedOwnerEmail = (ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || 'owner@obsidian.io').trim().toLowerCase();
-    try {
-      await syncToOwnerPersonalFirestore({
-        ownerEmail: resolvedOwnerEmail,
-        projectId,
-        projectTitle: inMemoryProjectStore.get(projectId)?.title || projectId,
-        files: working_files,
-        isMasterSync: true,
-        modifiedBy: ownerEmail
-      });
-    } catch (syncErr) {
-      console.warn('Notice syncing master files to owner personal Firestore:', syncErr.message);
-    }
+    // Sync canonical master baseline exclusively to Owner's Personal Firebase Database (Non-blocking background)
+    const resolvedOwnerEmailMaster = (ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || 'owner@obsidian.io').trim().toLowerCase();
+    syncToOwnerPersonalFirestore({
+      ownerEmail: resolvedOwnerEmailMaster,
+      projectId,
+      projectTitle: inMemoryProjectStore.get(projectId)?.title || projectId,
+      files: working_files,
+      isMasterSync: true,
+      modifiedBy: ownerEmail
+    }).catch(syncErr => console.warn('Notice syncing master files to owner personal Firestore:', syncErr.message));
 
     res.json({
       status: 'SUCCESS',
@@ -840,20 +832,16 @@ router.post('/reject-fork', async (req, res) => {
       }
     }
 
-    // 3. Sync restored master working copy to Owner Personal Firestore
-    const resolvedOwnerEmail = (ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || 'owner@obsidian.io').trim().toLowerCase();
-    try {
-      await syncToOwnerPersonalFirestore({
-        ownerEmail: resolvedOwnerEmail,
-        projectId,
-        projectTitle: inMemoryProjectStore.get(projectId)?.title || projectId,
-        files: masterFiles,
-        isMasterSync: false,
-        modifiedBy: ownerEmail
-      });
-    } catch (syncErr) {
-      console.warn('Notice syncing rejected fork reset to owner personal Firestore:', syncErr.message);
-    }
+    // 3. Sync restored master working copy to Owner Personal Firestore (Non-blocking background)
+    const resolvedOwnerEmailReject = (ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || 'owner@obsidian.io').trim().toLowerCase();
+    syncToOwnerPersonalFirestore({
+      ownerEmail: resolvedOwnerEmailReject,
+      projectId,
+      projectTitle: inMemoryProjectStore.get(projectId)?.title || projectId,
+      files: masterFiles,
+      isMasterSync: false,
+      modifiedBy: ownerEmail
+    }).catch(syncErr => console.warn('Notice syncing rejected fork reset to owner personal Firestore:', syncErr.message));
 
     res.json({
       status: 'SUCCESS',

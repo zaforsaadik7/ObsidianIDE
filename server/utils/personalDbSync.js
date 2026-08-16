@@ -146,54 +146,53 @@ export const syncToOwnerPersonalFirestore = async ({
       body: JSON.stringify({ fields: projectFields })
     });
 
-    // 2. Active File IDs Set for Exact Database Pruning
+    // 2. Parallel Write / Update Active Files
     const activeFileDocIds = new Set();
     const activeFilePaths = new Set();
 
-    // Write / Update Active Files
-    for (const f of files) {
-      if (f && (f.filePath || f.fileId)) {
-        const fileDocId = f.fileId || `file_${pid}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-        activeFileDocIds.add(fileDocId);
-        if (f.filePath) activeFilePaths.add(f.filePath);
-        
-        const fileFields = {
-          fileId: { stringValue: fileDocId },
-          projectId: { stringValue: pid },
-          filePath: { stringValue: f.filePath || '' },
-          fileName: { stringValue: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file') },
-          content: { stringValue: typeof f.content === 'string' ? f.content : '' },
-          fileType: { stringValue: f.fileType || 'plaintext' },
-          updatedAt: { stringValue: f.updatedAt || timestamp },
-          lastModifiedBy: { stringValue: f.lastModifiedBy || modifiedBy || ownerEmail }
-        };
+    const writePromises = files.filter(f => f && (f.filePath || f.fileId)).map(async (f) => {
+      const fileDocId = f.fileId || `file_${pid}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+      activeFileDocIds.add(fileDocId);
+      if (f.filePath) activeFilePaths.add(f.filePath);
 
-        // Subcollection write
-        const subcolUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/projects/${pid}/files/${fileDocId}?key=${encodeURIComponent(apiKey)}`;
-        await fetch(subcolUrl, {
+      const fileFields = {
+        fileId: { stringValue: fileDocId },
+        projectId: { stringValue: pid },
+        filePath: { stringValue: f.filePath || '' },
+        fileName: { stringValue: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file') },
+        content: { stringValue: typeof f.content === 'string' ? f.content : '' },
+        fileType: { stringValue: f.fileType || 'plaintext' },
+        updatedAt: { stringValue: f.updatedAt || timestamp },
+        lastModifiedBy: { stringValue: f.lastModifiedBy || modifiedBy || ownerEmail }
+      };
+
+      const subcolUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/projects/${pid}/files/${fileDocId}?key=${encodeURIComponent(apiKey)}`;
+      const rootColUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/files/${fileDocId}?key=${encodeURIComponent(apiKey)}`;
+
+      await Promise.allSettled([
+        fetch(subcolUrl, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fields: fileFields })
-        });
-
-        // Root collection write for instant visibility in Firestore Console column 1
-        const rootColUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/files/${fileDocId}?key=${encodeURIComponent(apiKey)}`;
-        await fetch(rootColUrl, {
+        }),
+        fetch(rootColUrl, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fields: fileFields })
-        });
-      }
-    }
+        })
+      ]);
+    });
 
-    // 3. Prune Deleted / Stale Files from Subcollection: projects/{pid}/files
+    await Promise.allSettled(writePromises);
+
+    // 3. Prune Deleted / Stale Files in Parallel
     try {
       const subcolListUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/projects/${pid}/files?key=${encodeURIComponent(apiKey)}`;
       const subcolRes = await fetch(subcolListUrl);
       if (subcolRes.ok) {
         const subcolData = await subcolRes.json();
         if (subcolData.documents) {
-          for (const doc of subcolData.documents) {
+          const deletePromises = subcolData.documents.map(async (doc) => {
             const docId = doc.name.split('/').pop();
             const filePath = doc.fields?.filePath?.stringValue;
             if (!activeFileDocIds.has(docId) && (!filePath || !activeFilePaths.has(filePath))) {
@@ -202,21 +201,22 @@ export const syncToOwnerPersonalFirestore = async ({
                 method: 'DELETE'
               });
             }
-          }
+          });
+          await Promise.allSettled(deletePromises);
         }
       }
     } catch (pruneSubErr) {
       console.warn('Subcollection pruning notice:', pruneSubErr.message);
     }
 
-    // 4. Prune Deleted / Stale Files from Root Collection: files
+    // 4. Prune Deleted / Stale Files from Root Collection: files in Parallel
     try {
       const rootListUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/files?key=${encodeURIComponent(apiKey)}`;
       const rootRes = await fetch(rootListUrl);
       if (rootRes.ok) {
         const rootData = await rootRes.json();
         if (rootData.documents) {
-          for (const doc of rootData.documents) {
+          const deleteRootPromises = rootData.documents.map(async (doc) => {
             const docId = doc.name.split('/').pop();
             const docPid = doc.fields?.projectId?.stringValue;
             const filePath = doc.fields?.filePath?.stringValue;
@@ -226,11 +226,12 @@ export const syncToOwnerPersonalFirestore = async ({
                 method: 'DELETE'
               });
             }
-          }
+          });
+          await Promise.allSettled(deleteRootPromises);
         }
       }
     } catch (pruneRootErr) {
-      console.warn('Root files pruning notice:', pruneRootErr.message);
+      console.warn('Root collection pruning notice:', pruneRootErr.message);
     }
 
     console.log(`✅ [Server-Side BYOD] Synced & Pruned ${files.length} file(s) in Owner Personal DB (${targetProjectId}) for project ${pid}`);
