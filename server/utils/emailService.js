@@ -154,23 +154,40 @@ ${domain}
 </html>
 `.trim();
 
-  // 3. Strict RFC Anti-Spam MIME Headers with 100% Matching Authenticated Sender Address
-  const mailOptions = {
-    from: `"ObsidianIDE" <${authUser}>`,
-    to,
-    replyTo: ownerEmail,
-    subject: `Invitation to collaborate on project: ${cleanTitle}`,
-    text: textBody,
-    html: htmlBody,
-    headers: {
-      'Message-ID': messageId,
-      'X-Mailer': 'ObsidianIDE Transactional Dispatcher v1.0',
-      'X-Priority': '3',
-      'Auto-Submitted': 'auto-generated'
-    }
-  };
+  // Attempt 1: Direct HTTPS Email API via Brevo (Port 443 HTTPS - Free 300 emails/day, no credit card, no port blocking)
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_FROM || authUser || 'bubt768@gmail.com').trim();
+      const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': process.env.BREVO_API_KEY.trim(),
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: { name: 'ObsidianIDE', email: senderEmail },
+          to: [{ email: to.trim() }],
+          replyTo: { email: ownerEmail.trim(), name: 'Project Owner' },
+          subject: `Invitation to collaborate on project: ${cleanTitle}`,
+          textContent: textBody,
+          htmlContent: htmlBody
+        })
+      });
 
-  // Primary Attempt: Port 465 Direct SSL
+      const brevoData = await brevoRes.json();
+      if (brevoRes.ok) {
+        console.log(`✉️ [BREVO HTTPS API SUCCESS] Dispatched to ${to} [MessageId: ${brevoData.messageId}]`);
+        return { success: true, provider: 'brevo', messageId: brevoData.messageId };
+      } else {
+        console.warn('Brevo API response notice:', brevoData);
+      }
+    } catch (bErr) {
+      console.warn('Brevo HTTPS API notice:', bErr.message);
+    }
+  }
+
+  // Attempt 2: Primary SMTP Port 465 Direct SSL
   try {
     const primaryTransporter = await createTransporterForPort(authUser, authPass, 465, true);
     const info = await primaryTransporter.sendMail(mailOptions);
