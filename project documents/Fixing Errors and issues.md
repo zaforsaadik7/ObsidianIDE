@@ -1716,6 +1716,22 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
   - Verified document staging schema against the official Firebase Trigger Email extension format.
   - Built with `npm run build` with **0 errors in 9.50s**.
 
+### 134. Human-Readable Title Preservation & Permanent Multi-Layer Project Deletion (v82)
+* **Problem / Bug**:
+  - In the owner's account, projects with titles like `"brevo main"` displayed as internal slug IDs (`proj_brevo_main_7265`) on the dashboard card.
+  - Deleted projects reappeared on dashboard refresh because they were not deleted from the canonical `projects` Firestore collection or backend store.
+* **Root Causes**:
+  - Missing `DELETE /api/projects/:projectId` route in `server/routes/projectRoutes.js`.
+  - Incomplete client deletion logic in `DashboardPage.jsx` that updated user document subfields without executing `deleteDoc(doc(db, 'projects', pid))` for owners.
+  - Slug fallback in dashboard key resolution overrode the human-readable project title.
+* **Solutions Implemented**:
+  1. Backend `DELETE /api/projects/:projectId` Route: Implemented full deletion logic in `server/routes/projectRoutes.js` that permanently removes canonical project docs, in-memory caches, and files subcollections for owners, or unlinks collaborator mappings for non-owners.
+  2. Multi-Layer Client Deletion: Updated `handleDeleteConfirm` in `DashboardPage.jsx` to execute `deleteDoc(doc(db, 'projects', pid))` and user profile `deleteField()`.
+  3. Clean Title Formatting: Added `formatProjectTitle` in `DashboardPage.jsx` to ensure clean human-readable titles (e.g. `"Brevo Main"`) are always displayed instead of raw slug strings.
+* **QA & Automated Verification**:
+  - Automated integration test verified project creation, editor modifications (`/api/projects/save-and-sync`), owner permanent deletion (`DELETE /api/projects/:projectId`), and verified the project does NOT exist on refresh.
+  - Built with `npm run build` with **0 errors in 9.58s**.
+
 ---
 
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*

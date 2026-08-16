@@ -267,6 +267,106 @@ router.get('/', verifyToken, async (req, res) => {
   }
 });
 
+// DELETE /api/projects/:projectId: Permanently delete project (for Owner) or unlink (for Collaborator)
+router.delete('/:projectId', verifyToken, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const userEmail = (req.query.userEmail || req.user?.email || '').trim().toLowerCase();
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'Project ID parameter is required.' });
+    }
+
+    let isOwner = false;
+    let projectData = inMemoryProjectStore.get(projectId);
+
+    if (adminDb) {
+      try {
+        const projDoc = await adminDb.collection('projects').doc(projectId).get();
+        if (projDoc.exists) {
+          projectData = projDoc.data();
+        }
+      } catch (e) {}
+    }
+
+    const ownerEmail = (projectData?.ownerEmail || '').trim().toLowerCase();
+    isOwner = (ownerEmail === userEmail) || (userEmail && !ownerEmail);
+
+    if (isOwner) {
+      // 1. Permanently delete canonical project document from Firestore
+      if (adminDb) {
+        try {
+          await adminDb.collection('projects').doc(projectId).delete();
+          
+          // Delete files subcollection
+          const filesSnap = await adminDb.collection('projects').doc(projectId).collection('files').get();
+          if (!filesSnap.empty) {
+            const batch = adminDb.batch();
+            filesSnap.forEach(fDoc => batch.delete(fDoc.ref));
+            await batch.commit().catch(() => {});
+          }
+        } catch (delErr) {
+          console.warn('AdminDB project delete notice:', delErr.message);
+        }
+      }
+      inMemoryProjectStore.delete(projectId);
+
+      // 2. Remove project reference from owner's user document
+      if (adminDb && userEmail) {
+        try {
+          const userDocId = userEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_');
+          const userRef = adminDb.collection('users').doc(userDocId);
+          await userRef.set({
+            projects: {
+              [projectId]: null
+            }
+          }, { merge: true }).catch(() => {});
+        } catch (uErr) {}
+      }
+
+      return res.json({
+        status: 'SUCCESS',
+        message: `Project ${projectId} permanently deleted by owner.`,
+        deleted: true
+      });
+    } else {
+      // If collaborator: unlink collaborator from the project
+      if (adminDb) {
+        try {
+          const projRef = adminDb.collection('projects').doc(projectId);
+          const projSnap = await projRef.get();
+          if (projSnap.exists) {
+            const data = projSnap.data();
+            const collabs = { ...(data.collaborators || {}) };
+            delete collabs[userEmail];
+            delete collabs[req.query.userEmail];
+            await projRef.set({ collaborators: collabs }, { merge: true });
+          }
+
+          const userDocId = userEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_');
+          const userRef = adminDb.collection('users').doc(userDocId);
+          await userRef.set({
+            projects: {
+              [projectId]: null
+            }
+          }, { merge: true }).catch(() => {});
+        } catch (collabErr) {
+          console.warn('AdminDB collaborator unlink notice:', collabErr.message);
+        }
+      }
+
+      return res.json({
+        status: 'SUCCESS',
+        message: `Project ${projectId} unlinked from collaborator workspace.`,
+        unlinked: true
+      });
+    }
+  } catch (err) {
+    console.error('Error deleting project:', err);
+    res.status(500).json({ error: 'Failed to delete project', details: err.message });
+  }
+});
+
 // POST /api/projects/update-files: Directly save project_files array to Firestore via Admin SDK
 // ── Repository File & Staging Operations ──────────────────────────────────
 

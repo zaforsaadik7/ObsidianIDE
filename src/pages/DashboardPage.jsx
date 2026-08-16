@@ -32,11 +32,33 @@ export const DashboardPage = () => {
     const userEmailNorm = (currentUser.email || '').trim().toLowerCase();
     const projectMap = {};
 
+    const formatProjectTitle = (rawTitle, fallbackId) => {
+      if (rawTitle && typeof rawTitle === 'string' && rawTitle.trim()) {
+        const t = rawTitle.trim();
+        if (t.startsWith('proj_') && t.includes('_')) {
+          const parts = t.replace(/^proj_/, '').split('_');
+          if (parts.length > 1 && /^\d+$/.test(parts[parts.length - 1])) {
+            parts.pop();
+          }
+          return parts.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
+        return t;
+      }
+      if (fallbackId && typeof fallbackId === 'string' && fallbackId.startsWith('proj_')) {
+        const parts = fallbackId.replace(/^proj_/, '').split('_');
+        if (parts.length > 1 && /^\d+$/.test(parts[parts.length - 1])) {
+          parts.pop();
+        }
+        return parts.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      }
+      return fallbackId || 'Workspace Project';
+    };
+
     const getCanonicalProjectKey = (p, fallbackId) => {
       const pid = (p?.projectId || p?.id || fallbackId || '').trim();
       const title = (p?.title || '').trim().toLowerCase();
       const owner = (p?.ownerEmail || '').trim().toLowerCase();
-      if (title && owner) {
+      if (title && owner && !title.startsWith('proj_')) {
         return `owner::${owner}::title::${title}`;
       }
       return `pid::${pid || title}`;
@@ -69,11 +91,14 @@ export const DashboardPage = () => {
           ? existing.projectId
           : pid;
 
+      const rawTitle = p.title || existing.title;
+      const resolvedTitle = formatProjectTitle(rawTitle, chosenPid);
+
       projectMap[canonicalKey] = {
         ...existing,
         ...p,
         projectId: chosenPid,
-        title: p.title || existing.title || chosenPid,
+        title: resolvedTitle,
         description: p.description !== undefined ? p.description : (existing.description || ''),
         languageEnv: p.languageEnv || existing.languageEnv || 'PYTHON_3.11',
         userRole: resolvedRole,
@@ -159,36 +184,45 @@ export const DashboardPage = () => {
     setTimeout(() => setNotificationMsg(''), 4000);
   };
 
-  // Handle Project Deletion (Removes only from user's own database, not affecting other collaborators)
+  // Handle Project Deletion (Owner permanently deletes; Collaborator unlinks)
   const handleDeleteConfirm = async () => {
     if (!deleteTargetProject) return;
     setIsDeleting(true);
 
     const pid = deleteTargetProject.projectId;
     const title = deleteTargetProject.title;
+    const userEmailNorm = (currentUser?.email || '').trim().toLowerCase();
+    const isOwner = deleteTargetProject.userRole === 'OWNER' || (deleteTargetProject.ownerEmail && deleteTargetProject.ownerEmail.trim().toLowerCase() === userEmailNorm);
 
     try {
-      // 1. Delete from Current User's Client Firestore profile document
+      // 1. Client Firestore operations
       try {
-        const cleanDocId = currentUser?.email?.split('@')[0]?.toLowerCase()?.replace(/[^a-z0-9_]/g, '_');
+        const cleanDocId = userEmailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_');
         if (cleanDocId) {
           const userRef = doc(db, 'users', cleanDocId);
           await updateDoc(userRef, {
             [`projects.${pid}`]: deleteField()
-          });
-        }
-        // Also unlink user from project's collaborators list if present
-        if (currentUser?.email) {
-          const projRef = doc(db, 'projects', pid);
-          await updateDoc(projRef, {
-            [`collaborators.${currentUser.email}`]: deleteField()
           }).catch(() => {});
         }
+
+        const projRef = doc(db, 'projects', pid);
+        if (isOwner) {
+          // Permanently delete canonical project document from website database
+          await deleteDoc(projRef).catch(() => {});
+        } else {
+          // Unlink collaborator
+          if (currentUser?.email) {
+            await updateDoc(projRef, {
+              [`collaborators.${currentUser.email}`]: deleteField(),
+              [`collaborators.${userEmailNorm}`]: deleteField()
+            }).catch(() => {});
+          }
+        }
       } catch (fsErr) {
-        console.warn('Firestore user unlinking notice:', fsErr);
+        console.warn('Firestore project deletion notice:', fsErr);
       }
 
-      // 2. Call backend REST DELETE endpoint (removes only from user's DB)
+      // 2. Call backend REST DELETE endpoint
       try {
         const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
         await fetch(`/api/projects/${pid}?userEmail=${encodeURIComponent(currentUser?.email || '')}`, {
@@ -203,10 +237,10 @@ export const DashboardPage = () => {
 
       // 3. Remove from UI state for this user
       setProjects(prev => prev.filter(p => p.projectId !== pid));
-      showToast(`✓ Repository '${title}' removed from your personal workspace.`);
+      showToast(isOwner ? `✓ Repository '${title}' permanently deleted.` : `✓ Repository '${title}' unlinked from your workspace.`);
       setDeleteTargetProject(null);
     } catch (err) {
-      alert(`Failed to remove project from workspace: ${err.message}`);
+      alert(`Failed to remove project: ${err.message}`);
     } finally {
       setIsDeleting(false);
     }
