@@ -358,7 +358,10 @@ httpServer.on('upgrade', (request, socket, head) => {
 });
 
 // Start HTTP + WebSocket Server on primary PORT (5000)
-httpServer.listen(PORT, () => {
+httpServer.on('error', (err) => {
+  console.warn(`Port ${PORT} listener notice:`, err.message);
+});
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 ObsidianIDE Express REST Server listening on http://localhost:${PORT}`);
   console.log(`🔌 WebSocket Terminal available at ws://localhost:${PORT}/ws/terminal`);
   console.log(`👥 WebSocket Collaboration available at ws://localhost:${PORT}/ws/collaboration`);
@@ -368,6 +371,9 @@ httpServer.listen(PORT, () => {
 if (Number(PORT) !== 3000) {
   try {
     const frontendPortServer = http.createServer(app);
+    frontendPortServer.on('error', (err) => {
+      console.warn('Port 3000 listener notice:', err.message);
+    });
     frontendPortServer.on('upgrade', (request, socket, head) => {
       try {
         const parsedUrl = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
@@ -387,11 +393,8 @@ if (Number(PORT) !== 3000) {
         socket.destroy();
       }
     });
-    frontendPortServer.listen(3000, () => {
+    frontendPortServer.listen(3000, '0.0.0.0', () => {
       console.log(`🚀 ObsidianIDE Frontend Application also available on http://localhost:3000`);
-    });
-    frontendPortServer.on('error', (err) => {
-      console.warn('Port 3000 listener notice:', err.message);
     });
   } catch (err) {
     console.warn('Port 3000 setup notice:', err.message);
