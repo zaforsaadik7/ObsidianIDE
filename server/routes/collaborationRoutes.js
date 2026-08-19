@@ -1,7 +1,30 @@
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
+import { inMemoryProjectStore } from './projectRoutes.js';
 
 const router = express.Router();
+
+// Helper to resolve authoritative user role from repository baseline
+const resolveAuthoritativeRole = (projectId, email, providedRole) => {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) return (providedRole || 'EDITOR').toUpperCase();
+
+  const memProj = inMemoryProjectStore.get(projectId);
+  if (memProj) {
+    const owner = (memProj.ownerEmail || '').trim().toLowerCase();
+    if (owner && owner === cleanEmail) {
+      return 'OWNER';
+    }
+    if (memProj.collaborators) {
+      const matched = Object.entries(memProj.collaborators).find(([k]) => k.trim().toLowerCase() === cleanEmail);
+      if (matched) {
+        const v = matched[1];
+        return (typeof v === 'string' ? v : (v?.role || 'EDITOR')).toUpperCase();
+      }
+    }
+  }
+  return (providedRole || 'EDITOR').toUpperCase();
+};
 
 // Preset Distinct High-Contrast Collaborator Color Palette
 const COLLABORATOR_COLORS = [
@@ -74,13 +97,14 @@ router.post('/:projectId/presence', (req, res) => {
 
     const room = projectRooms.get(projectId);
     const userColor = getColorForEmail(email);
+    const effectiveRole = resolveAuthoritativeRole(projectId, email, role);
 
     const presenceData = {
       email: email.trim().toLowerCase(),
       displayName: displayName || email.split('@')[0],
       username: username || `@${email.split('@')[0]}`,
       avatarUrl: avatarUrl || '',
-      role: role.toUpperCase(),
+      role: effectiveRole,
       color: userColor,
       activeFilePath: activeFilePath || '',
       cursor: {
@@ -260,12 +284,13 @@ export const createCollaborationWebSocket = () => {
         const room = projectRooms.get(projectId);
 
         if (type === 'JOIN_ROOM' || type === 'JOIN_PROJECT' || type === 'HEARTBEAT' || type === 'CURSOR_MOVE') {
+          const effectiveRole = resolveAuthoritativeRole(projectId, email, user.role);
           const presenceData = {
             email,
             displayName: user.displayName || email.split('@')[0],
             username: user.username || `@${email.split('@')[0]}`,
             avatarUrl: user.avatarUrl || '',
-            role: (user.role || 'EDITOR').toUpperCase(),
+            role: effectiveRole,
             color: userColor,
             activeFilePath: activeFilePath || '',
             cursor: cursor || { lineNumber: 1, column: 1 },

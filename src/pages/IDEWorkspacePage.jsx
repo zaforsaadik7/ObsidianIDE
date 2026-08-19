@@ -60,6 +60,7 @@ export const IDEWorkspacePage = () => {
   const [importModalData, setImportModalData] = useState(null);
 
   const [serverUserRole, setServerUserRole] = useState(null);
+  const [liveProjectData, setLiveProjectData] = useState(null);
   const [isUnauthorized, setIsUnauthorized] = useState(false);
   const [unauthorizedMsg, setUnauthorizedMsg] = useState('');
 
@@ -117,22 +118,23 @@ export const IDEWorkspacePage = () => {
     };
   }, [isDraggingLeft, isDraggingRight]);
 
-  const projectData = userProfile?.projects?.[projectId];
+  const projectData = userProfile?.projects?.[projectId] || liveProjectData;
 
   const isProjectOwner = useMemo(() => {
     const userEmail = (currentUser?.email || '').trim().toLowerCase();
     if (!userEmail) return false;
     
-    const ownerEmail = (projectData?.ownerEmail || '').trim().toLowerCase();
+    const ownerEmail = (liveProjectData?.ownerEmail || projectData?.ownerEmail || '').trim().toLowerCase();
     if (ownerEmail && ownerEmail === userEmail) return true;
     if (serverUserRole === 'OWNER') return true;
+    if (liveProjectData?.ownerId && liveProjectData.ownerId === currentUser?.uid) return true;
     if (projectData?.ownerId && projectData.ownerId === currentUser?.uid) return true;
     if (projectData?.userRole === 'OWNER' || projectData?.role === 'OWNER' || projectData?.isOwner === true) return true;
     
     return false;
-  }, [currentUser, serverUserRole, projectData]);
+  }, [currentUser, serverUserRole, projectData, liveProjectData]);
 
-  const activeUserRole = isProjectOwner ? 'OWNER' : (serverUserRole || projectData?.userRole || projectData?.role || 'EDITOR');
+  const activeUserRole = isProjectOwner ? 'OWNER' : (serverUserRole || liveProjectData?.userRole || projectData?.userRole || projectData?.role || 'EDITOR');
 
   const [saveSyncSuccessMsg, setSaveSyncSuccessMsg] = useState('');
 
@@ -164,6 +166,7 @@ export const IDEWorkspacePage = () => {
       const unsubscribe = onSnapshot(projDocRef, (snap) => {
         if (snap.exists()) {
           const data = snap.data();
+          setLiveProjectData(data);
 
           // 1. Resolve User Role (Project Owner email has absolute authority)
           const docOwnerEmail = (data.ownerEmail || '').trim().toLowerCase();
@@ -268,10 +271,13 @@ export const IDEWorkspacePage = () => {
           const resData = await res.json();
           const proj = resData.project;
           if (proj) {
+            setLiveProjectData(proj);
             // 1. Resolve User Role (Project Owner email has absolute authority)
             const serverOwnerEmail = (proj.ownerEmail || '').trim().toLowerCase();
             if (serverOwnerEmail && serverOwnerEmail === userEmail) {
               setServerUserRole('OWNER');
+            } else if (resData.userRole) {
+              setServerUserRole(resData.userRole.toUpperCase());
             } else if (proj.collaborators && userEmail) {
               const matchedKey = Object.keys(proj.collaborators).find(k => k.toLowerCase() === userEmail);
               if (matchedKey) {
@@ -2707,7 +2713,22 @@ export const IDEWorkspacePage = () => {
                           </div>
                         </div>
                       </div>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-zinc-400 font-mono">{c.role || 'EDITOR'}</span>
+                      {(() => {
+                        const projOwnerEmail = (liveProjectData?.ownerEmail || projectData?.ownerEmail || '').trim().toLowerCase();
+                        const isRemoteOwner = Boolean(projOwnerEmail && c.email && projOwnerEmail === c.email.trim().toLowerCase());
+                        const remoteRole = isRemoteOwner ? 'OWNER' : (c.role || 'EDITOR').toUpperCase();
+                        return (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                            remoteRole === 'OWNER'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : remoteRole === 'REVIEWER'
+                                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                          }`}>
+                            {remoteRole}
+                          </span>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>

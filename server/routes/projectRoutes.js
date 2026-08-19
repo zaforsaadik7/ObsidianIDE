@@ -1141,18 +1141,23 @@ router.get('/:projectId', verifyToken, async (req, res) => {
 
     // Strict Authorization Guard: allow owner by ownerEmail OR by OWNER role in collaborators map
     // The collaborators-map OWNER check handles legacy data where ownerEmail may differ from actual owner
+    let resolvedRole = 'EDITOR';
     if (requestingEmail) {
-      const ownerEmailNorm = (projData.ownerEmail || '').toLowerCase();
+      const ownerEmailNorm = (projData.ownerEmail || '').toLowerCase().trim();
       const collabsLower = {};
       Object.entries(projData.collaborators || {}).forEach(([k, v]) => {
-        collabsLower[k.toLowerCase()] = typeof v === 'string' ? v.toUpperCase() : (v?.role || 'EDITOR').toUpperCase();
+        collabsLower[k.toLowerCase().trim()] = typeof v === 'string' ? v.toUpperCase() : (v?.role || 'EDITOR').toUpperCase();
       });
 
-      const isOwnerByEmail = ownerEmailNorm === requestingEmail;
+      const isOwnerByEmail = Boolean(ownerEmailNorm && ownerEmailNorm === requestingEmail);
       const isOwnerByRole = collabsLower[requestingEmail] === 'OWNER';
       const isCollab = Boolean(collabsLower[requestingEmail]);
 
-      if (!isOwnerByEmail && !isOwnerByRole && !isCollab) {
+      if (isOwnerByEmail || isOwnerByRole) {
+        resolvedRole = 'OWNER';
+      } else if (isCollab) {
+        resolvedRole = collabsLower[requestingEmail] || 'EDITOR';
+      } else {
         return res.status(403).json({
           status: 'UNAUTHORIZED',
           isAuthorized: false,
@@ -1165,7 +1170,11 @@ router.get('/:projectId', verifyToken, async (req, res) => {
     res.json({
       status: 'SUCCESS',
       isAuthorized: true,
-      project: projData
+      userRole: resolvedRole,
+      project: {
+        ...projData,
+        userRole: resolvedRole
+      }
     });
   } catch (error) {
     console.error('Error fetching project:', error);
