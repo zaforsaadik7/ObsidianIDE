@@ -2,7 +2,7 @@ import { adminAuth } from '../config/firebaseAdmin.js';
 
 export const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  const targetEmail = req.headers['x-user-email'] || req.body?.userEmail || req.query?.email || req.body?.email || 'dev@bubt.edu.bd';
+  const targetEmail = req.headers['x-user-email'] || req.body?.userEmail || req.body?.ownerEmail || req.query?.userEmail || req.query?.email || req.body?.email || 'dev@bubt.edu.bd';
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     req.user = { email: targetEmail, uid: `uid_${targetEmail.split('@')[0]}` };

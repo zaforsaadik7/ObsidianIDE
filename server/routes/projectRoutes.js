@@ -1207,6 +1207,87 @@ router.post('/send-invite-email', async (req, res) => {
   }
 });
 
+// POST /api/projects/:projectId/invite: Add collaborator to project and dispatch invite email
+router.post('/:projectId/invite', verifyToken, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, role = 'EDITOR', projectTitle, ownerEmail } = req.body;
+
+    if (!email || !projectId) {
+      return res.status(400).json({ error: 'Email and projectId are required.' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanRole = (role || 'EDITOR').toUpperCase();
+    const timestamp = new Date().toISOString();
+
+    // 1. Update In-Memory Store
+    let proj = inMemoryProjectStore.get(projectId);
+    if (proj) {
+      proj.collaborators = proj.collaborators || {};
+      proj.collaborators[cleanEmail] = cleanRole;
+      proj.updatedAt = timestamp;
+    }
+
+    // 2. Update Admin Firestore
+    if (adminDb) {
+      try {
+        const projRef = adminDb.collection('projects').doc(projectId);
+        await projRef.set({
+          collaborators: {
+            [cleanEmail]: cleanRole
+          },
+          updatedAt: timestamp
+        }, { merge: true });
+
+        // Add to collaborator user doc
+        const collabDocId = cleanEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        await adminDb.collection('users').doc(collabDocId).set({
+          projects: {
+            [projectId]: {
+              projectId,
+              title: projectTitle || proj?.title || projectId,
+              description: proj?.description || '',
+              languageEnv: proj?.languageEnv || 'PYTHON_3.11',
+              userRole: cleanRole,
+              ownerEmail: ownerEmail || proj?.ownerEmail || req.user?.email || 'owner@obsidianide.com',
+              updatedAt: timestamp
+            }
+          }
+        }, { merge: true });
+      } catch (e) {
+        console.warn('AdminDB invite update notice:', e.message);
+      }
+    }
+
+    // 3. Dispatch Email
+    const cleanTitle = projectTitle || proj?.title || projectId;
+    const cleanOwner = ownerEmail || proj?.ownerEmail || req.user?.email || 'owner@obsidianide.com';
+    const domain = resolveAppDomain(req);
+    const inviteUrl = `${domain}/invite/${projectId}?role=${cleanRole}&email=${encodeURIComponent(cleanEmail)}&title=${encodeURIComponent(cleanTitle)}&owner=${encodeURIComponent(cleanOwner)}`;
+
+    const emailResult = await sendProjectInvitationEmail({
+      to: cleanEmail,
+      ownerEmail: cleanOwner,
+      projectTitle: cleanTitle,
+      projectId,
+      role: cleanRole,
+      inviteUrl
+    });
+
+    res.json({
+      status: 'SUCCESS',
+      message: `Collaborator ${cleanEmail} added and invitation email dispatched.`,
+      collaborator: { email: cleanEmail, role: cleanRole },
+      inviteUrl,
+      emailResult
+    });
+  } catch (error) {
+    console.error('Error inviting collaborator:', error);
+    res.status(500).json({ error: 'Failed to invite collaborator', details: error.message });
+  }
+});
+
 // DELETE /api/projects/:projectId: Delete project from owner & collaborator repositories
 router.delete('/:projectId', verifyToken, async (req, res) => {
   try {
