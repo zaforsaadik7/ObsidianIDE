@@ -187,6 +187,17 @@ ${domain}
     }
   }
 
+  // Prepare SMTP Mail Options
+  const mailOptions = {
+    from: `"ObsidianIDE" <${authUser || 'bubt768@gmail.com'}>`,
+    to: to.trim(),
+    replyTo: ownerEmail.trim(),
+    subject: `Invitation to collaborate on project: ${cleanTitle}`,
+    text: textBody,
+    html: htmlBody,
+    messageId: messageId
+  };
+
   // Attempt 2: Primary SMTP Port 465 Direct SSL
   try {
     const primaryTransporter = await createTransporterForPort(authUser, authPass, 465, true);
