@@ -72,7 +72,8 @@ export const ConnectGitHubPage = () => {
   const handleConnectDirectOAuth = () => {
     setIsOAuthLoading(true);
     const activeEmail = userAccountEmail;
-    window.location.href = `/api/github/oauth/start?email=${encodeURIComponent(activeEmail)}&returnUrl=${encodeURIComponent(window.location.origin + '/dashboard?github_connected=true')}`;
+    const backendBase = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+    window.location.href = `${backendBase}/api/github/oauth/start?email=${encodeURIComponent(activeEmail)}&returnUrl=${encodeURIComponent(window.location.origin + '/dashboard?github_connected=true')}`;
   };
 
   // 1-Click Device Code Flow (VS Code Extension style)
@@ -333,7 +334,8 @@ export const ConnectGitHubPage = () => {
             <button
               onClick={() => {
                 const activeEmail = userAccountEmail;
-                window.location.href = `/api/github/manifest/start?email=${encodeURIComponent(activeEmail)}&returnUrl=${encodeURIComponent(window.location.origin + '/dashboard?github_connected=true')}`;
+                const backendBase = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+                window.location.href = `${backendBase}/api/github/manifest/start?email=${encodeURIComponent(activeEmail)}&returnUrl=${encodeURIComponent(window.location.origin + '/dashboard?github_connected=true')}`;
               }}
               className="w-full py-4 px-5 bg-white hover:bg-zinc-200 text-neutral-950 font-bold text-sm rounded-xl transition-all shadow-xl flex items-center justify-center gap-3 cursor-pointer hover:scale-[1.01]"
             >

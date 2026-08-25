@@ -300,7 +300,8 @@ router.get('/manifest/callback/:stateKey', async (req, res) => {
     const stateData = manifestStateStore.get(stateKey) || {};
     manifestStateStore.delete(stateKey); // consume immediately
     const userEmail = stateData.email || '';
-    const returnUrl = stateData.returnUrl || 'http://localhost:3000/profile?github_connected=true';
+    const clientDomain = resolveClientDomain(req);
+    const returnUrl = stateData.returnUrl || `${clientDomain}/profile?github_connected=true`;
 
     console.log(`[Manifest] Callback for email=${userEmail}, stateKey=${stateKey}`);
 
@@ -462,7 +463,8 @@ h2{margin:0 0 8px;color:#fff;font-size:20px;} p{color:#94a3b8;font-size:13px;mar
       gh_connected_at: githubData.connectedAt,
       gh_has_token: 'true'
     });
-    const baseUrl = (returnUrl || 'http://localhost:3000/profile').split('?')[0];
+    const clientDomain = resolveClientDomain(req);
+    const baseUrl = (returnUrl || `${clientDomain}/profile`).split('?')[0];
     res.redirect(`${baseUrl}?${redirectParams.toString()}`);
   } catch (err) {
     console.error('[Manifest OAuth Callback] Error:', err);
@@ -476,7 +478,8 @@ router.get('/manifest/installed', async (req, res) => {
     const { installation_id, setup_action, state } = req.query;
     console.log(`[Manifest Install] installation_id=${installation_id} action=${setup_action}`);
 
-    let email = '', returnUrl = 'http://localhost:3000/profile', username = '', avatarUrl = '', profileUrl = '';
+    const clientDomain = resolveClientDomain(req);
+    let email = '', returnUrl = `${clientDomain}/profile`, username = '', avatarUrl = '', profileUrl = '';
     if (state) {
       try {
         const s = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
@@ -508,7 +511,7 @@ router.get('/manifest/installed', async (req, res) => {
     res.redirect(`${baseUrl}?${redirectParams.toString()}`);
   } catch (err) {
     console.error('[Manifest Install Callback] Error:', err);
-    res.redirect('http://localhost:3000/profile?github_connected=true');
+    res.redirect(`${resolveClientDomain(req)}/profile?github_connected=true`);
   }
 });
 
@@ -553,8 +556,9 @@ router.get('/oauth/callback', async (req, res) => {
       return res.status(400).send('Authorization code missing');
     }
 
+    const clientDomain = resolveClientDomain(req);
     let userEmail = '';
-    let returnUrl = 'http://localhost:3000/profile?github_connected=true';
+    let returnUrl = `${clientDomain}/profile?github_connected=true`;
     try {
       if (state) {
         const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));

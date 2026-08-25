@@ -442,7 +442,8 @@ export const ProfilePage = () => {
   const handleConnectDirectOAuth = () => {
     setIsOAuthLoading(true);
     const activeEmail = currentUser?.email || profile.email;
-    window.location.href = `/api/github/oauth/start?email=${encodeURIComponent(activeEmail)}&returnUrl=${encodeURIComponent(window.location.origin + '/profile?github_connected=true')}`;
+    const backendBase = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+    window.location.href = `${backendBase}/api/github/oauth/start?email=${encodeURIComponent(activeEmail)}&returnUrl=${encodeURIComponent(window.location.origin + '/profile?github_connected=true')}`;
   };
 
   // This uses the browser/Firebase OAuth popup rather than routing GitHub
