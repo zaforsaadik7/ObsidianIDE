@@ -154,14 +154,15 @@ ${domain}
 </html>
 `.trim();
 
-  // Attempt 1: Direct HTTPS Email API via Brevo (Port 443 HTTPS - Free 300 emails/day, no credit card, no port blocking)
-  if (process.env.BREVO_API_KEY) {
+  // Attempt 1: Direct HTTPS Email API via Brevo (Port 443 HTTPS - Free, zero port blocking on Render)
+  const brevoKey = (process.env.BREVO_API_KEY || '').trim();
+  if (brevoKey) {
     try {
       const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_FROM || authUser || 'bubt768@gmail.com').trim();
       const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: {
-          'api-key': process.env.BREVO_API_KEY.trim(),
+          'api-key': brevoKey,
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
@@ -169,7 +170,7 @@ ${domain}
           sender: { name: 'ObsidianIDE', email: senderEmail },
           to: [{ email: to.trim() }],
           replyTo: { email: ownerEmail.trim(), name: 'Project Owner' },
-          subject: `Invitation to collaborate on project: ${cleanTitle}`,
+          subject: `[ObsidianIDE] Invitation to collaborate: ${cleanTitle}`,
           textContent: textBody,
           htmlContent: htmlBody
         })
