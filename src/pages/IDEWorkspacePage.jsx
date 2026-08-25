@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -378,9 +378,16 @@ export const IDEWorkspacePage = () => {
     };
 
     // 1. Establish WebSocket for low-latency cursor coordination
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = window.location.hostname === 'localhost' ? 'localhost:5000' : window.location.host;
-    const wsUrl = `${wsProtocol}//${wsHost}/ws/collaboration`;
+    const rawBackendUrl = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || '').trim();
+    let wsUrl;
+    if (rawBackendUrl) {
+      const cleanWsUrl = rawBackendUrl.replace(/^http/, 'ws').replace(/\/$/, '');
+      wsUrl = `${cleanWsUrl}/ws/collaboration`;
+    } else {
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsHost = window.location.hostname === 'localhost' ? 'localhost:5000' : window.location.host;
+      wsUrl = `${wsProtocol}//${wsHost}/ws/collaboration`;
+    }
 
     try {
       const ws = new WebSocket(wsUrl);

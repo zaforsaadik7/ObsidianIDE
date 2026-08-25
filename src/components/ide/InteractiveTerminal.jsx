@@ -149,12 +149,20 @@ export const InteractiveTerminal = ({
       }
     } catch {}
 
-    const isSecure = window.location.protocol === 'https:';
-    const wsProto = isSecure ? 'wss:' : 'ws:';
+    const rawBackendUrl = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || '').trim();
+    let primaryWsUrl, fallbackWsUrl;
     const urlParams = `token=${encodeURIComponent(token)}&projectId=${encodeURIComponent(projectId || 'workspace')}`;
 
-    const primaryWsUrl = `${wsProto}//${window.location.host}/ws/terminal?${urlParams}`;
-    const fallbackWsUrl = `${wsProto}//${window.location.hostname}:5000/ws/terminal?${urlParams}`;
+    if (rawBackendUrl) {
+      const cleanWsUrl = rawBackendUrl.replace(/^http/, 'ws').replace(/\/$/, '');
+      primaryWsUrl = `${cleanWsUrl}/ws/terminal?${urlParams}`;
+      fallbackWsUrl = primaryWsUrl;
+    } else {
+      const isSecure = window.location.protocol === 'https:';
+      const wsProto = isSecure ? 'wss:' : 'ws:';
+      primaryWsUrl = `${wsProto}//${window.location.host}/ws/terminal?${urlParams}`;
+      fallbackWsUrl = `${wsProto}//${window.location.hostname}:5000/ws/terminal?${urlParams}`;
+    }
 
     const createSocket = (targetUrl, isFallback = false) => {
       const socket = new WebSocket(targetUrl);
