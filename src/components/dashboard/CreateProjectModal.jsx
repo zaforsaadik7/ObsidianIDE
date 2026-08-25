@@ -36,19 +36,23 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
     setError('');
     let createResult = {};
 
-    const ownerEmail = currentUser?.email || 'zafor@bubt.edu.bd';
+    const ownerEmail = (currentUser?.email || userProfile?.info?.email || '').trim().toLowerCase();
     const teamMembersInput = {
       [ownerEmail]: { role: 'OWNER', accessLevel: 'ADMIN' }
     };
 
     const normalizedCollabs = { [ownerEmail]: 'OWNER' };
     collaborators.forEach((c) => {
-      teamMembersInput[c.email] = {
-        role: c.role || 'EDITOR',
-        accessLevel: c.role === 'EDITOR' ? 'WRITE' : 'READ'
-      };
-      normalizedCollabs[c.email] = (c.role || 'EDITOR').toUpperCase();
+      const cEmail = (c.email || '').trim().toLowerCase();
+      if (cEmail && cEmail !== ownerEmail) {
+        teamMembersInput[cEmail] = {
+          role: c.role || 'EDITOR',
+          accessLevel: c.role === 'EDITOR' ? 'WRITE' : 'READ'
+        };
+        normalizedCollabs[cEmail] = (c.role || 'EDITOR').toUpperCase();
+      }
     });
+    normalizedCollabs[ownerEmail] = 'OWNER';
 
     const slug = title.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
     const pid = `proj_${slug}_${Date.now().toString().slice(-4)}`;

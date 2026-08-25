@@ -120,7 +120,7 @@ export const InvitePortalPage = () => {
   }, [inviteId, paramRole, paramEmail, currentUser]);
 
   const handleAccept = async () => {
-    if (accessState !== 'AUTHORIZED') return;
+    if (accessState !== 'AUTHORIZED' && accessState !== 'OWNER_VIEW') return;
     setLoading(true);
 
     const targetPid = projectInfo.projectId || inviteId;
@@ -135,6 +135,12 @@ export const InvitePortalPage = () => {
       const projSnap = await getDoc(projRef);
       const title = projSnap.exists() ? (projSnap.data().title || targetPid) : projectInfo.title;
       const ownerEmail = projSnap.exists() ? (projSnap.data().ownerEmail || projectInfo.ownerEmail) : projectInfo.ownerEmail;
+
+      if (ownerEmail && userEmail === ownerEmail.toLowerCase()) {
+        // User is owner, retain OWNER role
+        navigate(`/workspace/${targetPid}`);
+        return;
+      }
 
       await setDoc(projRef, {
         collaborators: {

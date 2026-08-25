@@ -63,13 +63,18 @@ router.post('/', verifyToken, async (req, res) => {
     const projectId = req.body.projectId || uuidv4();
     const timestamp = new Date().toISOString();
 
+    const cleanOwnerEmail = (ownerEmail || req.user?.email || '').trim().toLowerCase();
     // Normalize team members / collaborators input
-    const normalizedCollabs = { [ownerEmail]: 'OWNER' };
+    const normalizedCollabs = {};
     const rawMap = { ...collaborators, ...teamMembersInput };
     Object.entries(rawMap).forEach(([email, val]) => {
-      const roleStr = typeof val === 'string' ? val : (val?.role || 'EDITOR');
-      normalizedCollabs[email] = roleStr.toUpperCase();
+      const cEmail = (email || '').trim().toLowerCase();
+      if (cEmail && cEmail !== cleanOwnerEmail) {
+        const roleStr = typeof val === 'string' ? val : (val?.role || 'EDITOR');
+        normalizedCollabs[cEmail] = roleStr.toUpperCase();
+      }
     });
+    normalizedCollabs[cleanOwnerEmail] = 'OWNER'; // Creator is permanently OWNER
 
     const defaultFile = getDefaultFileContent(languageEnv || 'RUST_1.75', title);
     const initialFiles = [
@@ -1232,6 +1237,17 @@ router.post('/:projectId/invite', verifyToken, async (req, res) => {
 
     // 1. Update In-Memory Store
     let proj = inMemoryProjectStore.get(projectId);
+    const projOwner = (proj?.ownerEmail || ownerEmail || '').trim().toLowerCase();
+
+    // Protect owner: If cleanEmail is the owner, retain OWNER role
+    if (projOwner && cleanEmail === projOwner) {
+      return res.json({
+        status: 'SUCCESS',
+        message: 'User is the repository owner.',
+        role: 'OWNER'
+      });
+    }
+
     if (proj) {
       proj.collaborators = proj.collaborators || {};
       proj.collaborators[cleanEmail] = cleanRole;
