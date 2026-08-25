@@ -465,7 +465,7 @@ export const IDEWorkspacePage = () => {
               hasUnsavedForkChangesRef.current = false;
               isLocalDirtyRef.current = false;
             }
-            setSaveSyncSuccessMsg('âŒ Notice: Collaborator fork request was rejected by the Project Owner. Workspace restored to Master baseline.');
+            setSaveSyncSuccessMsg('❌ Notice: Collaborator fork request was rejected by the Project Owner. Workspace restored to Master baseline.');
             setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
           }
         } catch (e) {}
@@ -924,10 +924,10 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // â”€â”€ 2. Save & Sync to Master (Owner-Gated Canonical Repository Merge) â”€â”€â”€â”€â”€â”€â”€
+  // ── 2. Save & Sync to Master (Owner-Gated Canonical Repository Merge) ───────
   const handleSaveAndSyncMaster = async () => {
     if (!isProjectOwner) {
-      alert('ðŸ”’ Access Restricted: Only the Project Owner can merge working changes into the canonical Master Repository.');
+      alert('🔒 Access Restricted: Only the Project Owner can merge working changes into the canonical Master Repository.');
       return;
     }
 
@@ -1055,7 +1055,7 @@ export const IDEWorkspacePage = () => {
       hasUnsavedForkChangesRef.current = false;
       isLocalDirtyRef.current = false;
       setIsDiffViewActive(false);
-      setSaveSyncSuccessMsg('ðŸŽ‰ All working changes merged and synchronized to Master Repository!');
+      setSaveSyncSuccessMsg('🎉 All working changes merged and synchronized to Master Repository!');
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error syncing master repository:', err);
@@ -1065,10 +1065,10 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // â”€â”€ 3. Reject Fork (Project Owner Declines Collaborator Changes & Restores Master) â”€â”€
+  // ── 3. Reject Fork (Project Owner Declines Collaborator Changes & Restores Master) ──
   const handleRejectFork = async () => {
     if (!isProjectOwner) {
-      alert('ðŸ”’ Access Restricted: Only the Project Owner can decline or reject collaborator fork requests.');
+      alert('🔒 Access Restricted: Only the Project Owner can decline or reject collaborator fork requests.');
       return;
     }
 
@@ -1172,7 +1172,7 @@ export const IDEWorkspacePage = () => {
       }
 
       setIsDiffViewActive(false);
-      setSaveSyncSuccessMsg('âŒ Fork request rejected. Shared workspace restored to Master baseline.');
+      setSaveSyncSuccessMsg('❌ Fork request rejected. Shared workspace restored to Master baseline.');
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error rejecting fork request:', err);
@@ -1224,7 +1224,7 @@ export const IDEWorkspacePage = () => {
       if (res.ok) {
         const finalUrl = data.inviteUrl || inviteUrl;
         navigator.clipboard.writeText(finalUrl);
-        alert(`âœ“ Collaborator ${email} added as ${role} to ${projTitle}!\n\nInvitation link copied to clipboard:\n${finalUrl}`);
+        alert(`✓ Collaborator ${email} added as ${role} to ${projTitle}!\n\nInvitation link copied to clipboard:\n${finalUrl}`);
       } else {
         alert(`Error inviting teammate: ${data.error || 'Server error'}`);
       }
@@ -1336,7 +1336,7 @@ export const IDEWorkspacePage = () => {
         });
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`âš¡ Applied AI edits to ${actualFilePath}`);
+      setSaveSyncSuccessMsg(`⚡ Applied AI edits to ${actualFilePath}`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error applying AI modifications:', err);
@@ -1477,7 +1477,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[â†’] Renamed to '${cleanNewPath}'`);
+      setSaveSyncSuccessMsg(`[→] Renamed to '${cleanNewPath}'`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error renaming file:', err);
@@ -1633,7 +1633,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[â†’] Renamed folder /${cleanOld} to /${cleanNew}`);
+      setSaveSyncSuccessMsg(`[→] Renamed folder /${cleanOld} to /${cleanNew}`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error renaming folder:', err);
@@ -1694,7 +1694,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[Ã—] Deleted folder /${cleanFolder}`);
+      setSaveSyncSuccessMsg(`[×] Deleted folder /${cleanFolder}`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error deleting folder:', err);
@@ -1741,7 +1741,7 @@ export const IDEWorkspacePage = () => {
   const handleDownloadProjectZip = async () => {
     const isOwner = activeUserRole === 'OWNER' || projectData?.ownerId === currentUser?.uid || projectData?.ownerEmail === currentUser?.email;
     if (!isOwner) {
-      alert('ðŸ”’ Access Denied: Downloading the project as a ZIP archive is restricted to the Project Owner.');
+      alert('🔒 Access Denied: Downloading the project as a ZIP archive is restricted to the Project Owner.');
       return;
     }
     await exportProjectZip(files, projectData?.title || 'Quantum_Router');
@@ -1816,7 +1816,7 @@ export const IDEWorkspacePage = () => {
           }
         } catch (fsErr) { }
 
-        setSaveSyncSuccessMsg(`[â†’] Moved ${fileName} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'}`);
+        setSaveSyncSuccessMsg(`[→] Moved ${fileName} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'}`);
         setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
       } catch (err) {
         console.error('Error moving file:', err);
@@ -1828,7 +1828,7 @@ export const IDEWorkspacePage = () => {
       const newFolderTarget = `${prefix}${folderBase}`;
 
       if (newFolderTarget === cleanOld || cleanTarget === cleanOld || cleanTarget.startsWith(cleanOld + '/')) {
-        alert('âš ï¸ Cannot move a folder into itself or one of its own subdirectories.');
+        alert('⚠️ Cannot move a folder into itself or one of its own subdirectories.');
         return;
       }
 
@@ -1867,7 +1867,7 @@ export const IDEWorkspacePage = () => {
           return f;
         }));
 
-        // Persist to Shared Working Fork (NOT project_files â€” that's the master baseline)
+        // Persist to Shared Working Fork (NOT project_files — that's the master baseline)
         try {
           await setDoc(doc(db, 'projects', projectId), {
             working_files: updatedFiles,
@@ -1889,7 +1889,7 @@ export const IDEWorkspacePage = () => {
           });
         } catch (fsErr) { }
 
-        setSaveSyncSuccessMsg(`[â†’] Moved folder /${cleanOld} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'} in Working Fork`);
+        setSaveSyncSuccessMsg(`[→] Moved folder /${cleanOld} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'} in Working Fork`);
         setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
       } catch (err) {
         console.error('Error moving folder:', err);
@@ -2047,7 +2047,7 @@ export const IDEWorkspacePage = () => {
         console.warn('Import working copy sync notice:', fsErr);
       }
 
-      setSaveSyncSuccessMsg(`âš¡ Imported ${newFormattedFiles.length} file(s) into Working Copy! (${isProjectOwner ? 'Owner merge ready' : 'Pending Owner review'})`);
+      setSaveSyncSuccessMsg(`⚡ Imported ${newFormattedFiles.length} file(s) into Working Copy! (${isProjectOwner ? 'Owner merge ready' : 'Pending Owner review'})`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error confirming import:', err);
@@ -2147,7 +2147,7 @@ export const IDEWorkspacePage = () => {
             {unauthorizedMsg || `Your account email (${currentUser?.email}) is not authorized to access repository '${projectId}'.`}
           </p>
           <div className="p-3.5 bg-red-950/50 border border-red-800/70 rounded text-[11px] text-red-200 leading-relaxed">
-            ðŸ”’ <strong>Security Enforcement:</strong> Access to this repository is restricted to authorized team members. Contact the repository owner to request access permissions.
+            🔒 <strong>Security Enforcement:</strong> Access to this repository is restricted to authorized team members. Contact the repository owner to request access permissions.
           </div>
           <button
             onClick={() => navigate('/dashboard')}
@@ -2444,7 +2444,7 @@ export const IDEWorkspacePage = () => {
                           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                           : 'bg-white/5 text-zinc-500 border-white/5'
                         }`}>
-                        {isSandboxOpen ? 'âœ“ ON' : 'OFF'}
+                        {isSandboxOpen ? '✓ ON' : 'OFF'}
                       </span>
                     </button>
 
@@ -2473,7 +2473,7 @@ export const IDEWorkspacePage = () => {
                           ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
                           : 'bg-white/5 text-zinc-500 border-white/5'
                         }`}>
-                        {isAIChatOpen ? 'âœ“ ON' : 'OFF'}
+                        {isAIChatOpen ? '✓ ON' : 'OFF'}
                       </span>
                     </button>
 
@@ -2504,7 +2504,7 @@ export const IDEWorkspacePage = () => {
                           ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
                           : 'bg-white/5 text-zinc-500 border-white/5'
                         }`}>
-                        {showActiveCollaborators ? `âœ“ ON (${remoteCollaborators.length + 1})` : 'OFF'}
+                        {showActiveCollaborators ? `✓ ON (${remoteCollaborators.length + 1})` : 'OFF'}
                       </span>
                     </button>
                   </div>
@@ -2543,7 +2543,7 @@ export const IDEWorkspacePage = () => {
                       onClick={() => { handleRunCode(); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 font-bold flex justify-between items-center cursor-pointer"
                     >
-                      <span>â–¶ Run Code</span>
+                      <span>▶ Run Code</span>
                       <span className="text-[10px] text-zinc-500">Ctrl+R / F5</span>
                     </button>
                     <button
@@ -2986,13 +2986,20 @@ export const IDEWorkspacePage = () => {
                       {activeFile.fileName || activeFile.filePath.split('/').pop()}
                     </span>
                     {fileStatusMap[activeFile.filePath] && (
-                      <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${fileStatusMap[activeFile.filePath] === 'ADDED'
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold flex items-center gap-1.5 ${fileStatusMap[activeFile.filePath] === 'ADDED'
+                          ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-500/40'
                           : fileStatusMap[activeFile.filePath] === 'MODIFIED'
-                            ? 'bg-amber-950 text-amber-300 border border-amber-500/40'
-                            : 'bg-rose-950 text-rose-300 border border-rose-500/40'
+                            ? 'bg-amber-950/90 text-amber-300 border border-amber-500/40'
+                            : 'bg-rose-950/90 text-rose-300 border border-rose-500/40'
                         }`}>
-                        {fileStatusMap[activeFile.filePath] === 'ADDED' ? 'â€¢ NEW PROPOSED FILE' : 'â€¢ PROPOSED MODIFICATION'}
+                        <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                        <span>
+                          {fileStatusMap[activeFile.filePath] === 'ADDED'
+                            ? 'NEW PROPOSED FILE'
+                            : fileStatusMap[activeFile.filePath] === 'MODIFIED'
+                              ? 'PROPOSED MODIFICATION'
+                              : 'DELETED FILE'}
+                        </span>
                       </span>
                     )}
                     {isBinaryFile(activeFile.filePath) && (
