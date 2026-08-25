@@ -1,12 +1,9 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { db } from '../../firebase';
-import { doc, setDoc } from 'firebase/firestore';
-import { syncProjectToPersonalFirestore } from '../../services/personalFirebaseStorage';
-import { stageAndDispatchInvitationEmail } from '../../utils/emailQueueService';
+import { auth } from '../../firebase';
 
 export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
-  const { currentUser, userProfile } = useAuth();
+  const { currentUser } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [languageEnv, setLanguageEnv] = useState('RUST_1.75');
@@ -37,6 +34,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
 
     setIsSubmitting(true);
     setError('');
+    let createResult = {};
 
     const ownerEmail = currentUser?.email || 'zafor@bubt.edu.bd';
     const teamMembersInput = {
@@ -69,10 +67,11 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
 
     const inviteLinks = {};
     collaborators.forEach((c) => {
-      inviteLinks[c.email] = `/invite/${pid}?role=${c.role}&email=${encodeURIComponent(c.email)}&title=${encodeURIComponent(title.trim())}&owner=${encodeURIComponent(ownerEmail)}`;
+      inviteLinks[c.email] = `/invite/${pid}?role=${c.role}&email=${encodeURIComponent(c.email)}`;
     });
 
-    // 1. Client Firestore Direct Write Guarantee
+    // Project creation is server-authoritative. Writing first from the browser
+    // used to bypass Firebase onboarding and leave projects in the website DB.
     const initialContent = languageEnv.includes('PYTHON')
       ? `# ${title.trim()} Primary Node\nimport torch\n\ndef main():\n    print("Initializing PyTorch Engine...")\n\nif __name__ == '__main__':\n    main()\n`
       : `// ${title.trim()} Primary Node\nfn main() {\n    println!("Initializing Neural Interface...");\n}\n`;
@@ -94,55 +93,13 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
     };
 
     try {
-      // Include master_project_files, working_files, and project_files in the project document
-      await setDoc(doc(db, 'projects', pid), {
-        ...newProject,
-        project_files: [initialFileObj],
-        working_files: [initialFileObj],
-        master_project_files: [initialFileObj]
-      }, { merge: true });
-
-      // Save initial file into projects/{pid}/files subcollection for Firestore Console file viewing
-      await setDoc(doc(db, 'projects', pid, 'files', initialFileId), initialFileObj, { merge: true });
-
-      // Save project copy into every collaborator's user document
-      const updatePromises = Object.entries(normalizedCollabs).map(async ([collabEmail, role]) => {
-        const collabDocId = collabEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
-        await setDoc(doc(db, 'users', collabDocId), {
-          projects: {
-            [pid]: {
-              projectId: pid,
-              title: title.trim(),
-              description: description.trim().slice(0, 150),
-              languageEnv,
-              userRole: role,
-              ownerEmail,
-              updatedAt: timestamp
-            }
-          }
-        }, { merge: true });
-      });
-      await Promise.all(updatePromises);
-
-      // Also write directly to user's Personal Firebase Cloud Database if configured
-      try {
-        await syncProjectToPersonalFirestore({
-          ...newProject,
-          project_files: [initialFileObj],
-          working_files: [initialFileObj],
-          master_project_files: [initialFileObj]
-        }, userProfile, ownerEmail);
-      } catch (personalErr) {
-        console.warn("Personal Firestore sync notice:", personalErr);
+      // AuthContext stores a serializable user snapshot. The Firebase Auth
+      // instance owns the live token required by the protected API.
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        throw new Error('Your sign-in session has expired. Please sign in again before creating a project.');
       }
-    } catch (fsErr) {
-      console.warn("Client Firestore project save notice:", fsErr);
-    }
-
-    // 2. Direct Invitation Email Triggers & Backend API Call
-    try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
-      await fetch('/api/projects', {
+      const createResponse = await fetch('/api/projects', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -161,27 +118,14 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
           teamMembersInput
         })
       });
-
-      // Stage and dispatch live invitation emails via Firebase Outbox Queue
-      if (collaborators.length > 0) {
-        const emailPromises = collaborators.map(c => 
-          stageAndDispatchInvitationEmail({
-            to: c.email,
-            ownerEmail,
-            projectTitle: title.trim(),
-            projectId: pid,
-            role: c.role || 'EDITOR',
-            inviteUrl: inviteLinks[c.email],
-            currentUser
-          }).catch(e => {
-            console.warn('Queue invite email notice:', e);
-            return { success: false, error: e.message };
-          })
-        );
-        await Promise.allSettled(emailPromises);
+      createResult = await createResponse.json().catch(() => ({}));
+      if (!createResponse.ok) {
+        throw new Error(createResult.message || createResult.error || 'The project could not be created.');
       }
     } catch (err) {
-      console.warn('Backend project creation notice:', err);
+      setError(err.message || 'The project could not be created.');
+      setIsSubmitting(false);
+      return;
     }
 
     setIsSubmitting(false);
@@ -189,7 +133,10 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
     if (collaborators.length > 0) {
       setCreatedData({
         project: newProject,
-        inviteLinks
+        inviteLinks,
+        emailFailures: createResult.emailFailures || [],
+        emailsDispatched: createResult.emailsDispatched === true,
+        invitationsQueued: createResult.invitationsQueued === true
       });
     } else {
       onProjectCreated(newProject);
@@ -224,10 +171,18 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
             <div className="p-3 bg-cyan-950/40 border border-cyan-700/60 rounded text-xs text-cyan-200 space-y-1.5">
               <div className="font-bold text-surface-tint flex items-center gap-1.5">
                 <span className="material-symbols-outlined text-sm text-neon-green">mark_email_read</span>
-                ✓ Repository Deployed & Invitation Emails Dispatched!
+                {createdData.emailsDispatched
+                  ? '✓ Repository Deployed & Invitations Accepted by SMTP'
+                  : createdData.invitationsQueued
+                    ? '✓ Repository Deployed — Invitation Delivery Queued'
+                    : '⚠ Repository Deployed — Invitation Delivery Needs Attention'}
               </div>
               <div className="text-[11px] text-on-surface-variant leading-relaxed">
-                Invitation emails have been sent automatically to your added team members. Only authorized emails on this roster can access the workspace.
+                {createdData.emailsDispatched
+                  ? 'Your mail server accepted the invitations for delivery. Use the links below as a fallback if a recipient cannot find the email.'
+                  : createdData.invitationsQueued
+                    ? 'The project is ready now. Invitation delivery continues in the background; use the links below if a recipient does not receive an email.'
+                    : `No delivery claim was made. Failed recipients: ${createdData.emailFailures.map((failure) => failure.to).join(', ') || 'unknown'}. Use the invite links below while SMTP is corrected.`}
               </div>
             </div>
 
@@ -255,22 +210,12 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
                         type="button"
                         onClick={() => {
                           navigator.clipboard.writeText(fullUrl);
-                          alert(`✓ Invite link copied to clipboard for ${c.email}:\n\n${fullUrl}`);
+                          alert(`Invite link copied for ${c.email}:\n${fullUrl}`);
                         }}
-                        className="bg-cyan-950 text-cyan-300 border border-cyan-700 px-2 py-1 text-[10px] font-bold hover:bg-cyan-900 transition-colors cursor-pointer"
-                        title="Copy direct invite link"
+                        className="bg-cyan-950 text-cyan-300 border border-cyan-700 px-2 py-1 text-[10px] font-bold hover:bg-cyan-900 transition-colors"
                       >
                         Copy
                       </button>
-                      <a
-                        href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(c.email)}&su=${encodeURIComponent(`[ObsidianIDE] Invitation to Collaborate on ${title.trim()}`)}&body=${encodeURIComponent(`Hello,\n\nYou have been invited to join the project workspace "${title.trim()}" on ObsidianIDE as a ${c.role}.\n\nClick the link below to accept and enter the live IDE workspace:\n${fullUrl}\n\nBest regards,\n${currentUser?.email || 'ObsidianIDE Owner'}`)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="bg-red-950 text-red-300 border border-red-800 px-2 py-1 text-[10px] font-bold hover:bg-red-900 transition-colors flex items-center gap-1 cursor-pointer no-underline"
-                        title="Open in Gmail Web Compose"
-                      >
-                        ✉️ Gmail
-                      </a>
                     </div>
                   </div>
                 );

@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc, deleteDoc, updateDoc, deleteField } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, deleteField, collection, query, where } from 'firebase/firestore';
+import { getProjectDisplayTitle } from '../utils/projectTitle';
 
 /**
  * Retrieves the personal Firebase Firestore configuration for the current user or project owner.
@@ -93,7 +94,7 @@ export const syncProjectToPersonalFirestore = async (projectData, userProfile, t
 
   const projectPayload = {
     projectId: pid,
-    title: projectData.title || pid,
+    title: getProjectDisplayTitle(projectData, pid),
     description: projectData.description || '',
     languageEnv: projectData.languageEnv || 'PYTHON_3.11',
     ownerEmail,
@@ -126,7 +127,7 @@ export const syncProjectToPersonalFirestore = async (projectData, userProfile, t
           projects: {
             [pid]: {
               projectId: pid,
-              title: projectData.title || pid,
+              title: getProjectDisplayTitle(projectData, pid),
               description: projectData.description || '',
               languageEnv: projectData.languageEnv || 'PYTHON_3.11',
               ownerEmail,
@@ -180,7 +181,7 @@ export const syncProjectToPersonalFirestore = async (projectData, userProfile, t
         body: JSON.stringify({
           fields: {
             projectId: { stringValue: pid },
-            title: { stringValue: projectData.title || pid },
+            title: { stringValue: getProjectDisplayTitle(projectData, pid) },
             description: { stringValue: projectData.description || '' },
             languageEnv: { stringValue: projectData.languageEnv || 'PYTHON_3.11' },
             ownerEmail: { stringValue: ownerEmail },
@@ -253,27 +254,41 @@ export const syncWorkingFilesToPersonalFirestore = async (projectId, workingFile
 };
 
 /**
- * Deletes a project from the user's personal Firebase Firestore instance if configured.
+ * Removes only the current user's personal copy of a project. It never touches
+ * the shared website project or any other collaborator's personal database.
  */
-export const deleteProjectFromPersonalFirestore = async (projectId, userProfile, targetEmail) => {
-  if (!projectId) return;
-  const email = (targetEmail || userProfile?.info?.email || '').trim().toLowerCase();
-  const config = getPersonalFirebaseConfig(userProfile, email);
-  if (!config || !config.projectId) return;
+export const removeProjectFromPersonalFirestore = async (projectId, userProfile, userEmail) => {
+  if (!projectId) return { removed: false, reason: 'missing-project-id' };
 
-  try {
-    const personalDb = getPersonalFirestore(userProfile, email);
-    if (personalDb) {
-      const username = (email.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
-      await Promise.allSettled([
-        deleteDoc(doc(personalDb, 'projects', projectId)),
-        updateDoc(doc(personalDb, 'users', username), {
-          [`projects.${projectId}`]: deleteField()
-        })
-      ]);
-      console.log(`✅ Project ${projectId} removed from personal Firestore.`);
-    }
-  } catch (err) {
-    console.warn('Personal Firestore delete notice:', err.message);
-  }
+  const personalDb = getPersonalFirestore(userProfile, userEmail);
+  if (!personalDb) return { removed: false, reason: 'personal-storage-not-configured' };
+
+  const projectRef = doc(personalDb, 'projects', projectId);
+  const username = ((userEmail || userProfile?.info?.email || '').split('@')[0] || 'user')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_');
+  const personalUserRef = doc(personalDb, 'users', username);
+  const projectFilesRef = collection(personalDb, 'projects', projectId, 'files');
+  const rootFilesQuery = query(collection(personalDb, 'files'), where('projectId', '==', projectId));
+
+  const [projectFilesSnapshot, rootFilesSnapshot] = await Promise.all([
+    getDocs(projectFilesRef),
+    getDocs(rootFilesQuery)
+  ]);
+
+  await Promise.all([
+    ...projectFilesSnapshot.docs.map((fileDoc) => deleteDoc(fileDoc.ref)),
+    ...rootFilesSnapshot.docs.map((fileDoc) => deleteDoc(fileDoc.ref)),
+    deleteDoc(projectRef),
+    // Only clean up this user's personal profile record; shared project data and
+    // collaborator memberships remain untouched.
+    updateDoc(personalUserRef, {
+      [`projects.${projectId}`]: deleteField()
+    }).catch(() => {})
+  ]);
+
+  return {
+    removed: true,
+    removedFileCount: projectFilesSnapshot.size + rootFilesSnapshot.size
+  };
 };

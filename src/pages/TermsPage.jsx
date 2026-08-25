@@ -7,7 +7,7 @@ export const TermsPage = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-surface-light dark:bg-[#0A0A0B] text-neutral-900 dark:text-[#e4e2e4] flex flex-col justify-between font-sans">
+    <div className="app-shell min-h-screen text-neutral-900 dark:text-[#e4e2e4] flex flex-col justify-between font-sans">
       {/* Header Bar */}
       <header className="sticky top-0 z-50 flex justify-between items-center px-6 h-14 bg-surface-container-low/90 dark:bg-surface-dark/90 backdrop-blur-xl border-b border-outline-variant">
         <div className="flex items-center gap-3">
@@ -21,7 +21,7 @@ export const TermsPage = () => {
             ObsidianIDE
           </Link>
           <span className="text-xs font-mono px-2 py-0.5 rounded bg-surface-tint/10 text-surface-tint border border-surface-tint/30">
-            SECURITY_PROTOCOL v2.4
+            Terms of service
           </span>
         </div>
 
@@ -41,7 +41,7 @@ export const TermsPage = () => {
           
           {/* Header Banner */}
           <div className="border-b border-outline-variant/40 pb-6">
-            <div className="flex items-center gap-2 text-surface-tint font-mono text-xs uppercase tracking-widest mb-2">
+            <div className="flex items-center gap-2 text-surface-tint text-xs font-semibold tracking-wide mb-2">
               <span className="material-symbols-outlined text-base">verified_user</span> 
               Official Platform Policy & Cryptographic Governance
             </div>
@@ -145,7 +145,7 @@ export const TermsPage = () => {
       <footer className="px-6 py-3 border-t border-outline-variant text-[11px] font-mono text-on-surface-variant flex justify-between items-center bg-surface-container-lowest/80">
         <div>© 2026 Obsidian Systems. Terms & Security Protocol.</div>
         <div className="flex gap-4">
-          <span className="text-surface-tint font-bold">SECURE_NODE</span>
+          <span className="text-surface-tint font-bold">ObsidianIDE</span>
         </div>
       </footer>
     </div>

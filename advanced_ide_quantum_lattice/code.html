@@ -1,0 +1,362 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>NEURAL_IDE | Core Workspace</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;family=Inter:wght@400;500&amp;family=Geist:wght@600;700&amp;display=swap" rel="stylesheet">
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-size: 18px;
+        }
+        .glass-panel {
+            backdrop-filter: blur(12px);
+            background: rgba(26, 26, 30, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .ghost-track-vertical {
+            width: 1px;
+            background-color: rgba(0, 245, 255, 0.1);
+            cursor: col-resize;
+            transition: background-color 0.15s ease;
+        }
+        .ghost-track-vertical:hover {
+            background-color: rgba(0, 245, 255, 0.4);
+        }
+        /* Custom scrollbar for technical density */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0A0A0B;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #353436;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #00dce5;
+        }
+        .cursor-tag::after {
+            content: '';
+            position: absolute;
+            left: -1px;
+            top: 0;
+            width: 2px;
+            height: 1.2em;
+            background: currentColor;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "ghost-track": "rgba(0, 245, 255, 0.2)",
+                        "secondary": "#e0b6ff",
+                        "primary-container": "#00f5ff",
+                        "on-background": "#e5e2e3",
+                        "background": "#131314",
+                        "primary": "#e9feff",
+                        "surface-container-high": "#2a2a2b",
+                        "tertiary-fixed": "#ffdad8",
+                        "surface-container-highest": "#353436",
+                        "tertiary-fixed-dim": "#ffb3b0",
+                        "on-surface-variant": "#b9caca",
+                        "surface-slate": "#1A1A1E",
+                        "on-error-container": "#ffdad6",
+                        "on-tertiary": "#68000f",
+                        "inverse-on-surface": "#313031",
+                        "secondary-fixed-dim": "#e0b6ff",
+                        "on-primary-container": "#006c71",
+                        "outline-variant": "#3a494a",
+                        "on-tertiary-fixed-variant": "#93001a",
+                        "inverse-surface": "#e5e2e3",
+                        "tertiary-container": "#ffd3d1",
+                        "surface-container": "#201f20",
+                        "surface": "#131314",
+                        "surface-variant": "#353436",
+                        "on-secondary-fixed": "#2c0648",
+                        "surface-light": "#F4F4F6",
+                        "inverse-primary": "#00696e",
+                        "error": "#ffb4ab",
+                        "tertiary": "#fff8f7",
+                        "on-secondary": "#42205e",
+                        "primary-fixed-dim": "#00dce5",
+                        "on-surface": "#e5e2e3",
+                        "error-container": "#93000a",
+                        "on-tertiary-fixed": "#410006",
+                        "primary-fixed": "#63f7ff",
+                        "neon-green": "#39FF14",
+                        "surface-bright": "#3a393a",
+                        "on-secondary-container": "#cea5ed",
+                        "on-primary-fixed": "#002021",
+                        "surface-container-low": "#1c1b1c",
+                        "surface-dark": "#0A0A0B",
+                        "secondary-fixed": "#f2daff",
+                        "outline": "#849495",
+                        "on-secondary-fixed-variant": "#5a3776",
+                        "on-primary": "#003739",
+                        "secondary-container": "#5a3776",
+                        "on-primary-fixed-variant": "#004f53",
+                        "surface-dim": "#131314",
+                        "on-tertiary-container": "#c50026",
+                        "on-error": "#690005",
+                        "surface-tint": "#00dce5",
+                        "surface-container-lowest": "#0e0e0f"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "unit": "4px",
+                        "pane-gap": "1px",
+                        "margin-desktop": "32px",
+                        "gutter": "16px",
+                        "margin-mobile": "16px"
+                    },
+                    "fontFamily": {
+                        "label-caps": ["JetBrains Mono"],
+                        "headline-lg": ["Geist"],
+                        "body-sm": ["Inter"],
+                        "headline-md": ["Geist"],
+                        "code-md": ["JetBrains Mono"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-sm": ["Geist"]
+                    },
+                    "fontSize": {
+                        "label-caps": ["11px", {"lineHeight": "1", "letterSpacing": "0.08em", "fontWeight": "700"}],
+                        "headline-lg": ["32px", {"lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "body-sm": ["12px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                        "headline-md": ["24px", {"lineHeight": "1.3", "fontWeight": "600"}],
+                        "code-md": ["14px", {"lineHeight": "1.5", "fontWeight": "450"}],
+                        "body-md": ["14px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                        "body-lg": ["16px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "headline-sm": ["18px", {"lineHeight": "1.4", "fontWeight": "600"}]
+                    }
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-[#F4F4F6] dark:bg-[#0A0A0B] text-[#131314] dark:text-[#e4e2e4] selection:bg-primary-container selection:text-on-primary-container">
+<!-- TopNavBar -->
+<header class="fixed top-0 w-full z-50 bg-surface-container border-b border-outline-variant flex justify-between items-center h-12 px-4">
+<div class="flex items-center gap-6">
+<span class="font-label-caps text-label-caps tracking-widest text-primary-fixed-dim">NEURAL_IDE</span>
+<nav class="hidden md:flex gap-4">
+<button class="font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-variant px-2 py-1 transition-colors">FILE</button>
+<button class="font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-variant px-2 py-1 transition-colors">EDIT</button>
+<button class="font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-variant px-2 py-1 transition-colors">VIEW</button>
+<button class="font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-variant px-2 py-1 transition-colors">GO</button>
+<button class="font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-variant px-2 py-1 transition-colors">TERMINAL</button>
+<button class="font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-variant px-2 py-1 transition-colors">HELP</button>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="flex items-center gap-2 px-3 py-1 bg-surface-container-high border border-outline-variant hover:border-primary-fixed-dim transition-all group">
+<span class="material-symbols-outlined text-primary-fixed-dim">videocam</span>
+<span class="font-label-caps text-label-caps">Link Google Meet</span>
+</button>
+<div class="flex items-center gap-2 border-l border-outline-variant pl-4">
+<span class="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-primary-fixed-dim transition-colors" onclick="toggleTheme()">light_mode</span>
+<span class="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-primary-fixed-dim transition-colors">account_circle</span>
+</div>
+</div>
+</header>
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-12 h-[calc(100vh-48px-24px)] w-16 bg-surface-container-low border-r border-outline-variant flex flex-col items-center py-4 gap-4 z-40">
+<button class="w-12 h-12 flex items-center justify-center text-primary-fixed-dim border-l-2 border-primary-fixed-dim bg-ghost-track transition-colors">
+<span class="material-symbols-outlined">dashboard</span>
+</button>
+<button class="w-12 h-12 flex items-center justify-center text-on-surface-variant hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined">person</span>
+</button>
+<button class="w-12 h-12 flex items-center justify-center text-on-surface-variant hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined">search</span>
+</button>
+<button class="w-12 h-12 flex items-center justify-center text-on-surface-variant hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</aside>
+<!-- 3-Pane Workspace -->
+<main class="fixed left-16 top-12 right-0 bottom-6 flex bg-surface-dark overflow-hidden">
+<!-- Left: Flat Directory Explorer -->
+<section class="w-64 flex-shrink-0 bg-surface-container-low flex flex-col">
+<div class="h-8 flex items-center px-4 border-b border-outline-variant">
+<span class="font-label-caps text-label-caps text-on-surface-variant">EXPLORER</span>
+</div>
+<div class="flex-1 overflow-y-auto py-2 font-code-md text-code-md text-on-surface-variant">
+<div class="px-4 py-1 flex items-center gap-2 hover:bg-surface-variant group cursor-pointer">
+<span class="material-symbols-outlined text-[16px]">expand_more</span>
+<span class="">src</span>
+</div>
+<div class="px-8 py-1 flex items-center gap-2 bg-ghost-track border-l-2 border-primary-fixed-dim text-primary-fixed-dim cursor-pointer">
+<span class="material-symbols-outlined text-[16px]">code</span>
+<span class="">main.rs</span>
+</div>
+<div class="px-8 py-1 flex items-center gap-2 hover:bg-surface-variant cursor-pointer">
+<span class="material-symbols-outlined text-[16px]">data_object</span>
+<span class="">lib.rs</span>
+</div>
+<div class="px-4 py-1 flex items-center gap-2 hover:bg-surface-variant cursor-pointer">
+<span class="material-symbols-outlined text-[16px]">chevron_right</span>
+<span class="">tests</span>
+</div>
+<div class="px-4 py-1 flex items-center gap-2 hover:bg-surface-variant cursor-pointer">
+<span class="material-symbols-outlined text-[16px]">settings</span>
+<span class="">Cargo.toml</span>
+</div>
+<div class="px-4 py-1 flex items-center gap-2 hover:bg-surface-variant cursor-pointer opacity-50">
+<span class="material-symbols-outlined text-[16px]">description</span>
+<span class="">README.md</span>
+</div>
+</div>
+</section>
+<div class="ghost-track-vertical"></div>
+<!-- Center: Monaco-style Canvas -->
+<section class="flex-1 min-w-0 bg-surface-dark flex flex-col relative">
+<!-- Tabs -->
+<div class="h-8 flex items-center bg-surface-container-lowest border-b border-outline-variant overflow-x-auto">
+<div class="h-full px-4 flex items-center gap-2 bg-surface-dark border-r border-outline-variant text-primary-fixed-dim relative">
+<span class="font-code-md text-code-md">main.rs</span>
+<div class="w-2 h-2 rounded-full bg-primary-container"></div>
+<span class="material-symbols-outlined text-[14px] ml-1 cursor-pointer hover:text-on-surface">close</span>
+</div>
+<div class="h-full px-4 flex items-center gap-2 border-r border-outline-variant text-on-surface-variant hover:bg-surface-container-low transition-colors cursor-pointer">
+<span class="font-code-md text-code-md">lib.rs</span>
+<span class="material-symbols-outlined text-[14px] ml-1 cursor-pointer hover:text-on-surface">close</span>
+</div>
+</div>
+<!-- Code Editor Area -->
+<div class="flex-1 overflow-auto font-code-md text-code-md p-4 bg-surface-dark leading-relaxed relative">
+<div class="flex gap-4">
+<div class="text-right text-outline-variant select-none">
+<div class="">1</div><div class="">2</div><div class="">3</div><div class="">4</div><div class="">5</div><div class="">6</div><div class="">7</div><div class="">8</div><div class="">9</div><div class="">10</div>
+</div>
+<div class="flex-1 relative">
+<div class="text-primary-fixed-dim">use <span class="text-secondary">std::io</span>;</div>
+<div class="mt-1"><span class="text-tertiary-fixed-dim">fn</span> <span class="text-on-primary-container">main</span>() {</div>
+<div class="pl-4">
+<span class="text-primary-fixed-dim">println!</span>(<span class="text-neon-green">"Initializing Neural Interface..."</span>);
+                    </div>
+<div class="pl-4 mt-1 relative">
+<span class="text-primary-fixed-dim">let</span> <span class="text-on-surface">buffer</span> = <span class="text-on-surface">String::new()</span>;
+                        <!-- Static Cursor 1 -->
+<div class="absolute top-0 left-[180px] text-primary-fixed-dim cursor-tag h-[1.2em] border-l-2 border-primary-fixed-dim" style="color: #00dce5;">
+<div class="absolute -top-5 left-0 bg-primary-fixed-dim text-on-primary-fixed px-1 text-[9px] font-bold">ALICE</div>
+</div>
+</div>
+<div class="pl-4 mt-1">
+<span class="text-on-surface-variant">// Awaiting telemetry stream...</span>
+</div>
+<div class="pl-4 mt-1 relative">
+<span class="text-primary-fixed-dim">match</span> <span class="text-on-surface">stream.poll()</span> {
+                            <!-- Static Cursor 2 -->
+<div class="absolute top-0 left-[120px] text-secondary cursor-tag h-[1.2em] border-l-2 border-secondary" style="color: #e0b6ff;">
+<div class="absolute -top-5 left-0 bg-secondary-fixed-dim text-on-secondary-fixed px-1 text-[9px] font-bold">BOB</div>
+</div>
+</div>
+<div class="pl-8"><span class="text-on-surface">Ok(data)</span> =&gt; <span class="text-primary-fixed-dim">process</span>(data),</div>
+<div class="pl-8"><span class="text-on-surface">Err(_)</span> =&gt; <span class="text-error">panic!</span>(<span class="text-neon-green">"Stream Interrupted"</span>),</div>
+<div class="pl-4">}</div>
+<div class="">}</div>
+</div>
+</div>
+<!-- Glass-morphic Meet Drawer -->
+<div class="absolute bottom-16 right-8 w-64 glass-panel p-4 z-30">
+<div class="flex justify-between items-center mb-3">
+<span class="font-label-caps text-label-caps text-primary-fixed-dim">LIVE SESSION</span>
+<div class="flex gap-1">
+<div class="w-1.5 h-1.5 rounded-full bg-neon-green"></div>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-variant border border-primary-fixed-dim flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px] text-primary-fixed-dim">face</span>
+</div>
+<div>
+<div class="font-body-sm text-body-sm text-on-surface">Alice Chen</div>
+<div class="text-[10px] text-on-surface-variant">Editing main.rs</div>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-variant border border-secondary flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px] text-secondary">face_6</span>
+</div>
+<div>
+<div class="font-body-sm text-body-sm text-on-surface">Bob Matrix</div>
+<div class="text-[10px] text-on-surface-variant">Reviewing line 12</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Editor Action Bar -->
+<div class="h-12 border-t border-outline-variant bg-surface-container flex items-center justify-between px-6">
+<div class="flex items-center gap-4 text-on-surface-variant font-code-md text-code-md">
+<span class="">UTF-8</span>
+<span class="">Line 4, Col 22</span>
+<span class="text-primary-fixed-dim">Rust v1.75.0</span>
+</div>
+<button class="bg-primary-container text-on-primary-container px-6 py-2 font-label-caps text-label-caps hover:bg-neon-green transition-all duration-200 shadow-sm border border-outline-variant/20">Save</button>
+</div>
+</section>
+<div class="ghost-track-vertical"></div>
+<!-- Right: Live Preview Sandbox -->
+<section class="w-96 flex-shrink-0 bg-surface-slate flex flex-col">
+<div class="h-8 flex items-center justify-between px-4 bg-surface-container-low border-b border-outline-variant">
+<span class="font-label-caps text-label-caps text-on-surface-variant">Live Preview</span>
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant cursor-pointer">refresh</span>
+</div>
+<div class="flex-1 bg-white relative">
+<!-- Sandbox Shell Mockup -->
+<div class="p-8 h-full flex flex-col items-center justify-center text-center">
+<div class="w-16 h-16 bg-surface-dark border border-outline-variant mb-6 flex items-center justify-center">
+<span class="material-symbols-outlined text-neon-green text-3xl">terminal</span>
+</div>
+<h2 class="text-surface-dark font-headline-sm text-headline-sm mb-2">Console Output</h2>
+<p class="text-outline text-body-sm px-4">Initializing WebGL graphics context... Ready. Telemetry stream connected.</p>
+<div class="mt-8 w-full h-32 bg-surface-container flex items-center justify-center overflow-hidden border border-surface-dark">
+<!-- Abstract Preview Graph -->
+<div class="flex items-end gap-1 h-16">
+<div class="w-2 h-8 bg-primary-container"></div>
+<div class="w-2 h-12 bg-primary-container"></div>
+<div class="w-2 h-6 bg-primary-container"></div>
+<div class="w-2 h-14 bg-primary-container"></div>
+<div class="w-2 h-10 bg-neon-green"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- Footer Status Bar -->
+
+<script>
+    function toggleTheme() {
+        document.documentElement.classList.toggle('dark');
+    }
+
+    // Micro-interactions
+    document.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('mousedown', () => {
+            btn.classList.add('opacity-80');
+        });
+        btn.addEventListener('mouseup', () => {
+            btn.classList.remove('opacity-80');
+        });
+    });
+</script>
+
+
+
+
+</body></html>

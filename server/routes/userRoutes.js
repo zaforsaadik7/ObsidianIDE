@@ -7,6 +7,40 @@ const router = express.Router();
 
 export const inMemoryUserStore = new Map();
 
+const getProjectDisplayTitle = (project, fallbackProjectId = '') => {
+  const projectId = String(project?.projectId || project?.id || fallbackProjectId || '').trim();
+  const title = String(project?.title || '').trim();
+  if (title && title !== projectId) return title;
+  const match = projectId.match(/^proj_(.+)_\d{4}$/i);
+  return match ? (match[1].replace(/_+/g, ' ').trim() || 'Untitled project') : (title || projectId || 'Untitled project');
+};
+
+// GET /api/users/count: Return the total number of registered user profiles
+router.get('/count', async (req, res) => {
+  try {
+    let count = 0;
+    let source = 'memory';
+
+    if (adminDb) {
+      const snapshot = await adminDb.collection('users').count().get();
+      count = snapshot.data().count;
+      source = 'firestore';
+    } else {
+      const knownEmails = new Set();
+      inMemoryUserStore.forEach((profile) => {
+        const email = profile?.info?.email;
+        if (email) knownEmails.add(String(email).trim().toLowerCase());
+      });
+      count = knownEmails.size;
+    }
+
+    res.set('Cache-Control', 'no-store');
+    return res.json({ status: 'SUCCESS', count, source });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to fetch registered user count' });
+  }
+});
+
 // GET /api/users/profile: Retrieve user info & projects schema
 router.get('/profile', verifyToken, async (req, res) => {
   try {
@@ -47,7 +81,7 @@ router.get('/profile', verifyToken, async (req, res) => {
       if (isOwner || collabRole) {
         projectsMap[proj.projectId || pid] = {
           projectId: proj.projectId || pid,
-          title: proj.title || pid,
+          title: getProjectDisplayTitle(proj, pid),
           languageEnv: proj.languageEnv || 'PYTHON_3.11',
           userRole: isOwner ? 'OWNER' : (collabRole || 'EDITOR'),
           ownerEmail: proj.ownerEmail,

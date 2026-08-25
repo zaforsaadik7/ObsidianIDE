@@ -31,7 +31,7 @@ export const OnboardingWizardPage = () => {
   const [scope2Checked, setScope2Checked] = useState(true);
   const [scope3Checked, setScope3Checked] = useState(true);
 
-  const { currentUser, userProfile, setUserProfile } = useAuth();
+  const { currentUser, userProfile, setUserProfile, refreshProfile } = useAuth();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
@@ -320,50 +320,12 @@ export const OnboardingWizardPage = () => {
     }
   };
 
-  const handleForceSaveAndRedirect = async () => {
-    const activeTargetEmail = selectedEmail || userAccountEmail;
-    const cleanProjectId = projectIdInput.trim() || 'obsidianide-2419e';
-
-    try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
-      await fetch('/api/users/provision-firebase-database', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
-          userEmail: activeTargetEmail,
-          uid: currentUser?.uid,
-          firebaseProjectId: cleanProjectId,
-          databaseName: 'ObsidianIDE'
-        })
-      });
-    } catch (e) {
-      console.warn("Save profile notice:", e);
-    }
-
-    handleFinalizeWorkspaceRedirect();
-  };
-
-  const handleFinalizeWorkspaceRedirect = () => {
+  const handleFinalizeWorkspaceRedirect = async () => {
+    await refreshProfile();
     setIsModalOpen(false);
     setShowResultModal(false);
     setProvisioning(true);
-    setStatusText("PERFORMING_FINAL_HANDSHAKE...");
-
-    // Bug 2 Fix: Update in-memory userProfile before navigating so
-    // RequireStorageRoute doesn't redirect back to /onboarding
-    if (userProfile) {
-      setUserProfile(prev => ({
-        ...prev,
-        info: {
-          ...(prev?.info || {}),
-          personalStorageConnected: true,
-          personalStorageProjectId: projectIdInput.trim() || prev?.info?.personalStorageProjectId
-        }
-      }));
-    }
+    setStatusText("Finishing setup…");
 
     setTimeout(() => {
       navigate('/onboarding/github');
@@ -375,7 +337,7 @@ export const OnboardingWizardPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-surface-light dark:bg-[#0A0A0B] text-neutral-900 dark:text-[#e4e2e4] flex flex-col justify-between font-sans relative">
+    <div className="app-shell min-h-screen text-neutral-900 dark:text-[#e4e2e4] flex flex-col justify-between font-sans relative">
       {/* Top Navbar */}
       <header className="fixed top-0 left-0 w-full z-40 flex justify-between items-center px-6 h-12 bg-surface-container-low/80 dark:bg-surface-dark/80 backdrop-blur-xl border-b border-outline-variant">
         <div className="flex items-center gap-4">
@@ -450,13 +412,13 @@ export const OnboardingWizardPage = () => {
             {/* Tier B: Shared Infrastructure Cluster */}
             <div 
               onClick={handleSelectSharedCloud}
-              className="glass-panel rounded-lg p-6 cursor-pointer flex flex-col justify-between h-72 relative border border-outline-variant/40 hover:border-purple-400 transition-all bg-surface-container-low/60 group"
+              className="glass-panel rounded-lg p-6 cursor-pointer flex flex-col justify-between h-72 relative border border-outline-variant/40 hover:border-surface-tint transition-all bg-surface-container-low/60 group"
             >
-              <span className="material-symbols-outlined text-3xl text-purple-400 absolute top-4 right-4 opacity-40 group-hover:opacity-100 transition-opacity">
+              <span className="material-symbols-outlined text-3xl text-surface-tint absolute top-4 right-4 opacity-40 group-hover:opacity-100 transition-opacity">
                 cloud
               </span>
               <div>
-                <span className="text-[10px] font-mono text-purple-400 bg-purple-950/40 px-2.5 py-0.5 border border-purple-800/40 inline-block mb-3">
+                <span className="text-[10px] text-surface-tint bg-surface-tint/10 px-2.5 py-0.5 border border-surface-tint/20 inline-block mb-3 rounded-full">
                   Shared Infrastructure Cluster
                 </span>
                 <h2 className="text-lg font-bold text-on-surface mb-1 font-headline">Obsidian Shared Cloud</h2>
@@ -464,7 +426,7 @@ export const OnboardingWizardPage = () => {
                   Simulated central subscription pipeline leveraging dedicated server space partitions for distributed engineering squads ($0.004/req).
                 </p>
               </div>
-              <button className="w-full bg-purple-950 text-purple-200 text-xs font-mono font-semibold py-2.5 mt-4 border border-purple-800 group-hover:bg-purple-600 group-hover:text-white transition-colors cursor-pointer">
+              <button className="w-full bg-surface-container-high text-on-surface text-xs font-semibold py-2.5 mt-4 border border-outline-variant group-hover:bg-surface-tint group-hover:text-neutral-900 transition-colors cursor-pointer">
                 Link Mock Core Allocation
               </button>
             </div>
@@ -800,13 +762,6 @@ export const OnboardingWizardPage = () => {
                       🔄 Retest Connection Now
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={handleForceSaveAndRedirect}
-                      className="px-4 py-2.5 bg-[#2E3036] hover:bg-[#3E4048] text-[#E3E2E6] font-bold text-xs rounded transition-colors"
-                    >
-                      Bypass & Proceed to IDE
-                    </button>
                   </div>
                 </div>
               ) : (
@@ -850,7 +805,7 @@ export const OnboardingWizardPage = () => {
       {/* Footer Status Bar */}
       <footer className="px-6 py-2 border-t border-outline-variant text-[11px] font-mono text-on-surface-variant flex justify-between items-center bg-surface-container-lowest/80">
         <div>© 2026 Obsidian Systems. Built via agile workspace methodology.</div>
-        <div className="text-surface-tint font-bold">SYSTEM_READY</div>
+        <div className="text-surface-tint font-bold">ObsidianIDE</div>
       </footer>
     </div>
   );

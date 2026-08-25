@@ -13,7 +13,7 @@ export const getOwnerPersonalFirebaseConfig = async (ownerEmail) => {
 
   // 1. Check in-memory store
   const memUser = inMemoryUserStore.get(username) || inMemoryUserStore.get(cleanEmail);
-  if (memUser?.info?.personalFirebaseConfig?.apiKey && memUser?.info?.personalFirebaseConfig?.projectId) {
+  if (memUser?.info?.personalStorageVerified === true && memUser?.info?.personalStorageConnected === true && memUser?.info?.personalFirebaseConfig?.apiKey && memUser?.info?.personalFirebaseConfig?.projectId) {
     return memUser.info.personalFirebaseConfig;
   }
 
@@ -23,7 +23,7 @@ export const getOwnerPersonalFirebaseConfig = async (ownerEmail) => {
       const userSnap = await adminDb.collection('users').doc(username).get();
       if (userSnap.exists) {
         const uData = userSnap.data();
-        if (uData?.info?.personalFirebaseConfig?.apiKey && uData?.info?.personalFirebaseConfig?.projectId) {
+        if (uData?.info?.personalStorageVerified === true && uData?.info?.personalStorageConnected === true && uData?.info?.personalFirebaseConfig?.apiKey && uData?.info?.personalFirebaseConfig?.projectId) {
           return uData.info.personalFirebaseConfig;
         }
       }
@@ -43,7 +43,9 @@ export const getOwnerPersonalFirebaseConfig = async (ownerEmail) => {
         const docJson = await res.json();
         const infoMap = docJson.fields?.info?.mapValue?.fields;
         const pcfgMap = infoMap?.personalFirebaseConfig?.mapValue?.fields;
-        if (pcfgMap?.apiKey?.stringValue && pcfgMap?.projectId?.stringValue) {
+        const verified = infoMap?.personalStorageVerified?.booleanValue === true;
+        const connected = infoMap?.personalStorageConnected?.booleanValue === true;
+        if (verified && connected && pcfgMap?.apiKey?.stringValue && pcfgMap?.projectId?.stringValue) {
           const resolved = {
             apiKey: pcfgMap.apiKey.stringValue,
             projectId: pcfgMap.projectId.stringValue,
@@ -56,15 +58,6 @@ export const getOwnerPersonalFirebaseConfig = async (ownerEmail) => {
     }
   } catch (restErr) {
     console.warn('REST owner config lookup notice:', restErr.message);
-  }
-
-  // 4. Fallback to minimal info fields if available
-  if (memUser?.info?.personalStorageProjectId) {
-    return {
-      projectId: memUser.info.personalStorageProjectId,
-      apiKey: memUser.info.personalStorageApiKey || '',
-      authDomain: `${memUser.info.personalStorageProjectId}.firebaseapp.com`
-    };
   }
 
   return null;
@@ -140,59 +133,72 @@ export const syncToOwnerPersonalFirestore = async ({
       projectFields.masterLastSyncedBy = { stringValue: modifiedBy || ownerEmail };
     }
 
-    await fetch(projectRestUrl, {
+    const projectWriteResponse = await fetch(projectRestUrl, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields: projectFields })
     });
+    if (!projectWriteResponse.ok) {
+      const payload = await projectWriteResponse.json().catch(() => ({}));
+      throw new Error(payload?.error?.message || `Personal Firestore rejected the project write (HTTP ${projectWriteResponse.status}).`);
+    }
 
-    // 2. Parallel Write / Update Active Files
+    // 2. Active File IDs Set for Exact Database Pruning
     const activeFileDocIds = new Set();
     const activeFilePaths = new Set();
 
-    const writePromises = files.filter(f => f && (f.filePath || f.fileId)).map(async (f) => {
-      const fileDocId = f.fileId || `file_${pid}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-      activeFileDocIds.add(fileDocId);
-      if (f.filePath) activeFilePaths.add(f.filePath);
+    // Write / Update Active Files
+    for (const f of files) {
+      if (f && (f.filePath || f.fileId)) {
+        const fileDocId = f.fileId || `file_${pid}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+        activeFileDocIds.add(fileDocId);
+        if (f.filePath) activeFilePaths.add(f.filePath);
+        
+        const fileFields = {
+          fileId: { stringValue: fileDocId },
+          projectId: { stringValue: pid },
+          filePath: { stringValue: f.filePath || '' },
+          fileName: { stringValue: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file') },
+          content: { stringValue: typeof f.content === 'string' ? f.content : '' },
+          fileType: { stringValue: f.fileType || 'plaintext' },
+          updatedAt: { stringValue: f.updatedAt || timestamp },
+          lastModifiedBy: { stringValue: f.lastModifiedBy || modifiedBy || ownerEmail }
+        };
 
-      const fileFields = {
-        fileId: { stringValue: fileDocId },
-        projectId: { stringValue: pid },
-        filePath: { stringValue: f.filePath || '' },
-        fileName: { stringValue: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file') },
-        content: { stringValue: typeof f.content === 'string' ? f.content : '' },
-        fileType: { stringValue: f.fileType || 'plaintext' },
-        updatedAt: { stringValue: f.updatedAt || timestamp },
-        lastModifiedBy: { stringValue: f.lastModifiedBy || modifiedBy || ownerEmail }
-      };
-
-      const subcolUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/projects/${pid}/files/${fileDocId}?key=${encodeURIComponent(apiKey)}`;
-      const rootColUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/files/${fileDocId}?key=${encodeURIComponent(apiKey)}`;
-
-      await Promise.allSettled([
-        fetch(subcolUrl, {
+        // Subcollection write
+        const subcolUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/projects/${pid}/files/${fileDocId}?key=${encodeURIComponent(apiKey)}`;
+        const subcollectionWriteResponse = await fetch(subcolUrl, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fields: fileFields })
-        }),
-        fetch(rootColUrl, {
+        });
+        if (!subcollectionWriteResponse.ok) {
+          const payload = await subcollectionWriteResponse.json().catch(() => ({}));
+          throw new Error(payload?.error?.message || `Personal Firestore rejected a file write (HTTP ${subcollectionWriteResponse.status}).`);
+        }
+
+        // Root collection write for instant visibility in Firestore Console column 1
+        const rootColUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/files/${fileDocId}?key=${encodeURIComponent(apiKey)}`;
+        const rootCollectionWriteResponse = await fetch(rootColUrl, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fields: fileFields })
-        })
-      ]);
-    });
+        });
+        if (!rootCollectionWriteResponse.ok) {
+          const payload = await rootCollectionWriteResponse.json().catch(() => ({}));
+          throw new Error(payload?.error?.message || `Personal Firestore rejected the files index write (HTTP ${rootCollectionWriteResponse.status}).`);
+        }
+      }
+    }
 
-    await Promise.allSettled(writePromises);
-
-    // 3. Prune Deleted / Stale Files in Parallel
+    // 3. Prune Deleted / Stale Files from Subcollection: projects/{pid}/files
     try {
       const subcolListUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/projects/${pid}/files?key=${encodeURIComponent(apiKey)}`;
       const subcolRes = await fetch(subcolListUrl);
       if (subcolRes.ok) {
         const subcolData = await subcolRes.json();
         if (subcolData.documents) {
-          const deletePromises = subcolData.documents.map(async (doc) => {
+          for (const doc of subcolData.documents) {
             const docId = doc.name.split('/').pop();
             const filePath = doc.fields?.filePath?.stringValue;
             if (!activeFileDocIds.has(docId) && (!filePath || !activeFilePaths.has(filePath))) {
@@ -201,22 +207,21 @@ export const syncToOwnerPersonalFirestore = async ({
                 method: 'DELETE'
               });
             }
-          });
-          await Promise.allSettled(deletePromises);
+          }
         }
       }
     } catch (pruneSubErr) {
       console.warn('Subcollection pruning notice:', pruneSubErr.message);
     }
 
-    // 4. Prune Deleted / Stale Files from Root Collection: files in Parallel
+    // 4. Prune Deleted / Stale Files from Root Collection: files
     try {
       const rootListUrl = `https://firestore.googleapis.com/v1/projects/${targetProjectId}/databases/(default)/documents/files?key=${encodeURIComponent(apiKey)}`;
       const rootRes = await fetch(rootListUrl);
       if (rootRes.ok) {
         const rootData = await rootRes.json();
         if (rootData.documents) {
-          const deleteRootPromises = rootData.documents.map(async (doc) => {
+          for (const doc of rootData.documents) {
             const docId = doc.name.split('/').pop();
             const docPid = doc.fields?.projectId?.stringValue;
             const filePath = doc.fields?.filePath?.stringValue;
@@ -226,12 +231,11 @@ export const syncToOwnerPersonalFirestore = async ({
                 method: 'DELETE'
               });
             }
-          });
-          await Promise.allSettled(deleteRootPromises);
+          }
         }
       }
     } catch (pruneRootErr) {
-      console.warn('Root collection pruning notice:', pruneRootErr.message);
+      console.warn('Root files pruning notice:', pruneRootErr.message);
     }
 
     console.log(`✅ [Server-Side BYOD] Synced & Pruned ${files.length} file(s) in Owner Personal DB (${targetProjectId}) for project ${pid}`);

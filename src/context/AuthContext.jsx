@@ -10,6 +10,7 @@ import {
 } from 'firebase/auth';
 import { auth, db, googleProvider } from '../firebase';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { syncPublicUserCount } from '../services/publicUserStats';
 
 const AuthContext = createContext();
 
@@ -180,6 +181,9 @@ export const AuthProvider = ({ children }) => {
           } : userProfile;
 
           saveSession(userObj, mergedProf);
+          syncPublicUserCount().catch((countErr) => {
+            console.warn('Public user count sync notice:', countErr);
+          });
         }
         setLoading(false);
       });
@@ -193,19 +197,9 @@ export const AuthProvider = ({ children }) => {
   const isProfileDatabaseConnected = (profile, email) => {
     if (!profile || !profile.info) return false;
     const info = profile.info;
-    if (info.personalStorageVerified === true) return true;
-    if (info.personalStorageProjectId && String(info.personalStorageProjectId).trim().length > 0) return true;
-    if (email) {
-      try {
-        const cleanEmail = email.trim().toLowerCase();
-        const stored = localStorage.getItem(`obsidian_personal_firebase_config_${cleanEmail}`) || localStorage.getItem('obsidian_personal_firebase_config');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed?.apiKey && parsed?.projectId) return true;
-        }
-      } catch (e) {}
-    }
-    return false;
+    return info.personalStorageVerified === true
+      && info.personalStorageConnected === true
+      && Boolean(info.personalFirebaseConfig?.apiKey && info.personalFirebaseConfig?.projectId);
   };
 
   const login = async (email, password) => {
@@ -364,6 +358,12 @@ export const AuthProvider = ({ children }) => {
       await setDoc(userDocRef, newProfile, { merge: true });
     } catch (fsErr) {
       console.warn("Client Firestore user doc save notice:", fsErr);
+    }
+
+    if (res?.user) {
+      syncPublicUserCount().catch((countErr) => {
+        console.warn('Public user count sync notice:', countErr);
+      });
     }
 
     try {
@@ -527,6 +527,10 @@ export const AuthProvider = ({ children }) => {
       try {
         await setDoc(doc(db, 'users', docId), newProfile, { merge: true });
       } catch (e) {}
+
+      syncPublicUserCount().catch((countErr) => {
+        console.warn('Public user count sync notice:', countErr);
+      });
 
       try {
         const token = firebaseUser.getIdToken ? await firebaseUser.getIdToken() : '';

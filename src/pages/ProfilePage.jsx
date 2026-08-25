@@ -2,8 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { auth, db } from '../firebase';
-import { GithubAuthProvider, linkWithPopup, signInWithPopup } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { GithubAuthProvider, getAdditionalUserInfo, linkWithPopup, signInWithPopup } from 'firebase/auth';
+import { deleteField, doc, setDoc, updateDoc } from 'firebase/firestore';
+import { removeProjectFromPersonalFirestore } from '../services/personalFirebaseStorage';
+import { getProjectDisplayTitle } from '../utils/projectTitle';
+
+const getAvatarCacheKey = (email) => `obsidian_profile_avatar_${(email || 'user').trim().toLowerCase()}`;
 
 export const ProfilePage = () => {
   const { currentUser, userProfile, setUserProfile, logout } = useAuth();
@@ -15,7 +19,7 @@ export const ProfilePage = () => {
     displayName: userProfile?.info?.fullName || currentUser?.displayName || 'Md. Emam Zafor Saadik',
     email: userProfile?.info?.email || currentUser?.email || 'zafor@bubt.edu.bd',
     designation: userProfile?.info?.profession || 'Full-Stack Lead Architect',
-    avatarUrl: userProfile?.info?.avatarUrl || currentUser?.photoURL || '',
+    avatarUrl: userProfile?.info?.avatarUrl || currentUser?.photoURL || localStorage.getItem(getAvatarCacheKey(currentUser?.email || userProfile?.info?.email)) || '',
     clearanceLevel: 'L5_UNRESTRICTED',
     storageStrategy: 'FIREBASE_PERSONAL',
     allocatedStorageMb: 1024,
@@ -44,6 +48,18 @@ export const ProfilePage = () => {
   const [ghError, setGhError] = useState('');
   const [ghSuccess, setGhSuccess] = useState('');
   const [showGhTokenInput, setShowGhTokenInput] = useState(false);
+  const [portfolioNotice, setPortfolioNotice] = useState('');
+
+  // Firestore remains the source of truth, while this small cache prevents a
+  // valid saved avatar from flashing away during profile/network hydration.
+  useEffect(() => {
+    const email = currentUser?.email || userProfile?.info?.email;
+    if (!email) return;
+    try {
+      const cachedAvatar = localStorage.getItem(getAvatarCacheKey(email));
+      if (cachedAvatar) setProfile(prev => ({ ...prev, avatarUrl: prev.avatarUrl || cachedAvatar }));
+    } catch (error) {}
+  }, [currentUser?.email, userProfile?.info?.email]);
 
   // Detect ?github_connected=true redirect from GitHub App Manifest callback
   useEffect(() => {
@@ -129,6 +145,7 @@ export const ProfilePage = () => {
       const cleanDocId = userEmailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_');
 
       const projectMap = {};
+      const hiddenProjectIds = new Set(Object.keys(userProfile?.hiddenProjects || {}));
 
       const calculateFilesBytes = (files) => {
         if (!Array.isArray(files)) return 0;
@@ -165,6 +182,7 @@ export const ProfilePage = () => {
         if (!p) return;
         const pid = p.projectId || p.id || fallbackId;
         if (!pid) return;
+        if (hiddenProjectIds.has(pid)) return;
 
         // Filter out legacy template mocks unless genuinely associated with user
         if (pid === 'quantum-router-01' || pid === 'nexus-graph-db-02') {
@@ -190,6 +208,13 @@ export const ProfilePage = () => {
           : (existing.projectId && String(existing.projectId).startsWith('proj_'))
             ? existing.projectId
             : pid;
+        const incomingTitle = String(p.title || '').trim();
+        const existingTitle = String(existing.title || '').trim();
+        const resolvedTitle = incomingTitle && incomingTitle !== pid
+          ? incomingTitle
+          : (existingTitle && existingTitle !== chosenPid
+            ? existingTitle
+            : getProjectDisplayTitle(p, chosenPid));
 
         const files = (p.working_files && p.working_files.length > 0)
           ? p.working_files
@@ -205,7 +230,7 @@ export const ProfilePage = () => {
           ...existing,
           ...p,
           projectId: chosenPid,
-          title: p.title || existing.title || chosenPid,
+          title: resolvedTitle,
           languageEnv: p.languageEnv || existing.languageEnv || 'PYTHON_3.11',
           userRole: resolvedRole,
           ownerEmail: p.ownerEmail || existing.ownerEmail,
@@ -229,6 +254,7 @@ export const ProfilePage = () => {
         if (docSnap.exists()) {
           const fsData = docSnap.data();
           const fsInfo = fsData?.info || {};
+          Object.keys(fsData?.hiddenProjects || {}).forEach((projectId) => hiddenProjectIds.add(projectId));
           if (fsInfo.avatarUrl || fsInfo.fullName || fsInfo.profession) {
             setProfile(prev => ({
               ...prev,
@@ -319,7 +345,7 @@ export const ProfilePage = () => {
       }
 
       // Calculate total storage bytes and update state
-      const mergedList = Object.values(projectMap);
+      const mergedList = Object.values(projectMap).filter((project) => !hiddenProjectIds.has(project.projectId || project.id));
       mergedList.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
 
       let calculatedStorageBytes = 0;
@@ -417,6 +443,46 @@ export const ProfilePage = () => {
     setIsOAuthLoading(true);
     const activeEmail = currentUser?.email || profile.email;
     window.location.href = `/api/github/oauth/start?email=${encodeURIComponent(activeEmail)}&returnUrl=${encodeURIComponent(window.location.origin + '/profile?github_connected=true')}`;
+  };
+
+  // This uses the browser/Firebase OAuth popup rather than routing GitHub
+  // authorization through the local Express server. It therefore continues to
+  // work when a local development server cannot make outbound HTTPS requests.
+  const handleConnectWithFirebase = async () => {
+    setIsOAuthLoading(true);
+    setGhError('');
+    setGhSuccess('');
+    try {
+      const provider = new GithubAuthProvider();
+      provider.addScope('repo');
+      provider.addScope('read:user');
+      provider.addScope('user:email');
+      const result = currentUser
+        ? await linkWithPopup(auth.currentUser, provider)
+        : await signInWithPopup(auth, provider);
+      const credential = GithubAuthProvider.credentialFromResult(result);
+      const githubProfile = getAdditionalUserInfo(result)?.profile || {};
+      const username = githubProfile.login || result.user?.displayName || result.user?.email?.split('@')[0] || 'github_user';
+      await saveGitHubData({
+        connected: true,
+        username,
+        avatarUrl: githubProfile.avatar_url || result.user?.photoURL || '',
+        profileUrl: githubProfile.html_url || `https://github.com/${username}`,
+        accessToken: credential?.accessToken || '',
+        connectedAt: new Date().toISOString(),
+        permissions: ['repo', 'read:user', 'user:email'],
+        method: 'firebase_github_oauth'
+      });
+      setGhSuccess(`Connected to GitHub as @${username}.`);
+      setTimeout(() => setIsGitHubModalOpen(false), 1200);
+    } catch (error) {
+      console.error('Firebase GitHub sign-in error:', error);
+      setGhError(error.code === 'auth/operation-not-allowed'
+        ? 'GitHub sign-in must be enabled in Firebase Authentication before it can be used.'
+        : error.message || 'GitHub sign-in could not be completed.');
+    } finally {
+      setIsOAuthLoading(false);
+    }
   };
 
   // 1-Click Device Code Flow (VS Code Extension style)
@@ -631,8 +697,10 @@ export const ProfilePage = () => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      setAvatarError('⚠️ Image size exceeds 2MB limit. Choose a smaller image.');
+    // Firestore documents are limited to 1 MiB and Base64 adds roughly 33%.
+    // Keeping uploads below 500 KiB leaves room for the rest of the profile.
+    if (file.size > 500 * 1024) {
+      setAvatarError('Choose an image smaller than 500 KB so it can be saved to your profile.');
       setUploadSuccessMsg('');
       return;
     }
@@ -642,11 +710,20 @@ export const ProfilePage = () => {
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64Data = reader.result;
+      if (typeof base64Data !== 'string' || base64Data.length > 800000) {
+        setAvatarError('This image is too large after processing. Please choose a smaller image.');
+        return;
+      }
       const activeEmail = currentUser?.email || profile.email;
       const cleanDocId = (activeEmail.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
       
-      // 1. Instantly display image to user in UI
+      // Show immediately and retain it in the authenticated session.
       setProfile(prev => ({ ...prev, avatarUrl: base64Data }));
+      try {
+        localStorage.setItem(getAvatarCacheKey(activeEmail), base64Data);
+      } catch (storageError) {
+        console.warn('[Profile] Avatar cache notice:', storageError);
+      }
 
       // 2. Update AuthContext state for whole app (Sidebar, Header, etc.)
       if (setUserProfile) {
@@ -659,7 +736,8 @@ export const ProfilePage = () => {
         }));
       }
 
-      // 3. Persist to Client-side Firestore directly
+      // Persist to Firestore directly. Do not report a save that was rejected.
+      let firestoreSaved = false;
       try {
         const { setDoc: fsSetDoc, doc: fsDoc } = await import('firebase/firestore');
         await fsSetDoc(
@@ -675,6 +753,7 @@ export const ProfilePage = () => {
           },
           { merge: true }
         );
+        firestoreSaved = true;
         console.log('[Profile] Saved avatar to Firestore for', activeEmail);
       } catch (fsErr) {
         console.warn('[Profile] Firestore avatar save error:', fsErr);
@@ -683,7 +762,7 @@ export const ProfilePage = () => {
       // 4. Save to backend API
       try {
         const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
-        await fetch('/api/users/profile', {
+        const profileResponse = await fetch('/api/users/profile', {
           method: 'PUT',
           headers: { 
             'Content-Type': 'application/json',
@@ -696,12 +775,18 @@ export const ProfilePage = () => {
             avatarUrl: base64Data
           })
         });
+        if (!profileResponse.ok && !firestoreSaved) {
+          throw new Error('The profile service could not save the image.');
+        }
 
-        // 5. Show success notification
-        setUploadSuccessMsg('✅ Profile picture uploaded & saved successfully!');
+        setUploadSuccessMsg('Profile picture saved successfully.');
         setTimeout(() => setUploadSuccessMsg(''), 4000);
       } catch (err) {
         console.warn("Avatar save notice:", err);
+        if (!firestoreSaved) {
+          setAvatarError('The profile picture could not be saved. Please try again.');
+          try { localStorage.removeItem(getAvatarCacheKey(activeEmail)); } catch (storageError) {}
+        }
       }
     };
     reader.readAsDataURL(file);
@@ -774,13 +859,75 @@ export const ProfilePage = () => {
     }
   };
 
+  // Removes a portfolio entry from this signed-in user's profile only. The
+  // shared project, its files, and every collaborator's membership remain intact.
+  const handleRemovePortfolioProject = async (project) => {
+    const projectId = project?.projectId || project?.id;
+    if (!projectId) return;
+    if (!window.confirm(`Remove '${project.title || projectId}' from your personal portfolio? Other collaborators will keep access.`)) return;
+
+    const activeEmail = currentUser?.email || profile.email;
+    const cleanDocId = (activeEmail?.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const removedAt = new Date().toISOString();
+
+    try {
+      // Keep the website profile from adding the shared project back after refresh.
+      try {
+        await updateDoc(doc(db, 'users', cleanDocId), {
+          [`projects.${projectId}`]: deleteField(),
+          [`hiddenProjects.${projectId}`]: { removedAt }
+        });
+      } catch (firestoreError) {
+        console.warn('Portfolio personal-profile removal notice:', firestoreError);
+      }
+
+      try {
+        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        await fetch(`/api/projects/${projectId}/remove-from-profile`, {
+          method: 'DELETE',
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(activeEmail ? { 'X-User-Email': activeEmail } : {})
+          }
+        });
+      } catch (apiError) {
+        console.warn('Portfolio server removal notice:', apiError);
+      }
+
+      try {
+        await removeProjectFromPersonalFirestore(projectId, userProfile, activeEmail);
+      } catch (personalStorageError) {
+        console.warn('Portfolio personal storage removal notice:', personalStorageError);
+      }
+
+      setProfile((previous) => {
+        const projects = (previous.projects || []).filter((item) => (item.projectId || item.id) !== projectId);
+        return { ...previous, projects, totalProjectsCount: projects.length };
+      });
+      setUserProfile?.((previous) => {
+        if (!previous) return previous;
+        const projects = { ...(previous.projects || {}) };
+        const hiddenProjects = { ...(previous.hiddenProjects || {}) };
+        delete projects[projectId];
+        hiddenProjects[projectId] = { removedAt };
+        return { ...previous, projects, hiddenProjects };
+      });
+      setPortfolioNotice(`Removed '${project.title || projectId}' from your portfolio.`);
+      setTimeout(() => setPortfolioNotice(''), 4000);
+    } catch (error) {
+      console.error('Portfolio removal error:', error);
+      alert(`Could not remove this project from your portfolio: ${error.message}`);
+    }
+  };
+
   return (
-    <div className="max-w-5xl mx-auto flex flex-col gap-6 font-sans animate-fade-in">
-      <div className="flex justify-between items-end border-b border-outline-variant/30 pb-4">
+    <div className="profile-page max-w-6xl mx-auto flex flex-col gap-6 font-sans animate-fade-in pb-8">
+      <div className="control-panel rounded-2xl flex flex-col sm:flex-row justify-between sm:items-end p-5 sm:p-6 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-surface-tint font-headline">DEVELOPER_PROFILE</h1>
-          <p className="font-mono text-xs text-on-surface-variant mt-1">
-            USER_ID: {profile.email ? profile.email.split('@')[0] : 'ACTIVE_USER'} // SYSTEM_ACCESS
+          <p className="eyebrow mb-2">Account</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-100 font-headline tracking-tight">Your profile</h1>
+          <p className="font-mono text-xs text-slate-500 mt-2">
+            {profile.email}
           </p>
         </div>
         <div className="flex gap-2 font-mono text-xs">
@@ -791,31 +938,31 @@ export const ProfilePage = () => {
               setEditDesignation(profile.designation);
               setIsEditModalOpen(true);
             }}
-            className="px-4 py-1.5 bg-surface-container-high text-on-surface border border-outline-variant hover:border-surface-tint transition-all cursor-pointer flex items-center gap-1.5"
+            className="subtle-button px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
           >
-            <span className="material-symbols-outlined text-sm">edit</span> EDIT_PROFILE
+            <span className="material-symbols-outlined text-sm">edit</span> Edit profile
           </button>
         </div>
       </div>
 
       {/* Dual-Pane Admin Card */}
-      <div className="glass-panel flex flex-col md:flex-row border border-outline-variant bg-surface-container-low/60 overflow-hidden rounded-lg shadow-xl">
+      <div className="control-panel flex flex-col md:flex-row overflow-hidden rounded-2xl">
         {/* Left Pane: Identity (Fixed Width) */}
-        <div className="w-full md:w-80 bg-surface-container-lowest/80 border-r border-outline-variant p-8 flex flex-col items-center gap-6">
+        <div className="profile-identity w-full md:w-80 border-r border-[#2a3037] p-8 flex flex-col items-center gap-6">
           
           {/* Avatar Profile Picture Box & Change Button */}
           <div className="flex flex-col items-center gap-2">
             <div className="relative group">
-              <div className="w-32 h-32 border-2 border-surface-tint p-1 bg-surface-slate overflow-hidden flex items-center justify-center rounded-lg shadow-md">
+              <div className="w-32 h-32 border border-cyan-300/50 p-1 bg-[#1a1f23] overflow-hidden flex items-center justify-center rounded-2xl shadow-[0_0_35px_rgba(36,212,208,.12)]">
                 {profile.avatarUrl ? (
-                  <img src={profile.avatarUrl} alt={profile.displayName} className="w-full h-full object-cover rounded" />
+                  <img src={profile.avatarUrl} alt={profile.displayName} className="w-full h-full object-cover rounded" onError={() => setProfile(prev => ({ ...prev, avatarUrl: '' }))} />
                 ) : (
                   <span className="material-symbols-outlined text-6xl text-surface-tint">
                     account_circle
                   </span>
                 )}
               </div>
-              <div className="absolute -bottom-1 -right-1 bg-neon-green w-4 h-4 rounded-full border-2 border-surface-container-low" title="System Online"></div>
+              <div className="status-dot absolute -bottom-1 -right-1 bg-neon-green w-4 h-4 rounded-full border-2 border-[#101215]" title="System Online"></div>
             </div>
 
             {/* Change Profile Picture Option */}
@@ -842,18 +989,18 @@ export const ProfilePage = () => {
           <div className="text-center w-full space-y-3">
             <div>
               <h2 className="text-lg font-bold text-on-surface font-headline">{profile.displayName}</h2>
-              <span className="font-mono text-[10px] text-surface-tint bg-cyan-950/60 px-2 py-0.5 mt-1 border border-cyan-800/40 inline-block uppercase">
+              <span className="text-[11px] text-surface-tint bg-cyan-950/40 px-2 py-0.5 mt-1 border border-cyan-800/40 inline-block rounded-full capitalize">
                 {profile.designation}
               </span>
             </div>
 
             <div className="pt-4 space-y-3 border-t border-outline-variant/40 text-left font-mono text-xs">
               <div className="flex flex-col">
-                <span className="text-[9px] text-on-surface-variant uppercase">Account Email</span>
+                <span className="profile-meta-label text-on-surface-variant">Email</span>
                 <span className="text-on-surface truncate">{profile.email}</span>
               </div>
               <div className="flex flex-col">
-                <span className="text-[9px] text-on-surface-variant uppercase">Clearance Level</span>
+                <span className="profile-meta-label text-on-surface-variant">Access level</span>
                 <span className="text-neon-green font-bold">{profile.clearanceLevel}</span>
               </div>
             </div>
@@ -861,12 +1008,12 @@ export const ProfilePage = () => {
         </div>
 
         {/* Right Pane: Configuration & Storage Inspector */}
-        <div className="flex-1 bg-surface-dark p-8 space-y-8 font-mono">
+        <div className="flex-1 bg-[#121417]/75 p-6 sm:p-8 space-y-8">
           {/* Storage Strategy Section */}
           <section>
             <div className="flex items-center gap-2 mb-4">
               <span className="material-symbols-outlined text-surface-tint">database</span>
-              <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">STORAGE_STRATEGY</h3>
+              <h3 className="profile-section-title text-on-surface">Storage</h3>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -893,11 +1040,11 @@ export const ProfilePage = () => {
                 <svg className="w-4 h-4 fill-cyan-400" viewBox="0 0 24 24">
                   <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
                 </svg>
-                <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">GITHUB_INTEGRATION</h3>
+                <h3 className="profile-section-title text-on-surface">GitHub</h3>
               </div>
               {profile.github?.connected && (
                 <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-500/40 px-2 py-0.5 rounded">
-                  ● CONNECTED
+                  Connected
                 </span>
               )}
             </div>
@@ -974,30 +1121,55 @@ export const ProfilePage = () => {
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-surface-tint">folder_special</span>
-                <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">PROJECTS_PORTFOLIO ({profile.totalProjectsCount || profile.projects?.length || 0})</h3>
+                <h3 className="profile-section-title text-on-surface">Projects ({profile.totalProjectsCount || profile.projects?.length || 0})</h3>
               </div>
-              <span className="text-[10px] text-on-surface-variant">USER_CONTRIBUTIONS</span>
+              <span className="text-[11px] text-on-surface-variant">Your workspaces</span>
             </div>
 
             <div className="grid grid-cols-1 gap-2.5">
+              {portfolioNotice && (
+                <div className="text-[11px] text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 rounded px-3 py-2">
+                  {portfolioNotice}
+                </div>
+              )}
               {profile.projects && profile.projects.length > 0 ? (
                 profile.projects.map((proj, idx) => (
                   <div 
                     key={proj.projectId || idx}
                     onClick={() => navigate(`/ide/${proj.projectId}`)}
-                    className="bg-surface-container-low p-3 border border-outline-variant hover:border-surface-tint transition-all cursor-pointer flex justify-between items-center group rounded"
+                    className="profile-project p-3 transition-all cursor-pointer flex justify-between items-start gap-3 group"
                   >
-                    <div className="flex items-center gap-3">
-                      <span className="material-symbols-outlined text-surface-tint text-sm">terminal</span>
-                      <span className="text-xs text-on-surface font-bold group-hover:text-surface-tint transition-colors">
-                        {proj.title}
-                      </span>
-                      <span className="text-[9px] font-mono text-cyan-400 border border-cyan-800 px-1.5 py-0.2 rounded uppercase">
-                        {proj.userRole || proj.role || 'OWNER'}
-                      </span>
+                    <div className="flex items-start gap-3 min-w-0">
+                      <span className="material-symbols-outlined text-surface-tint text-sm mt-0.5">terminal</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-on-surface font-bold group-hover:text-surface-tint transition-colors">
+                            {proj.title}
+                          </span>
+                          <span className="profile-project-role text-cyan-400 border border-cyan-800 px-1.5 py-0.5 rounded-full">
+                            {(proj.userRole || proj.role || 'OWNER').toLowerCase()}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] leading-relaxed text-on-surface-variant line-clamp-2">
+                          {proj.description?.trim() || `Cloud workspace configured for ${proj.languageEnv || 'RUST_1.75'}.`}
+                        </p>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-4 text-[10px] text-on-surface-variant">
-                      <span>{proj.languageEnv || 'RUST_1.75'}</span>
+                    <div className="flex items-center gap-2 text-[10px] text-on-surface-variant shrink-0">
+                      <span className="hidden sm:inline">{proj.languageEnv || 'RUST_1.75'}</span>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleRemovePortfolioProject(proj);
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                        title="Remove from my portfolio"
+                        aria-label={`Remove ${proj.title} from my portfolio`}
+                      >
+                        <span className="material-symbols-outlined text-sm">delete</span>
+                        <span className="hidden sm:inline">Remove</span>
+                      </button>
                       <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
                     </div>
                   </div>
@@ -1014,7 +1186,7 @@ export const ProfilePage = () => {
           <section>
             <div className="flex items-center gap-2 mb-3">
               <span className="material-symbols-outlined text-surface-tint">pie_chart</span>
-              <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">SYSTEM_QUOTA</h3>
+              <h3 className="profile-section-title text-on-surface">Storage usage</h3>
             </div>
 
             {(() => {
@@ -1023,12 +1195,15 @@ export const ProfilePage = () => {
               const calcPct = profile.usagePercentage !== undefined
                 ? profile.usagePercentage
                 : Number(((usedMb / totalMb) * 100).toFixed(2));
-              const barWidthPct = Math.max(1.5, Math.min(100, Number(calcPct)));
+              // Keep the visual indicator mathematically aligned with the
+              // displayed percentage. The previous 1.5% minimum made tiny
+              // values such as 0.01% look far larger than they really were.
+              const barWidthPct = Math.max(0, Math.min(100, Number(calcPct)));
 
               return (
                 <div className="bg-surface-container-low p-5 border border-outline-variant space-y-3 rounded">
                   <div className="flex justify-between items-end text-xs font-mono">
-                    <span className="text-on-surface-variant">ALLOCATED_STORAGE</span>
+                    <span className="text-on-surface-variant">Storage used</span>
                     <span className="text-surface-tint font-bold">
                       {usedMb} MB / {totalMb} MB ({calcPct}%)
                     </span>
@@ -1039,11 +1214,16 @@ export const ProfilePage = () => {
                     <div 
                       className="h-full bg-surface-tint rounded-full transition-all duration-500 shadow-sm"
                       style={{ width: `${barWidthPct}%` }}
+                      role="progressbar"
+                      aria-valuemin="0"
+                      aria-valuemax={totalMb}
+                      aria-valuenow={Math.min(usedMb, totalMb)}
+                      aria-label={`${usedMb} MB of ${totalMb} MB used`}
                     ></div>
                   </div>
 
                   <p className="text-[11px] text-on-surface-variant/80 font-sans leading-relaxed">
-                    Storage usage is calculated in real-time based on persistent project file payloads inside Cloud Firestore. Assets exceeding the {totalMb} MB threshold offload to cold storage.
+                    Estimated from the content of projects currently available to this account. The value is recalculated when this profile loads; no automatic cold-storage offload is configured.
                   </p>
                 </div>
               );
@@ -1054,12 +1234,12 @@ export const ProfilePage = () => {
 
       {/* Information Density Cards & Single Logout Action */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs">
-        <div className="bg-surface-container-low p-4 border border-outline-variant flex flex-col gap-1">
-          <span className="text-[9px] text-on-surface-variant uppercase">LAST_LOGIN</span>
+        <div className="control-card p-4 flex flex-col gap-1">
+          <span className="profile-meta-label text-on-surface-variant">Last sign-in</span>
           <span className="text-on-surface">{profile.lastLogin}</span>
         </div>
-        <div className="bg-surface-container-low p-4 border border-outline-variant flex flex-col gap-1 justify-between">
-          <span className="text-[9px] text-on-surface-variant uppercase">ACCOUNT_ACTIONS</span>
+        <div className="control-card p-4 flex flex-col gap-1 justify-between">
+          <span className="profile-meta-label text-on-surface-variant">Account</span>
           <button 
             onClick={handleLogout}
             className="text-rose-400 hover:text-rose-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer w-fit"
@@ -1177,20 +1357,54 @@ export const ProfilePage = () => {
             )}
 
             <div className="space-y-3.5 pt-1">
-              {/* Primary 1-Click Manifest Button */}
+              {/* Seamless browser OAuth: redirects straight to GitHub and returns
+                  to this profile after authorization. */}
               <button
                 type="button"
-                onClick={() => {
-                  const activeEmail = currentUser?.email || profile.email;
-                  window.location.href = `/api/github/manifest/start?email=${encodeURIComponent(activeEmail)}&returnUrl=${encodeURIComponent(window.location.origin + '/profile?github_connected=true')}`;
-                }}
+                onClick={handleConnectDirectOAuth}
+                disabled={isOAuthLoading}
                 className="w-full py-3.5 px-4 bg-white hover:bg-zinc-200 text-neutral-950 font-bold text-xs rounded-xl transition-all shadow-lg flex items-center justify-center gap-2.5 cursor-pointer hover:scale-[1.01]"
               >
                 <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
                   <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
                 </svg>
-                <span>1-Click Connect via GitHub App (Recommended)</span>
+                <span>{isOAuthLoading ? 'Redirecting to GitHub…' : 'Connect GitHub Securely (Recommended)'}</span>
               </button>
+
+              {deviceFlow && (
+                <div className="p-3.5 bg-cyan-950/30 border border-cyan-500/40 rounded-xl space-y-3 text-xs">
+                  <div className="font-bold text-cyan-200">Authorize ObsidianIDE on GitHub</div>
+                  <div className="text-zinc-300 leading-relaxed">
+                    Open GitHub, enter this one-time code, and approve access. This window will finish connecting automatically.
+                  </div>
+                  <a
+                    href={deviceFlow.verificationUri}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex text-cyan-300 underline font-bold"
+                  >
+                    Open GitHub authorization ↗
+                  </a>
+                  <div className="flex items-center justify-between gap-2 bg-black/50 border border-cyan-500/25 rounded-lg px-3 py-2">
+                    <code className="text-base tracking-[0.18em] text-white font-bold">{deviceFlow.userCode}</code>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(deviceFlow.userCode)}
+                      className="text-[10px] text-cyan-300 hover:text-cyan-100 font-bold"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCheckDeviceAuthNow}
+                    disabled={isVerifyingNow}
+                    className="w-full py-2 border border-cyan-400/50 text-cyan-200 hover:bg-cyan-950/50 rounded-lg font-bold disabled:opacity-50"
+                  >
+                    {isVerifyingNow ? 'Checking…' : 'I Have Authorized — Check Now'}
+                  </button>
+                </div>
+              )}
 
               <div className="flex items-center gap-3 py-0.5">
                 <div className="flex-1 h-px bg-white/10" />

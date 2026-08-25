@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { stageAndDispatchInvitationEmail } from '../../utils/emailQueueService';
 
 export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) => {
   const [email, setEmail] = useState('');
@@ -11,9 +10,7 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
 
   if (!isOpen || !project) return null;
 
-  const projTitle = project.title || project.projectId;
-  const projOwner = project.ownerEmail || currentUser?.email || 'owner@obsidianide.com';
-  const inviteUrl = `${window.location.origin}/invite/${project.projectId}?role=${role}&email=${encodeURIComponent(email || '')}&title=${encodeURIComponent(projTitle)}&owner=${encodeURIComponent(projOwner)}`;
+  const inviteUrl = `${window.location.origin}/invite/${project.projectId}?role=${role}&email=${encodeURIComponent(email || '')}`;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(inviteUrl);
@@ -33,18 +30,6 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
     setSuccessMsg('');
 
     try {
-      // 1. Stage in Firebase Queue and dispatch
-      await stageAndDispatchInvitationEmail({
-        to: email.trim(),
-        ownerEmail: projOwner,
-        projectTitle: projTitle,
-        projectId: project.projectId,
-        role,
-        inviteUrl,
-        currentUser
-      });
-
-      // 2. Register collaborator on backend API
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
       const res = await fetch(`/api/projects/${project.projectId}/invite`, {
         method: 'POST',
@@ -52,17 +37,14 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({
-          email: email.trim(),
-          role,
-          projectTitle: projTitle,
-          ownerEmail: projOwner
-        })
+        body: JSON.stringify({ email: email.trim(), role })
       });
 
       const data = await res.json();
       if (res.ok) {
-        setSuccessMsg(`Invitation dispatched to ${email} as ${role}!`);
+        setSuccessMsg(data.emailDispatched
+          ? `Invitation accepted by the mail server for ${email} as ${role}.`
+          : `Collaborator added, but the invitation was not accepted by the mail server.`);
         setEmail('');
         setTimeout(() => {
           setSuccessMsg('');
@@ -83,7 +65,7 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
         {/* Header */}
         <div className="flex justify-between items-center border-b border-outline-variant/40 pb-3">
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-purple-400 text-lg">person_add</span>
+            <span className="material-symbols-outlined text-surface-tint text-lg">person_add</span>
             <h2 className="text-sm font-bold text-on-surface font-headline uppercase tracking-wider">
               Invite Collaborators
             </h2>
@@ -134,9 +116,9 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
           </div>
 
           {/* Shareable Link Box */}
-          <div className="p-3 bg-purple-950/20 border border-purple-500/30 rounded-lg space-y-1.5">
-            <span className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block font-mono">
-              Direct Shareable Link & Instant Dispatch
+          <div className="p-3 bg-surface-tint/5 border border-surface-tint/20 rounded-lg space-y-1.5">
+            <span className="text-[10px] font-bold text-surface-tint tracking-wide block font-mono">
+              Direct Shareable Link
             </span>
             <div className="flex gap-2">
               <input
@@ -148,21 +130,11 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
               <button
                 type="button"
                 onClick={handleCopyLink}
-                className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-mono font-bold text-[10px] rounded transition-all cursor-pointer flex items-center gap-1"
-                title="Copy link to clipboard"
+                className="px-3 py-1 bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-mono font-bold text-[10px] rounded transition-all cursor-pointer flex items-center gap-1"
               >
                 <span className="material-symbols-outlined text-xs">content_copy</span>
                 {copied ? 'COPIED!' : 'COPY'}
               </button>
-              <a
-                href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email || '')}&su=${encodeURIComponent(`[ObsidianIDE] Invitation to Collaborate on ${projTitle}`)}&body=${encodeURIComponent(`Hello,\n\nYou have been invited to join the project workspace "${projTitle}" on ObsidianIDE as a ${role}.\n\nClick the link below to accept and enter the live IDE workspace:\n${inviteUrl}\n\nBest regards,\n${currentUser?.email || projOwner}`)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-2.5 py-1 bg-red-950 hover:bg-red-900 text-red-300 border border-red-800 font-mono font-bold text-[10px] rounded transition-all cursor-pointer flex items-center gap-1 no-underline"
-                title="Open in Gmail Web Compose"
-              >
-                ✉️ Gmail
-              </a>
             </div>
           </div>
 
@@ -190,7 +162,7 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
             <button
               type="submit"
               disabled={isSending}
-              className="px-4 py-1.5 bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white font-bold font-mono text-xs rounded transition-all shadow-md cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              className="px-4 py-1.5 bg-surface-tint hover:bg-cyan-300 text-neutral-950 font-bold font-mono text-xs rounded transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
               <span className="material-symbols-outlined text-sm">{isSending ? 'sync' : 'send'}</span>
               <span>{isSending ? 'Sending...' : 'Send Invitation'}</span>

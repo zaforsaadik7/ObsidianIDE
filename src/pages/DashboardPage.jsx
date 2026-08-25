@@ -7,8 +7,9 @@ import { ProjectDetailsModal } from '../components/dashboard/ProjectDetailsModal
 import { InviteTeammateModal } from '../components/dashboard/InviteTeammateModal';
 import { ExportToGitHubModal } from '../components/dashboard/ExportToGitHubModal';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, updateDoc, deleteField } from 'firebase/firestore';
-import { deleteProjectFromPersonalFirestore } from '../services/personalFirebaseStorage';
+import { doc, getDoc, collection, getDocs, updateDoc, deleteField } from 'firebase/firestore';
+import { removeProjectFromPersonalFirestore } from '../services/personalFirebaseStorage';
+import { getProjectDisplayTitle } from '../utils/projectTitle';
 
 export const DashboardPage = () => {
   const { currentUser, userProfile, setUserProfile } = useAuth();
@@ -16,6 +17,7 @@ export const DashboardPage = () => {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortOption, setSortOption] = useState('recent');
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Modals state for 3-dot menu options
@@ -32,45 +34,13 @@ export const DashboardPage = () => {
 
     const userEmailNorm = (currentUser.email || '').trim().toLowerCase();
     const projectMap = {};
-
-    // Per-user deleted project tracking to guarantee unlinked projects never resurrect
-    const deletedMap = {
-      ...(userProfile?.deletedProjects || {})
-    };
-    try {
-      const storedDeleted = localStorage.getItem(`obsidian_deleted_projects_${userEmailNorm}`);
-      if (storedDeleted) {
-        Object.assign(deletedMap, JSON.parse(storedDeleted));
-      }
-    } catch (e) {}
-
-    const formatProjectTitle = (rawTitle, fallbackId) => {
-      if (rawTitle && typeof rawTitle === 'string' && rawTitle.trim()) {
-        const t = rawTitle.trim();
-        if (t.startsWith('proj_') && t.includes('_')) {
-          const parts = t.replace(/^proj_/, '').split('_');
-          if (parts.length > 1 && /^\d+$/.test(parts[parts.length - 1])) {
-            parts.pop();
-          }
-          return parts.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-        }
-        return t;
-      }
-      if (fallbackId && typeof fallbackId === 'string' && fallbackId.startsWith('proj_')) {
-        const parts = fallbackId.replace(/^proj_/, '').split('_');
-        if (parts.length > 1 && /^\d+$/.test(parts[parts.length - 1])) {
-          parts.pop();
-        }
-        return parts.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      }
-      return fallbackId || 'Workspace Project';
-    };
+    const hiddenProjectIds = new Set(Object.keys(userProfile?.hiddenProjects || {}));
 
     const getCanonicalProjectKey = (p, fallbackId) => {
       const pid = (p?.projectId || p?.id || fallbackId || '').trim();
       const title = (p?.title || '').trim().toLowerCase();
       const owner = (p?.ownerEmail || '').trim().toLowerCase();
-      if (title && owner && !title.startsWith('proj_')) {
+      if (title && owner) {
         return `owner::${owner}::title::${title}`;
       }
       return `pid::${pid || title}`;
@@ -80,11 +50,6 @@ export const DashboardPage = () => {
       if (!p) return;
       const pid = p.projectId || p.id || fallbackId;
       if (!pid) return;
-
-      // Filter out projects deleted by this user
-      if (deletedMap[pid] || deletedMap[fallbackId] || deletedMap[p.projectId]) {
-        return;
-      }
 
       // Filter out legacy template mocks unless genuinely associated with user
       if (pid === 'quantum-router-01' || pid === 'nexus-graph-db-02') {
@@ -107,13 +72,13 @@ export const DashboardPage = () => {
         : (existing.projectId && String(existing.projectId).startsWith('proj_'))
           ? existing.projectId
           : pid;
-
-      if (deletedMap[chosenPid]) {
-        return;
-      }
-
-      const rawTitle = p.title || existing.title;
-      const resolvedTitle = formatProjectTitle(rawTitle, chosenPid);
+      const incomingTitle = String(p.title || '').trim();
+      const existingTitle = String(existing.title || '').trim();
+      const resolvedTitle = incomingTitle && incomingTitle !== pid
+        ? incomingTitle
+        : (existingTitle && existingTitle !== chosenPid
+          ? existingTitle
+          : getProjectDisplayTitle(p, chosenPid));
 
       projectMap[canonicalKey] = {
         ...existing,
@@ -140,14 +105,11 @@ export const DashboardPage = () => {
       const cleanDocId = userEmailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_');
       const userDocRef = doc(db, 'users', cleanDocId);
       const userDocSnap = await getDoc(userDocRef);
-      if (userDocSnap.exists()) {
-        const uData = userDocSnap.data();
-        if (uData.deletedProjects) {
-          Object.assign(deletedMap, uData.deletedProjects);
-        }
-        if (uData.projects) {
-          Object.entries(uData.projects).forEach(([key, p]) => upsertProject(p, key));
-        }
+      if (userDocSnap.exists() && userDocSnap.data().projects) {
+        Object.entries(userDocSnap.data().projects).forEach(([key, p]) => upsertProject(p, key));
+      }
+      if (userDocSnap.exists() && userDocSnap.data().hiddenProjects) {
+        Object.keys(userDocSnap.data().hiddenProjects).forEach((projectId) => hiddenProjectIds.add(projectId));
       }
     } catch (fsErr) {
       console.warn("Client Firestore user projects lookup notice:", fsErr);
@@ -187,7 +149,7 @@ export const DashboardPage = () => {
       console.warn("Backend REST API projects lookup notice:", err);
     }
 
-    const mergedList = Object.values(projectMap);
+    const mergedList = Object.values(projectMap).filter((project) => !hiddenProjectIds.has(project.projectId));
     mergedList.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
     setProjects(mergedList);
     setLoading(false);
@@ -211,102 +173,73 @@ export const DashboardPage = () => {
     setTimeout(() => setNotificationMsg(''), 4000);
   };
 
-  // Handle Project Deletion (Owner permanently deletes; Collaborator unlinks)
+  // Removes a project from this account only. Shared project data and collaborator
+  // membership are deliberately never changed here.
   const handleDeleteConfirm = async () => {
     if (!deleteTargetProject) return;
     setIsDeleting(true);
 
     const pid = deleteTargetProject.projectId;
     const title = deleteTargetProject.title;
-    const userEmailNorm = (currentUser?.email || '').trim().toLowerCase();
-    const isOwner = deleteTargetProject.userRole === 'OWNER' || (deleteTargetProject.ownerEmail && deleteTargetProject.ownerEmail.trim().toLowerCase() === userEmailNorm);
 
     try {
-      // 1. Purge from AuthContext userProfile state & LocalStorage Cache
-      const updatedDeleted = { ...(userProfile?.deletedProjects || {}), [pid]: true };
-      try {
-        localStorage.setItem(`obsidian_deleted_projects_${userEmailNorm}`, JSON.stringify(updatedDeleted));
-      } catch (e) {}
+      const removedAt = new Date().toISOString();
 
-      if (setUserProfile) {
-        setUserProfile(prev => {
-          if (!prev) return prev;
-          const updatedProjects = { ...(prev.projects || {}) };
-          delete updatedProjects[pid];
-          return {
-            ...prev,
-            projects: updatedProjects,
-            deletedProjects: {
-              ...(prev.deletedProjects || {}),
-              [pid]: true
-            }
-          };
-        });
-      }
-
+      // 1. Remove the reference from this user's website profile and remember
+      // the choice so the shared-project query does not add it back on refresh.
       try {
-        const rawProfile = localStorage.getItem('obsidian_active_profile');
-        if (rawProfile) {
-          const parsed = JSON.parse(rawProfile);
-          if (parsed?.projects?.[pid]) {
-            delete parsed.projects[pid];
-          }
-          parsed.deletedProjects = { ...(parsed.deletedProjects || {}), [pid]: true };
-          localStorage.setItem('obsidian_active_profile', JSON.stringify(parsed));
-        }
-      } catch (e) {}
-
-      // 2. Client Firestore operations
-      try {
-        const cleanDocId = userEmailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_');
+        const cleanDocId = currentUser?.email?.split('@')[0]?.toLowerCase()?.replace(/[^a-z0-9_]/g, '_');
         if (cleanDocId) {
           const userRef = doc(db, 'users', cleanDocId);
-          const userSnap = await getDoc(userRef).catch(() => null);
-          const uData = userSnap?.exists() ? userSnap.data() : {};
-          const uProjects = { ...(uData.projects || {}) };
-          delete uProjects[pid];
-          await setDoc(userRef, {
-            projects: uProjects,
-            deletedProjects: {
-              ...(uData.deletedProjects || {}),
-              [pid]: true
-            }
-          }, { merge: true }).catch(() => {});
-        }
-
-        const projRef = doc(db, 'projects', pid);
-        if (isOwner) {
-          // Permanently delete canonical project document from website database
-          await deleteDoc(projRef).catch(() => {});
+          await updateDoc(userRef, {
+            [`projects.${pid}`]: deleteField(),
+            [`hiddenProjects.${pid}`]: { removedAt }
+          });
         }
       } catch (fsErr) {
-        console.warn('Firestore project deletion notice:', fsErr);
+        console.warn('Firestore personal-profile removal notice:', fsErr);
       }
 
-      // 3. Purge from Personal Firebase Storage if configured
-      try {
-        await deleteProjectFromPersonalFirestore(pid, userProfile, currentUser?.email);
-      } catch (pErr) {}
-
-      // 4. Call backend REST DELETE endpoint (unlinks collaborator from server & repository)
+      // 2. Ask the server to remove only this user's profile reference. It is
+      // intentionally not the shared-project DELETE route.
       try {
         const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
-        await fetch(`/api/projects/${pid}?userEmail=${encodeURIComponent(currentUser?.email || '')}`, {
+        await fetch(`/api/projects/${pid}/remove-from-profile`, {
           method: 'DELETE',
           headers: {
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            ...(currentUser?.email ? { 'X-User-Email': currentUser.email } : {})
           }
         });
       } catch (apiErr) {
-        console.warn('Backend DELETE notice:', apiErr);
+        console.warn('Backend personal-profile removal notice:', apiErr);
       }
 
-      // 5. Remove from UI state for this user
+      // 3. Remove this account's own personal Firebase copy, if configured.
+      try {
+        await removeProjectFromPersonalFirestore(pid, userProfile, currentUser?.email);
+      } catch (personalDbErr) {
+        console.warn('Personal Firebase project removal notice:', personalDbErr);
+      }
+
+      // 4. Remove from UI and cached profile state for this user.
       setProjects(prev => prev.filter(p => p.projectId !== pid));
-      showToast(isOwner ? `✓ Repository '${title}' permanently deleted.` : `✓ Repository '${title}' removed from your workspace.`);
+      setUserProfile((previousProfile) => {
+        if (!previousProfile) return previousProfile;
+        const nextProjects = { ...(previousProfile.projects || {}) };
+        const nextHiddenProjects = { ...(previousProfile.hiddenProjects || {}) };
+        delete nextProjects[pid];
+        nextHiddenProjects[pid] = { removedAt };
+        return {
+          ...previousProfile,
+          projects: nextProjects,
+          hiddenProjects: nextHiddenProjects
+        };
+      });
+      showToast(`✓ Repository '${title}' removed from your personal workspace.`);
       setDeleteTargetProject(null);
     } catch (err) {
-      alert(`Failed to remove project: ${err.message}`);
+      alert(`Failed to remove project from workspace: ${err.message}`);
     } finally {
       setIsDeleting(false);
     }
@@ -316,12 +249,36 @@ export const DashboardPage = () => {
     new Map((projects || []).filter(Boolean).map(p => [p.projectId, p])).values()
   );
 
-  const filteredProjects = deduplicatedProjects.filter(p => 
+  const filteredProjects = deduplicatedProjects.filter(p =>
     (p.title || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const displayedProjects = [...filteredProjects].sort((left, right) => {
+    const leftUpdated = new Date(left.updatedAt || left.createdAt || 0).getTime() || 0;
+    const rightUpdated = new Date(right.updatedAt || right.createdAt || 0).getTime() || 0;
+    const leftCreated = new Date(left.createdAt || 0).getTime() || 0;
+    const rightCreated = new Date(right.createdAt || 0).getTime() || 0;
+
+    switch (sortOption) {
+      case 'oldest':
+        return leftCreated - rightCreated;
+      case 'name-az':
+        return (left.title || '').localeCompare(right.title || '');
+      case 'name-za':
+        return (right.title || '').localeCompare(left.title || '');
+      case 'role': {
+        const rolePriority = { OWNER: 0, REVIEWER: 1, EDITOR: 2 };
+        return (rolePriority[left.userRole] ?? 3) - (rolePriority[right.userRole] ?? 3)
+          || (left.title || '').localeCompare(right.title || '');
+      }
+      case 'recent':
+      default:
+        return rightUpdated - leftUpdated;
+    }
+  });
+
   return (
-    <div className="flex flex-col gap-6 max-w-7xl mx-auto font-sans select-none">
+    <div className="flex flex-col gap-7 max-w-7xl mx-auto font-sans select-none pb-8">
       {/* Toast Notification Banner */}
       {notificationMsg && (
         <div className="fixed top-16 right-8 z-[600] animate-bounce bg-emerald-950/90 border border-emerald-500/60 text-emerald-200 px-4 py-2.5 rounded-lg shadow-2xl font-mono text-xs flex items-center gap-2 backdrop-blur-md">
@@ -331,22 +288,23 @@ export const DashboardPage = () => {
       )}
 
       {/* Dashboard Global Header Strip */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-outline-variant/30 pb-4 gap-4">
+      <div className="control-panel rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center p-5 sm:p-6 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-on-surface flex items-center gap-3 font-headline">
-            Workspace Central Launcher 
-            <span className="bg-cyan-950/80 text-cyan-400 text-[10px] tracking-widest font-mono px-2 py-0.5 uppercase align-middle border border-cyan-800/50 rounded">
-              Mesh Online
+          <p className="eyebrow mb-2">Workspace directory</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-100 flex items-center gap-3 font-headline tracking-tight">
+            Your projects
+            <span className="bg-cyan-300/10 text-cyan-200 text-[10px] tracking-widest font-mono px-2.5 py-1 uppercase align-middle border border-cyan-300/20 rounded-full">
+              Online
             </span>
           </h1>
-          <p className="text-xs text-on-surface-variant mt-1 font-sans">
-            Initialize clean workspaces, manage repository permissions, and collaborate in real-time.
+          <p className="text-sm text-slate-400 mt-2 font-sans">
+            A focused view of your active repositories and collaborators.
           </p>
         </div>
 
         <button 
           onClick={() => setIsModalOpen(true)}
-          className="bg-surface-tint text-neutral-900 px-4 py-2 font-mono text-xs font-bold flex items-center gap-1.5 hover:bg-cyan-400 transition-colors shadow-md rounded cursor-pointer"
+          className="accent-button px-4 py-2.5 font-mono text-xs font-bold flex items-center gap-1.5 transition-all rounded-xl cursor-pointer"
         >
           <span className="material-symbols-outlined text-sm">add_box</span> Create New Project
         </button>
@@ -371,20 +329,38 @@ export const DashboardPage = () => {
       )}
 
       {/* Search Filter Bar */}
-      <div className="flex justify-between items-center bg-surface-container-lowest p-3 border border-outline-variant/40 rounded-lg">
+      <div className="control-card flex flex-col sm:flex-row justify-between sm:items-center gap-3 p-3.5 rounded-xl">
         <div className="flex items-center gap-2 flex-1 max-w-sm">
-          <span className="material-symbols-outlined text-on-surface-variant text-sm">search</span>
+          <span className="material-symbols-outlined text-slate-500 text-sm">search</span>
           <input 
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="bg-transparent border-none focus:outline-none text-xs text-on-surface w-full font-mono placeholder:text-on-surface-variant/40"
-            placeholder="Search active repository cards..."
+            className="bg-transparent border-none focus:outline-none text-xs text-slate-200 w-full font-mono placeholder:text-slate-600"
+            placeholder="Search your projects..."
           />
         </div>
-        <span className="text-[11px] font-mono text-on-surface-variant">
-          Active Repositories: {filteredProjects.length}
-        </span>
+        <div className="flex items-center gap-3 self-end sm:self-auto">
+          <label className="flex items-center gap-1.5 text-[11px] font-mono text-slate-500 whitespace-nowrap">
+            <span className="material-symbols-outlined text-sm">sort</span>
+            <span className="sr-only">Sort projects</span>
+            <select
+              value={sortOption}
+              onChange={(event) => setSortOption(event.target.value)}
+              className="bg-[#101215] border border-white/10 text-slate-300 rounded-lg px-2.5 py-1.5 text-[11px] font-mono focus:outline-none focus:border-cyan-300/50 cursor-pointer"
+              aria-label="Sort projects"
+            >
+              <option value="recent">Recently updated</option>
+              <option value="oldest">Oldest created</option>
+              <option value="name-az">Name: A–Z</option>
+              <option value="name-za">Name: Z–A</option>
+              <option value="role">Role: owner first</option>
+            </select>
+          </label>
+          <span className="text-[11px] font-mono text-slate-500 whitespace-nowrap">
+            {displayedProjects.length} active {displayedProjects.length === 1 ? 'project' : 'projects'}
+          </span>
+        </div>
       </div>
 
       {/* Project Cards Grid */}
@@ -392,8 +368,8 @@ export const DashboardPage = () => {
         <div className="py-12 flex justify-center text-xs font-mono text-surface-tint animate-pulse">
           Loading workspace repositories...
         </div>
-      ) : filteredProjects.length === 0 ? (
-        <div className="py-16 flex flex-col items-center justify-center text-center bg-surface-container-lowest border border-outline-variant/30 rounded-xl p-8 space-y-4 font-mono">
+      ) : displayedProjects.length === 0 ? (
+        <div className="control-panel py-16 flex flex-col items-center justify-center text-center rounded-2xl p-8 space-y-4 font-mono">
           <div className="w-14 h-14 rounded-2xl bg-cyan-950/40 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
             <span className="material-symbols-outlined text-3xl">folder_off</span>
           </div>
@@ -411,8 +387,8 @@ export const DashboardPage = () => {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredProjects.map((project) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {displayedProjects.map((project) => (
             <ProjectCard 
               key={project.projectId} 
               project={project} 
@@ -439,11 +415,7 @@ export const DashboardPage = () => {
         isOpen={Boolean(detailsProject)}
         onClose={() => setDetailsProject(null)}
         project={detailsProject}
-        userRole={
-          (detailsProject?.ownerEmail && currentUser?.email && detailsProject.ownerEmail.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
-            ? 'OWNER'
-            : (detailsProject?.userRole || detailsProject?.collaborators?.[currentUser?.email?.toLowerCase()] || 'EDITOR')
-        }
+        userRole={detailsProject?.userRole || 'OWNER'}
       />
 
       {/* Invite Teammate Modal */}
