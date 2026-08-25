@@ -442,7 +442,7 @@ export const IDEWorkspacePage = () => {
               }
             }
             if (msg.type === 'FORK_ACCEPTED') {
-              setSaveSyncSuccessMsg('ðŸŽ‰ Changes merged & synchronized to Master Repository!');
+              setSaveSyncSuccessMsg('🎉 Changes merged & synchronized to Master Repository!');
               setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
             }
           } else if (msg.type === 'FORK_REQUESTED') {
@@ -450,8 +450,12 @@ export const IDEWorkspacePage = () => {
               setFiles(msg.working_files);
               localFilesRef.current = msg.working_files;
             }
-            setSaveSyncSuccessMsg(`ðŸ”” New fork request submitted by ${msg.requestedBy || 'collaborator'}!`);
-            setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+            const sender = (msg.requestedBy || '').trim().toLowerCase();
+            const current = (userEmail || '').trim().toLowerCase();
+            if (isProjectOwner && sender && sender !== current) {
+              setSaveSyncSuccessMsg(`🔔 New fork request submitted by ${msg.requestedBy || 'collaborator'}!`);
+              setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+            }
           } else if (msg.type === 'FORK_REJECTED') {
             if (msg.master_project_files && msg.master_project_files.length > 0) {
               setMasterFiles(msg.master_project_files);
@@ -560,10 +564,10 @@ export const IDEWorkspacePage = () => {
       localFilesRef.current = updatedFiles;
       setFiles(updatedFiles);
 
-      // Broadcast FORK_REQUESTED over WebSocket so connected editors see live typing in working copy
+      // Broadcast over WebSocket so connected editors see live typing in working copy
       if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
         collaborationWsRef.current.send(JSON.stringify({
-          type: 'FORK_REQUESTED',
+          type: isProjectOwner ? 'CODE_UPDATED' : 'FORK_REQUESTED',
           projectId,
           working_files: updatedFiles,
           requestedBy: userEmail,
@@ -2812,7 +2816,7 @@ export const IDEWorkspacePage = () => {
                   </span>
                 )}
               </button>
-              {Object.keys(fileStatusMap).length > 0 && (
+              {collaboratorPendingChangesCount > 0 && (
                 <button
                   onClick={handleRejectFork}
                   disabled={isSaving}
@@ -2935,14 +2939,14 @@ export const IDEWorkspacePage = () => {
                 </div>
               )}
 
-              {/* 3. Owner Pending Merge Review Banner (Shown to Owner when workspace has changes) */}
-              {isProjectOwner && Object.keys(fileStatusMap).length > 0 && (
+              {/* 3. Owner Pending Merge Review Banner (Shown to Owner when COLLABORATOR has submitted changes) */}
+              {isProjectOwner && collaboratorPendingChangesCount > 0 && (
                 <div className="bg-cyan-950/95 border-b border-cyan-500/50 px-4 py-1.5 flex items-center justify-between text-xs font-mono text-cyan-200 shrink-0 z-20 shadow-lg flex-wrap gap-2 animate-fade-in">
                   <div className="flex items-center gap-2.5">
                     <span className="material-symbols-outlined text-base text-cyan-400 animate-pulse">rate_review</span>
                     <div>
-                      <span className="font-bold text-cyan-300">Pending Review:</span>{' '}
-                      <span>{Object.keys(fileStatusMap).length} working change{Object.keys(fileStatusMap).length > 1 ? 's' : ''} staged (Accept & Merge or Reject & Restore Master).</span>
+                      <span className="font-bold text-cyan-300">Pending Collaborator Review:</span>{' '}
+                      <span>{collaboratorPendingChangesCount} change{collaboratorPendingChangesCount > 1 ? 's' : ''} submitted by collaborators (Accept & Merge or Reject & Restore Master).</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
