@@ -200,7 +200,7 @@ router.post('/validate-key', async (req, res) => {
   }
 });
 
-// POST /api/ai-agent/chat: Agentic AI Chatbot with Full Project Codebase Context
+// POST /api/ai-agent/chat: Agentic AI Chatbot with Full Project Codebase & Terminal Context
 router.post('/chat', verifyToken, async (req, res) => {
   try {
     const { 
@@ -210,7 +210,8 @@ router.post('/chat', verifyToken, async (req, res) => {
       fileManifest = [], 
       apiKey, 
       selectedModel,
-      mentionedFiles = []
+      mentionedFiles = [],
+      terminalOutput = ''
     } = req.body;
 
     if (!prompt || !prompt.trim()) {
@@ -252,22 +253,38 @@ ${filesWithContent}
 `;
     }
 
+    // Build Integrated Terminal Output Context
+    let terminalContextSection = '';
+    if (terminalOutput && typeof terminalOutput === 'string' && terminalOutput.trim().length > 0) {
+      const cleanTerminal = terminalOutput.trim().slice(-15000); // Last ~15KB of runtime output
+      terminalContextSection = `
+========================================================
+LATEST INTEGRATED TERMINAL EXECUTION OUTPUT & SYSTEM LOGS:
+========================================================
+\`\`\`terminal
+${cleanTerminal}
+\`\`\`
+NOTE: The terminal output above contains the latest runtime execution logs, stdout/stderr, tracebacks, print outputs, or test results from the workspace terminal. Use this to diagnose errors, answer user questions about their output, or fix reported runtime issues.
+`;
+    }
+
     const mentionedSummary = (Array.isArray(mentionedFiles) && mentionedFiles.length > 0)
       ? `\nDEVELOPER FOCUSED MENTIONS:\nThe developer explicitly tagged these files with @: ${mentionedFiles.join(', ')}\n`
       : '';
 
     const systemPrompt = `You are Antigravity-AI, the advanced autonomous agentic coding assistant embedded in ObsidianIDE.
-You have COMPLETE access and vision over the user's entire project workspace and source files.
+You have COMPLETE access and vision over the user's entire project workspace, source files, and live terminal execution output.
 
 ${codebaseContextSection}
 ${mentionedSummary}
+${terminalContextSection}
 ${activeFilePath ? `ACTIVE OPEN BUFFER (${activeFilePath}):\n\`\`\`\n${activeFileContent}\n\`\`\`\n` : ''}
 
 USER INSTRUCTION:
 ${prompt}
 
 RESPONSE GUIDELINES:
-1. Provide a comprehensive, clear, and professional response. Explain any code analysis, bugs, architecture, or solutions clearly.
+1. Provide a comprehensive, clear, and professional response. Explain any code analysis, bugs, terminal errors/tracebacks, architecture, or solutions clearly.
 2. If code modifications or new files are needed across the workspace, you MUST include a clean JSON block at the very end of your response inside a \`\`\`json\`\`\` code fence formatted EXACTLY as follows:
 \`\`\`json
 {

@@ -5,6 +5,17 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 
 /**
+ * Helper to strip ANSI color and formatting escape sequences for AI consumption
+ */
+export function stripAnsiCodes(str = '') {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+}
+
+/**
  * InteractiveTerminal — Full-Featured Integrated Terminal for ObsidianIDE.
  *
  * Provides:
@@ -12,6 +23,7 @@ import '@xterm/xterm/css/xterm.css';
  * - Full ANSI 256-color & truecolor rendering.
  * - Ctrl+C process interruption, screen clearing, and session restart.
  * - Direct "Run Code in Terminal" integration.
+ * - Live Terminal Output stream buffer for Agentic AI analysis.
  */
 export const InteractiveTerminal = ({
   projectId,
@@ -21,11 +33,13 @@ export const InteractiveTerminal = ({
   activeFilePath = 'src/main.py',
   isVisible = true,
   onTerminalReady,
+  onOutput,
 }) => {
   const terminalContainerRef = useRef(null);
   const xtermInstanceRef = useRef(null);
   const fitAddonRef = useRef(null);
   const wsRef = useRef(null);
+  const outputBufferRef = useRef('');
 
   const [sessionStatus, setSessionStatus] = useState('disconnected'); // 'disconnected' | 'connecting' | 'connected' | 'error'
   const [lastRunTimestamp, setLastRunTimestamp] = useState(null);
@@ -176,6 +190,16 @@ export const InteractiveTerminal = ({
 
       socket.onmessage = (event) => {
         term?.write(event.data);
+        try {
+          const rawText = typeof event.data === 'string' ? event.data : '';
+          if (rawText) {
+            const cleanChunk = stripAnsiCodes(rawText);
+            outputBufferRef.current = (outputBufferRef.current + cleanChunk).slice(-20000);
+            if (onOutput) {
+              onOutput(outputBufferRef.current);
+            }
+          }
+        } catch {}
       };
 
       socket.onclose = (event) => {
@@ -197,7 +221,7 @@ export const InteractiveTerminal = ({
     };
 
     createSocket(primaryWsUrl);
-  }, [currentUser, projectId]);
+  }, [currentUser, projectId, onOutput]);
 
   // ── Auto-Connect on Mount ──────────────────────────────────────────────────
   useEffect(() => {
@@ -241,7 +265,9 @@ export const InteractiveTerminal = ({
 
   const clearScreen = useCallback(() => {
     xtermInstanceRef.current?.clear();
-  }, []);
+    outputBufferRef.current = '';
+    if (onOutput) onOutput('');
+  }, [onOutput]);
 
   const handleReconnect = () => {
     if (wsRef.current) {
@@ -261,9 +287,11 @@ export const InteractiveTerminal = ({
         interrupt: () => sendInterrupt(),
         clear: () => clearScreen(),
         reconnect: () => handleReconnect(),
+        getOutput: () => outputBufferRef.current,
+        clearOutput: () => { outputBufferRef.current = ''; if (onOutput) onOutput(''); }
       });
     }
-  }, [onTerminalReady, executeCodeInTerminal, sendInterrupt, clearScreen]);
+  }, [onTerminalReady, executeCodeInTerminal, sendInterrupt, clearScreen, onOutput]);
 
   const statusConfig = {
     connected: { color: 'bg-emerald-400', glow: 'shadow-[0_0_8px_#34d399]', label: 'ONLINE' },

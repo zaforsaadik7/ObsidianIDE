@@ -2118,6 +2118,7 @@ export const IDEWorkspacePage = () => {
   const [isExecuting, setIsExecuting] = useState(false);
   const [isExecTerminalOpen, setIsExecTerminalOpen] = useState(false);
   const [activeTerminalTab, setActiveTerminalTab] = useState('interactive'); // 'interactive' | 'ai'
+  const [terminalOutput, setTerminalOutput] = useState('');
 
   const handleRunCode = () => {
     if (!activeFile) return;
@@ -3190,6 +3191,7 @@ export const IDEWorkspacePage = () => {
                     activeFilePath={activeFile?.filePath || 'src/main.py'}
                     isVisible={isExecTerminalOpen}
                     onTerminalReady={(ctrl) => setTerminalController(ctrl)}
+                    onOutput={(out) => setTerminalOutput(out)}
                   />
                 </div>
               </div>
@@ -3204,6 +3206,7 @@ export const IDEWorkspacePage = () => {
               files={files}
               onApplyModifications={handleApplyAIModifications}
               projectId={projectId}
+              terminalOutput={terminalOutput}
               width={rightWidth}
             />
           </>

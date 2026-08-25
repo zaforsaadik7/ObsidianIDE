@@ -9,10 +9,12 @@ export const AgenticAIChatSidebar = ({
   files = [], 
   onApplyModifications,
   projectId = 'default-project',
+  terminalOutput = '',
   width = 420
 }) => {
   const { currentUser } = useAuth();
   const sessionsStorageKey = `obsidian_ai_sessions_${projectId}`;
+  const [includeTerminalLogs, setIncludeTerminalLogs] = useState(true);
 
   const createNewSession = (title = 'New Conversation') => ({
     id: 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
@@ -342,6 +344,7 @@ export const AgenticAIChatSidebar = ({
           activeFileContent: currentContent || '',
           fileManifest,
           mentionedFiles: mentioned,
+          terminalOutput: (includeTerminalLogs && terminalOutput) ? terminalOutput : '',
           apiKey: userApiKey,
           selectedModel
         })
@@ -690,6 +693,31 @@ export const AgenticAIChatSidebar = ({
               <span>@{mPath}</span>
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Live Terminal Output Vision Attachment Status */}
+      {terminalOutput && terminalOutput.trim().length > 0 && (
+        <div className="px-2.5 py-1 bg-[#0E1117] border-t border-cyan-500/20 flex justify-between items-center text-[10px]">
+          <div className="flex items-center gap-1.5 min-w-0 text-cyan-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="material-symbols-outlined text-xs shrink-0">terminal</span>
+            <span className="truncate font-sans font-medium text-slate-300">
+              Terminal Output Connected ({terminalOutput.trim().split('\n').length} lines)
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIncludeTerminalLogs(prev => !prev)}
+            className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border transition-colors cursor-pointer shrink-0 ${
+              includeTerminalLogs
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 hover:bg-cyan-500/30'
+                : 'bg-white/5 text-zinc-500 border-white/10 hover:text-zinc-400'
+            }`}
+            title="Toggle whether recent terminal logs are sent to the AI assistant"
+          >
+            {includeTerminalLogs ? '✓ Attached' : 'Detached'}
+          </button>
         </div>
       )}
 
