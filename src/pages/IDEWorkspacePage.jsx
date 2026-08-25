@@ -208,13 +208,26 @@ export const IDEWorkspacePage = () => {
             ? data.working_files
             : master;
 
-          // 4. Update working files state with strict mutation protection (Never wipe active typing, staged changes, or imported folders)
+          // Check if Master baseline is synchronized with working files (Owner saved/merged fork or pendingFork cleared)
+          const isMasterSynchronized = data.pendingFork === false ||
+            (master.length > 0 && master.length === working.length && master.every(mf => {
+              const wf = working.find(w => w.filePath === mf.filePath);
+              return wf && wf.content === mf.content;
+            }));
+
+          if (isMasterSynchronized) {
+            hasUnsavedForkChangesRef.current = false;
+            isLocalDirtyRef.current = false;
+            localMutationTimestampRef.current = 0;
+          }
+
+          // 4. Update working files state with strict mutation protection
           const hasLocalTypingDirty = (currentContent !== savedContent);
           const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 30000;
           const hasStagedForkChanges = hasUnsavedForkChangesRef.current;
-          if (!isRecentLocalMutation && !hasLocalTypingDirty && !hasStagedForkChanges) {
+          if (isMasterSynchronized || (!isRecentLocalMutation && !hasLocalTypingDirty && !hasStagedForkChanges)) {
             if (working && working.length > 0) {
-              if (working.length >= localFilesRef.current.length) {
+              if (working.length >= localFilesRef.current.length || isMasterSynchronized) {
                 setFiles(working);
                 localFilesRef.current = working;
               } else if (localFilesRef.current.length > 0) {
@@ -231,7 +244,7 @@ export const IDEWorkspacePage = () => {
             }
           }
 
-          // 5. Active File & Content synchronization (Safe: Never overwrites live typing buffer or recent saves)
+          // 5. Active File & Content synchronization (Safe: Never overwrites live typing buffer unless Master synchronized)
           if (!activeFileRef.current && working && working.length > 0) {
             const first = working[0];
             setOpenFiles([first]);
@@ -244,14 +257,14 @@ export const IDEWorkspacePage = () => {
               (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
               f.filePath === activeFileRef.current.filePath
             );
-            if (matching && !isRecentLocalMutation) {
+            if (matching && (isMasterSynchronized || !isRecentLocalMutation)) {
               setActiveFile(matching);
               activeFileRef.current = matching;
               setOpenFiles(prev => prev.map(of =>
                 (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? matching : of
               ));
-              // ONLY update editor text if the local user is NOT actively typing unsaved changes
-              if (!isLocalDirtyRef.current && matching.content !== undefined) {
+              // Update editor text when master is synced or when local user is not typing unsaved changes
+              if ((isMasterSynchronized || !isLocalDirtyRef.current) && matching.content !== undefined) {
                 setCurrentContent(matching.content);
                 setSavedContent(matching.content);
               }
@@ -325,11 +338,23 @@ export const IDEWorkspacePage = () => {
               ? proj.working_files
               : serverMaster;
 
+            const isServerMasterSynced = proj.pendingFork === false ||
+              (serverMaster && serverWorking && serverMaster.length > 0 && serverMaster.length === serverWorking.length && serverMaster.every(mf => {
+                const wf = serverWorking.find(w => w.filePath === mf.filePath);
+                return wf && wf.content === mf.content;
+              }));
+
+            if (isServerMasterSynced) {
+              hasUnsavedForkChangesRef.current = false;
+              isLocalDirtyRef.current = false;
+              localMutationTimestampRef.current = 0;
+            }
+
             const hasStagedModifications = hasUnsavedForkChangesRef.current || (currentContent !== savedContent);
             const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 30000;
-            if (!isRecentLocalMutation && !hasStagedModifications) {
+            if (isServerMasterSynced || (!isRecentLocalMutation && !hasStagedModifications)) {
               if (serverWorking && serverWorking.length > 0) {
-                if (serverWorking.length >= localFilesRef.current.length) {
+                if (serverWorking.length >= localFilesRef.current.length || isServerMasterSynced) {
                   setFiles(serverWorking);
                   localFilesRef.current = serverWorking;
                 } else if (localFilesRef.current.length > 0) {
@@ -345,8 +370,8 @@ export const IDEWorkspacePage = () => {
               }
             }
 
-            // Sync active file metadata (content only if not dirty and no local mutation)
-            if (activeFileRef.current && serverWorking && serverWorking.length > 0 && !isRecentLocalMutation && !hasStagedModifications) {
+            // Sync active file metadata
+            if (activeFileRef.current && serverWorking && serverWorking.length > 0 && (isServerMasterSynced || (!isRecentLocalMutation && !hasStagedModifications))) {
               const matching = serverWorking.find(f =>
                 (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
                 f.filePath === activeFileRef.current.filePath
@@ -357,7 +382,7 @@ export const IDEWorkspacePage = () => {
                 setOpenFiles(prev => prev.map(of =>
                   (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? matching : of
                 ));
-                if (!isLocalDirtyRef.current && matching.content !== undefined) {
+                if ((isServerMasterSynced || !isLocalDirtyRef.current) && matching.content !== undefined) {
                   setCurrentContent(matching.content);
                   setSavedContent(matching.content);
                 }
@@ -441,9 +466,10 @@ export const IDEWorkspacePage = () => {
                 localMasterRef.current = msg.master_project_files;
               }
               hasUnsavedForkChangesRef.current = false;
+              isLocalDirtyRef.current = false;
               localMutationTimestampRef.current = 0;
 
-              // Seamlessly update active file content if user has no dirty unsaved buffer
+              // Seamlessly update active file content
               if (activeFileRef.current) {
                 const matched = incomingFiles.find(f =>
                   (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
@@ -455,7 +481,7 @@ export const IDEWorkspacePage = () => {
                   setOpenFiles(prev => prev.map(of =>
                     (of.filePath === matched.filePath || (matched.fileId && of.fileId === matched.fileId)) ? matched : of
                   ));
-                  if (!isLocalDirtyRef.current && matched.content !== undefined) {
+                  if (matched.content !== undefined) {
                     setCurrentContent(matched.content);
                     setSavedContent(matched.content);
                   }
@@ -463,6 +489,7 @@ export const IDEWorkspacePage = () => {
               }
             }
             if (msg.type === 'FORK_ACCEPTED') {
+              setIsDiffViewActive(false);
               setSaveSyncSuccessMsg('🎉 Changes merged & synchronized to Master Repository!');
               setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
             }
@@ -978,6 +1005,8 @@ export const IDEWorkspacePage = () => {
           project_files: targetWorkingFiles,
           working_files: targetWorkingFiles,
           pending_patches: [],
+          pendingFork: false,
+          lastWorkingModifiedBy: userEmail,
           masterLastSyncedAt: timestamp,
           masterLastSyncedBy: userEmail,
           updatedAt: timestamp

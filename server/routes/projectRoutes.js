@@ -508,6 +508,8 @@ router.post('/sync-master', async (req, res) => {
       project_files: files,
       working_files: files,
       pending_patches: [],
+      pendingFork: false,
+      lastWorkingModifiedBy: ownerEmail || 'owner@obsidian.io',
       masterLastSyncedAt: timestamp,
       masterLastSyncedBy: ownerEmail,
       updatedAt: timestamp
@@ -520,6 +522,8 @@ router.post('/sync-master', async (req, res) => {
           project_files: files,
           working_files: files,
           pending_patches: [],
+          pendingFork: false,
+          lastWorkingModifiedBy: ownerEmail || 'owner@obsidian.io',
           masterLastSyncedAt: timestamp,
           masterLastSyncedBy: ownerEmail,
           updatedAt: timestamp
