@@ -564,28 +564,34 @@ export const IDEWorkspacePage = () => {
       localFilesRef.current = updatedFiles;
       setFiles(updatedFiles);
 
-      // Broadcast over WebSocket so connected editors see live typing in working copy
-      if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
-        collaborationWsRef.current.send(JSON.stringify({
-          type: isProjectOwner ? 'CODE_UPDATED' : 'FORK_REQUESTED',
-          projectId,
-          working_files: updatedFiles,
-          requestedBy: userEmail,
-          user: {
-            email: userEmail,
-            displayName: userName,
-            role: activeUserRole || (isProjectOwner ? 'OWNER' : 'EDITOR')
-          }
-        }));
-      }
+      // Save local draft in localStorage for offline resilience
+      try {
+        localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(updatedFiles));
+      } catch (e) {}
 
-      // Persist to Firestore working_files non-blocking
-      setDoc(doc(db, 'projects', projectId), {
-        working_files: updatedFiles,
-        lastWorkingModifiedBy: userEmail,
-        lastWorkingModifiedByName: userName,
-        updatedAt: timestamp
-      }, { merge: true }).catch(() => {});
+      // If Project Owner: broadcast code updates and persist working copy
+      if (isProjectOwner) {
+        if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+          collaborationWsRef.current.send(JSON.stringify({
+            type: 'CODE_UPDATED',
+            projectId,
+            working_files: updatedFiles,
+            requestedBy: userEmail,
+            user: {
+              email: userEmail,
+              displayName: userName,
+              role: 'OWNER'
+            }
+          }));
+        }
+
+        setDoc(doc(db, 'projects', projectId), {
+          working_files: updatedFiles,
+          lastWorkingModifiedBy: userEmail,
+          lastWorkingModifiedByName: userName,
+          updatedAt: timestamp
+        }, { merge: true }).catch(() => {});
+      }
     }, 1200);
 
     return () => clearTimeout(timer);
@@ -643,18 +649,26 @@ export const IDEWorkspacePage = () => {
     (files || []).forEach(wf => {
       const mf = masterPathMap.get(wf.filePath);
       const isBinary = isBinaryFile(wf.filePath);
-      const isEffectiveMod = !mf || mf.content !== (activeFile && wf.filePath === activeFile.filePath && !isBinary && currentContent !== undefined ? currentContent : wf.content);
+      const isLocalActiveMod = (activeFile && wf.filePath === activeFile.filePath && !isBinary && currentContent !== undefined && currentContent !== (mf?.content ?? ''));
+      const isWfDifferentFromMaster = !mf || mf.content !== wf.content;
+      const isEffectiveMod = isLocalActiveMod || isWfDifferentFromMaster;
+
       if (isEffectiveMod) {
         const author = (wf.lastModifiedBy || '').toLowerCase().trim();
-        if (author === ownerEmail) {
-          ownerChangesExist = true;
-        } else if (author === userEmail) {
+        if (!isProjectOwner) {
+          // For non-owner editor: any working difference is their pending fork change
           editorCount++;
-        } else if (author && author !== ownerEmail) {
-          collabCount++;
         } else {
-          // If no author recorded, treat as current user's local working change
-          if (!isProjectOwner) editorCount++;
+          // For project owner: check if changes were submitted by a collaborator
+          if (author && author !== ownerEmail) {
+            collabCount++;
+          } else if (liveProjectData?.lastWorkingModifiedBy && liveProjectData.lastWorkingModifiedBy.toLowerCase() !== ownerEmail) {
+            collabCount++;
+          } else if (author === ownerEmail) {
+            ownerChangesExist = true;
+          } else {
+            ownerChangesExist = true;
+          }
         }
       }
     });
@@ -662,7 +676,11 @@ export const IDEWorkspacePage = () => {
     (masterFiles || []).forEach(mf => {
       const isDeletedInWorking = !files.some(wf => wf.filePath === mf.filePath);
       if (isDeletedInWorking) {
-        if (!isProjectOwner) editorCount++;
+        if (!isProjectOwner) {
+          editorCount++;
+        } else {
+          collabCount++;
+        }
       }
     });
 
@@ -671,11 +689,11 @@ export const IDEWorkspacePage = () => {
 
     return {
       hasEditorForkChanges: hasForkChanges,
-      hasOwnerAuthoredChanges: ownerChangesExist,
+      hasOwnerAuthoredChanges: isProjectOwner ? ownerChangesExist : false,
       editorAuthoredChangesCount: editorCount,
-      collaboratorPendingChangesCount: collabCount + (isProjectOwner ? editorCount : 0)
+      collaboratorPendingChangesCount: isProjectOwner ? collabCount : 0
     };
-  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner, fileStatusMap]);
+  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner, fileStatusMap, liveProjectData?.lastWorkingModifiedBy]);
 
   const activeMasterFile = useMemo(() => {
     if (!activeFile) return null;
@@ -757,16 +775,7 @@ export const IDEWorkspacePage = () => {
 
       localFilesRef.current = updatedFiles;
       setFiles(updatedFiles);
-      setSavedContent(currentContent);
-
-      if (targetFile) {
-        const updatedActive = { ...targetFile, content: currentContent, updatedAt: timestamp, lastModifiedBy: userEmail };
-        setActiveFile(updatedActive);
-        activeFileRef.current = updatedActive;
-        setOpenFiles(prev => prev.map(of => (of.filePath === targetFile.filePath || of.fileId === targetFile.fileId) ? updatedActive : of));
-      }
-
-      // Check which files are new or modified compared to previous local draft
+        // Check which files are new or modified compared to previous local draft
       let changedFilesCount = 0;
       try {
         const existingDraftRaw = localStorage.getItem(`obsidian_draft_${projectId}_${userEmail}`);
@@ -812,7 +821,7 @@ export const IDEWorkspacePage = () => {
         }, { merge: true });
       } catch (uErr) { }
 
-      setSaveSyncSuccessMsg(`ðŸ’¾ Saved ${changedFilesCount || updatedFiles.length} file(s) to your Personal Local Storage & Database!`);
+      setSaveSyncSuccessMsg(`💾 Saved ${changedFilesCount || updatedFiles.length} file(s) to your Personal Local Storage & Database!`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error saving to local storage:', err);
@@ -822,7 +831,7 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // â”€â”€ 2. Request Fork / Submit Working Copy to Project Owner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── 2. Request Fork / Submit Working Copy to Project Owner ─────────────────
   const handleRequestFork = async () => {
     const targetFile = activeFileRef.current || activeFile;
     setIsSaving(true);
@@ -849,16 +858,29 @@ export const IDEWorkspacePage = () => {
 
       localFilesRef.current = updatedFiles;
       setFiles(updatedFiles);
+      hasUnsavedForkChangesRef.current = true;
       if (!targetFile || !isBinaryFile(targetFile.filePath)) {
         setSavedContent(currentContent);
       }
 
-      // 1. Broadcast FORK_REQUESTED immediately over WebSocket so Owner sees new proposal within < 50ms
+      // 1. Direct Firestore write for instant real-time delivery to Owner
+      try {
+        setDoc(doc(db, 'projects', projectId), {
+          working_files: updatedFiles,
+          lastWorkingModifiedBy: userEmail,
+          lastWorkingModifiedByName: currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0],
+          pendingFork: true,
+          updatedAt: timestamp
+        }, { merge: true }).catch(() => {});
+      } catch (fsErr) {}
+
+      // 2. Broadcast FORK_REQUESTED immediately over WebSocket so Owner sees new proposal within < 50ms
       if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
         collaborationWsRef.current.send(JSON.stringify({
           type: 'FORK_REQUESTED',
           projectId,
           working_files: updatedFiles,
+          requestedBy: userEmail,
           user: {
             email: userEmail,
             displayName: currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0],
@@ -867,7 +889,7 @@ export const IDEWorkspacePage = () => {
         }));
       }
 
-      // 2. Persist Working Files to Owner DB via server-side BYOD asynchronously
+      // 3. Persist Working Files to Owner DB via server-side BYOD asynchronously
       fetch('/api/projects/update-files', {
         method: 'POST',
         headers: {
@@ -883,23 +905,7 @@ export const IDEWorkspacePage = () => {
         })
       }).catch(apiErr => console.warn('Backend update-files notice:', apiErr));
 
-      // 3. Record Collaborator Change Attribution
-      if (targetFile) {
-        fetch(`/api/collaboration/${projectId}/attribution`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filePath: targetFile.filePath,
-            authorEmail: userEmail,
-            authorName: currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0],
-            authorRole: activeUserRole,
-            authorAvatar: currentUser?.photoURL || userProfile?.info?.avatarUrl || '',
-            changeSummary: `Submitted fork updates for ${targetFile.filePath}`
-          })
-        }).catch(() => {});
-      }
-
-      setSaveSyncSuccessMsg(`ðŸ´ Fork requested! ${Object.keys(fileStatusMap).length || updatedFiles.length} change(s) submitted for Project Owner review.`);
+      setSaveSyncSuccessMsg(`🔔 Fork requested! ${Object.keys(fileStatusMap).length || updatedFiles.length} change(s) submitted for Project Owner review.`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
     } catch (err) {
       console.error('Error submitting fork request:', err);
