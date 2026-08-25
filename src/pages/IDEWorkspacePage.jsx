@@ -208,16 +208,14 @@ export const IDEWorkspacePage = () => {
             ? data.working_files
             : master;
 
-          // 4. Update working files state with strict mutation protection (Never wipe active typing)
+          // 4. Update working files state with strict mutation protection (Never wipe active typing or staged changes)
           const hasLocalTypingDirty = (currentContent !== savedContent);
-          const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 5000;
-          if (!isRecentLocalMutation && !hasLocalTypingDirty) {
+          const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 25000;
+          const hasStagedForkChanges = hasUnsavedForkChangesRef.current;
+          if (!isRecentLocalMutation && !hasLocalTypingDirty && !hasStagedForkChanges) {
             if (working && working.length > 0) {
               setFiles(working);
               localFilesRef.current = working;
-              if (master && master.length === working.length) {
-                hasUnsavedForkChangesRef.current = false;
-              }
             }
           }
 
@@ -316,7 +314,7 @@ export const IDEWorkspacePage = () => {
               : serverMaster;
 
             const hasStagedModifications = hasUnsavedForkChangesRef.current || (currentContent !== savedContent);
-            const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 15000;
+            const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 25000;
             if (!isRecentLocalMutation && !hasStagedModifications) {
               if (serverWorking && serverWorking.length > 0) {
                 setFiles(serverWorking);
@@ -1995,24 +1993,64 @@ export const IDEWorkspacePage = () => {
       ];
 
       localMutationTimestampRef.current = Date.now();
-      hasUnsavedForkChangesRef.current = true;
       localFilesRef.current = mergedFiles;
-      isLocalDirtyRef.current = true;
       setFiles(mergedFiles);
       setImportModalData(null);
+
+      // Save local offline draft in browser localStorage
+      try {
+        localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(mergedFiles));
+      } catch (e) {}
+
+      if (isProjectOwner) {
+        setMasterFiles(mergedFiles);
+        localMasterRef.current = mergedFiles;
+        hasUnsavedForkChangesRef.current = false;
+        isLocalDirtyRef.current = false;
+      } else {
+        hasUnsavedForkChangesRef.current = true;
+        isLocalDirtyRef.current = true;
+      }
 
       if (newFormattedFiles.length > 0) {
         handleSelectFile(newFormattedFiles[0]);
       }
 
-      // 1. Persist to Shared Working Fork in Firestore
+      // 1. Persist to Shared Working Fork in Firestore (and Master if Owner)
       try {
-        await setDoc(doc(db, 'projects', projectId), {
+        const payload = {
           working_files: mergedFiles,
-          lastWorkingModifiedBy: userEmail,
-          lastWorkingModifiedByName: userName,
+          ...(isProjectOwner ? {
+            master_project_files: mergedFiles,
+            project_files: mergedFiles,
+            masterLastSyncedAt: timestamp,
+            masterLastSyncedBy: userEmail
+          } : {
+            lastWorkingModifiedBy: userEmail,
+            lastWorkingModifiedByName: userName,
+            pendingFork: true
+          }),
           updatedAt: timestamp
-        }, { merge: true });
+        };
+        await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
+
+        // Update files subcollection in parallel
+        Promise.allSettled(newFormattedFiles.map(f => {
+          if (f && (f.fileId || f.filePath)) {
+            const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+            return setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+              fileId: fileDocId,
+              projectId,
+              filePath: f.filePath,
+              fileName: f.fileName || f.filePath.split('/').pop(),
+              content: f.content || '',
+              fileType: f.fileType || 'plaintext',
+              updatedAt: timestamp,
+              lastModifiedBy: userEmail
+            }, { merge: true });
+          }
+          return Promise.resolve();
+        })).catch(() => {});
 
         // 2. Persist to Backend REST API
         await fetch('/api/projects/update-files', {
@@ -2024,16 +2062,36 @@ export const IDEWorkspacePage = () => {
           body: JSON.stringify({
             projectId,
             working_files: mergedFiles,
+            master_project_files: isProjectOwner ? mergedFiles : masterFiles,
             userEmail,
-            isOwner: false // Staged in Working Fork until Owner merges
+            ownerEmail: projectData?.ownerEmail,
+            collaborators: projectData?.collaborators,
+            title: projectData?.title,
+            isOwner: isProjectOwner
           })
         });
 
-        // 3. Broadcast FORK_REQUESTED over WebSocket so Editor / Owner sees the folder tree & files immediately
+        // 3. Persist to Personal Firebase Database if Project Owner
+        if (isProjectOwner) {
+          syncProjectToPersonalFirestore({
+            projectId,
+            title: projectData?.title || projectId,
+            languageEnv: projectData?.languageEnv || 'PYTHON_3.11',
+            ownerEmail: projectData?.ownerEmail || userEmail,
+            master_project_files: mergedFiles,
+            project_files: mergedFiles,
+            working_files: mergedFiles,
+            collaborators: projectData?.collaborators || { [userEmail]: 'OWNER' }
+          }, userProfile, userEmail).catch(() => {});
+        }
+
+        // 4. Broadcast over WebSocket so all connected peers update immediately
         if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
           collaborationWsRef.current.send(JSON.stringify({
-            type: 'FORK_REQUESTED',
+            type: isProjectOwner ? 'FILES_UPDATED' : 'FORK_REQUESTED',
             projectId,
+            files: mergedFiles,
+            master_project_files: isProjectOwner ? mergedFiles : masterFiles,
             working_files: mergedFiles,
             requestedBy: userEmail,
             user: {
@@ -2047,7 +2105,7 @@ export const IDEWorkspacePage = () => {
         console.warn('Import working copy sync notice:', fsErr);
       }
 
-      setSaveSyncSuccessMsg(`⚡ Imported ${newFormattedFiles.length} file(s) into Working Copy! (${isProjectOwner ? 'Owner merge ready' : 'Pending Owner review'})`);
+      setSaveSyncSuccessMsg(`⚡ Imported ${newFormattedFiles.length} file(s) into ${isProjectOwner ? 'Master Repository' : 'Working Copy'}!`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error confirming import:', err);

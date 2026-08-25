@@ -401,35 +401,77 @@ router.post('/update-files', async (req, res) => {
       projectId,
       working_files,
       master_project_files,
+      project_files,
       userEmail,
-      isOwner
+      isOwner,
+      ownerEmail,
+      collaborators,
+      title
     } = req.body;
 
     if (!projectId) {
       return res.status(400).json({ error: 'Project ID is required.' });
     }
 
+    const filesToPersist = (working_files && working_files.length > 0) ? working_files : (project_files || []);
     const timestamp = new Date().toISOString();
+
     const memProj = inMemoryProjectStore.get(projectId) || {};
     const updatedProj = {
       ...memProj,
       projectId,
-      ...(working_files ? { working_files } : {}),
-      ...(master_project_files ? { master_project_files, project_files: master_project_files } : {}),
+      title: title || memProj.title || 'Project',
+      ownerEmail: ownerEmail || memProj.ownerEmail || (isOwner ? userEmail : 'developer@obsidian.io'),
+      collaborators: collaborators || memProj.collaborators || {},
+      working_files: filesToPersist,
+      ...(isOwner || master_project_files ? {
+        master_project_files: master_project_files || filesToPersist,
+        project_files: master_project_files || filesToPersist
+      } : {}),
       updatedAt: timestamp,
+      lastWorkingModifiedBy: userEmail || memProj.lastWorkingModifiedBy || 'developer@obsidian.io',
       lastModifiedBy: userEmail || memProj.lastModifiedBy
     };
     inMemoryProjectStore.set(projectId, updatedProj);
 
     if (adminDb) {
       try {
+        const projRef = adminDb.collection('projects').doc(projectId);
         const payload = {
-          ...(working_files ? { working_files } : {}),
-          ...(master_project_files ? { master_project_files, project_files: master_project_files } : {}),
+          working_files: filesToPersist,
+          ...(isOwner || master_project_files ? {
+            master_project_files: master_project_files || filesToPersist,
+            project_files: master_project_files || filesToPersist
+          } : {}),
           updatedAt: timestamp,
+          lastWorkingModifiedBy: userEmail || 'developer@obsidian.io',
           lastModifiedBy: userEmail || 'developer@obsidian.io'
         };
-        await adminDb.collection('projects').doc(projectId).set(payload, { merge: true });
+        await projRef.set(payload, { merge: true });
+
+        // Update individual file docs safely in chunks of 400
+        const chunkSize = 400;
+        for (let i = 0; i < filesToPersist.length; i += chunkSize) {
+          const chunk = filesToPersist.slice(i, i + chunkSize);
+          const batch = adminDb.batch();
+          for (const f of chunk) {
+            if (f && (f.fileId || f.filePath)) {
+              const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+              const fileRef = projRef.collection('files').doc(fileDocId);
+              batch.set(fileRef, {
+                fileId: fileDocId,
+                projectId,
+                filePath: f.filePath || '',
+                fileName: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file'),
+                content: f.content || '',
+                fileType: f.fileType || 'plaintext',
+                updatedAt: timestamp,
+                lastModifiedBy: userEmail || 'developer@obsidian.io'
+              }, { merge: true });
+            }
+          }
+          await batch.commit();
+        }
       } catch (dbErr) {
         console.warn('AdminDB update-files notice:', dbErr.message);
       }
@@ -439,7 +481,7 @@ router.post('/update-files', async (req, res) => {
       status: 'SUCCESS',
       message: 'Project files updated successfully.',
       projectId,
-      filesCount: (working_files || master_project_files || []).length
+      filesCount: filesToPersist.length
     });
   } catch (error) {
     console.error('Error updating project files:', error);
@@ -487,11 +529,24 @@ router.post('/sync-master', async (req, res) => {
       }
     }
 
+    // Sync canonical master baseline exclusively to Owner's Personal Firebase Database
+    const resolvedOwnerEmailMaster = (ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || 'owner@obsidian.io').trim().toLowerCase();
+    syncToOwnerPersonalFirestore({
+      ownerEmail: resolvedOwnerEmailMaster,
+      projectId,
+      projectTitle: inMemoryProjectStore.get(projectId)?.title || projectId,
+      files,
+      isMasterSync: true,
+      modifiedBy: ownerEmail
+    }).catch(syncErr => console.warn('Notice syncing master files to owner personal Firestore:', syncErr.message));
+
     res.json({
       status: 'SUCCESS',
       message: 'Master repository synced successfully.',
       projectId,
-      filesCount: files.length
+      master_project_files: files,
+      filesCount: files.length,
+      syncedAt: timestamp
     });
   } catch (error) {
     console.error('Error in sync-master:', error);
@@ -800,201 +855,9 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
   }
 });
 
-// POST /api/projects/update-files: Batch update WORKING fork files only.
-// CRITICAL: This endpoint MUST only update working_files. It must NEVER overwrite
-// master_project_files or project_files, which serve as the canonical master baseline.
-// Overwriting project_files would collapse the owner's diff view to 0 changes.
-router.post('/update-files', async (req, res) => {
-  try {
-    const { projectId, project_files = [], working_files, userEmail, master_project_files: incomingMaster } = req.body;
-    if (!projectId) {
-      return res.status(400).json({ error: 'projectId is required' });
-    }
 
-    const filesToPersist = (working_files && working_files.length > 0) ? working_files : project_files;
-    const timestamp = new Date().toISOString();
 
-    // Resolve master baseline: prefer the incoming master from the client, then Firestore, never the working copy
-    let resolvedMaster = (incomingMaster && incomingMaster.length > 0) ? incomingMaster : null;
 
-    if (inMemoryProjectStore.has(projectId)) {
-      const existing = inMemoryProjectStore.get(projectId);
-      // STRICTLY update the working fork - NEVER overwrite master_project_files here
-      existing.working_files = filesToPersist;
-      existing.updatedAt = timestamp;
-      existing.lastWorkingModifiedBy = userEmail || 'developer@obsidian.io';
-    } else {
-      let existingOwner = req.body.ownerEmail || null;
-      let existingCollabs = req.body.collaborators || null;
-      let existingMasterFromDb = null;
-
-      if (adminDb) {
-        try {
-          const docSnap = await adminDb.collection('projects').doc(projectId).get();
-          if (docSnap.exists) {
-            const d = docSnap.data();
-            existingOwner = d.ownerEmail || existingOwner;
-            existingCollabs = d.collaborators || existingCollabs;
-            // STRICTLY read existing master from master_project_files only
-            if (d.master_project_files && d.master_project_files.length > 0) {
-              existingMasterFromDb = d.master_project_files;
-            }
-          }
-        } catch (e) {}
-      }
-
-      // Master baseline priority: Firestore master > incoming client master > full working files baseline
-      const finalMaster = existingMasterFromDb || (incomingMaster && incomingMaster.length > 0 ? incomingMaster : null) || filesToPersist;
-
-      inMemoryProjectStore.set(projectId, {
-        projectId,
-        title: req.body.title || 'Project',
-        ownerEmail: existingOwner || userEmail || 'developer@obsidian.io',
-        collaborators: existingCollabs || { [userEmail || 'developer@obsidian.io']: 'EDITOR' },
-        project_files: finalMaster,  // project_files mirrors master baseline
-        working_files: filesToPersist,
-        master_project_files: finalMaster,
-        updatedAt: timestamp,
-        lastWorkingModifiedBy: userEmail || 'developer@obsidian.io'
-      });
-    }
-
-    if (adminDb) {
-      const projRef = adminDb.collection('projects').doc(projectId);
-
-      // CRITICAL: Only write working_files to Firestore Admin.
-      // DO NOT write master_project_files or project_files here.
-      // Only the Owner's /api/projects/sync-master endpoint can commit to master.
-      const updatePayload = {
-        working_files: filesToPersist,
-        updatedAt: timestamp,
-        lastWorkingModifiedBy: userEmail || 'developer@obsidian.io',
-        lastModifiedBy: userEmail || 'developer@obsidian.io'
-      };
-
-      await projRef.set(updatePayload, { merge: true });
-
-      // Update individual file docs safely in chunks of 400 to avoid 500-limit error
-      try {
-        const chunkSize = 400;
-        for (let i = 0; i < filesToPersist.length; i += chunkSize) {
-          const chunk = filesToPersist.slice(i, i + chunkSize);
-          const batch = adminDb.batch();
-          for (const f of chunk) {
-            if (f && f.fileId) {
-              const fileRef = projRef.collection('files').doc(f.fileId);
-              batch.set(fileRef, {
-                fileId: f.fileId,
-                projectId,
-                filePath: f.filePath || '',
-                fileName: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file'),
-                content: f.content || '',
-                fileType: f.fileType || 'plaintext',
-                updatedAt: timestamp,
-                lastModifiedBy: userEmail || 'developer@obsidian.io'
-              }, { merge: true });
-            }
-          }
-          await batch.commit();
-        }
-      } catch (batchErr) {
-        console.warn('Notice saving individual file subcollection docs:', batchErr.message);
-      }
-    }
-
-    // Sync exclusively to Owner's Personal Firebase Database (Non-blocking background)
-    const resolvedOwnerEmail = (req.body.ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || userEmail || '').trim().toLowerCase();
-    syncToOwnerPersonalFirestore({
-      ownerEmail: resolvedOwnerEmail,
-      projectId,
-      projectTitle: req.body.title || inMemoryProjectStore.get(projectId)?.title || projectId,
-      files: filesToPersist,
-      isMasterSync: false,
-      modifiedBy: userEmail
-    }).catch(syncErr => console.warn('Notice syncing working files to owner personal Firestore:', syncErr.message));
-
-    res.json({
-      status: 'SUCCESS',
-      message: `Updated ${filesToPersist.length} working file(s) in repository fork.`,
-      projectId,
-      timestamp
-    });
-  } catch (err) {
-    console.error('Error updating project files:', err);
-    res.status(500).json({ error: 'Failed to update project files', details: err.message });
-  }
-});
-
-// POST /api/projects/sync-master: Commit current working/fork files to canonical Master Repository (Owner only)
-router.post('/sync-master', verifyToken, async (req, res) => {
-  try {
-    const { projectId, working_files = [], ownerEmail } = req.body;
-    if (!projectId) {
-      return res.status(400).json({ error: 'projectId is required' });
-    }
-
-    const timestamp = new Date().toISOString();
-
-    if (inMemoryProjectStore.has(projectId)) {
-      const existing = inMemoryProjectStore.get(projectId);
-      existing.master_project_files = working_files;
-      existing.project_files = working_files;
-      existing.working_files = working_files;
-      existing.pending_patches = [];
-      existing.masterLastSyncedAt = timestamp;
-      existing.masterLastSyncedBy = ownerEmail || 'owner@obsidian.io';
-      existing.updatedAt = timestamp;
-    } else {
-      inMemoryProjectStore.set(projectId, {
-        projectId,
-        title: req.body.title || projectId,
-        ownerEmail: ownerEmail || 'owner@obsidian.io',
-        collaborators: req.body.collaborators || { [ownerEmail || 'owner@obsidian.io']: 'OWNER' },
-        master_project_files: working_files,
-        project_files: working_files,
-        working_files: working_files,
-        pending_patches: [],
-        masterLastSyncedAt: timestamp,
-        masterLastSyncedBy: ownerEmail || 'owner@obsidian.io',
-        updatedAt: timestamp
-      });
-    }
-
-    if (adminDb) {
-      const projRef = adminDb.collection('projects').doc(projectId);
-      await projRef.set({
-        master_project_files: working_files,
-        project_files: working_files,
-        working_files: working_files,
-        pending_patches: [],
-        masterLastSyncedAt: timestamp,
-        masterLastSyncedBy: ownerEmail || 'owner@obsidian.io',
-        updatedAt: timestamp
-      }, { merge: true });
-    }
-
-    // Sync canonical master baseline exclusively to Owner's Personal Firebase Database (Non-blocking background)
-    const resolvedOwnerEmailMaster = (ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || 'owner@obsidian.io').trim().toLowerCase();
-    syncToOwnerPersonalFirestore({
-      ownerEmail: resolvedOwnerEmailMaster,
-      projectId,
-      projectTitle: inMemoryProjectStore.get(projectId)?.title || projectId,
-      files: working_files,
-      isMasterSync: true,
-      modifiedBy: ownerEmail
-    }).catch(syncErr => console.warn('Notice syncing master files to owner personal Firestore:', syncErr.message));
-
-    res.json({
-      status: 'SUCCESS',
-      message: `Successfully synchronized ${working_files.length} file(s) into Master Project Repository!`,
-      master_project_files: working_files,
-      syncedAt: timestamp
-    });
-  } catch (err) {
-    console.error('Error syncing master project files:', err);
-    res.status(500).json({ error: 'Failed to sync master repository', details: err.message });
-  }
-});
 
 // POST /api/projects/reject-fork: Project Owner declines collaborator working fork changes and restores Master baseline
 router.post('/reject-fork', async (req, res) => {
