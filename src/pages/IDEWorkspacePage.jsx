@@ -2147,6 +2147,64 @@ export const IDEWorkspacePage = () => {
     }
   };
 
+  const handlePushProjectToGitHub = async ({ repoUrl, commitMessage, branch = 'main', filesToPush = null }) => {
+    const targetRepo = (repoUrl || projectData?.githubRepoUrl || liveProjectData?.githubRepoUrl || '').trim();
+    if (!targetRepo) {
+      throw new Error('No GitHub repository URL provided. Please specify a repository like https://github.com/username/repo');
+    }
+
+    const resolvedFiles = filesToPush || files.map(f => {
+      if (activeFile && (f.filePath === activeFile.filePath || f.fileName === activeFile.fileName)) {
+        return { ...f, content: currentContent };
+      }
+      return f;
+    });
+
+    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const pushRes = await fetch('/api/github/push-project', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        projectId,
+        userEmail,
+        accessToken: userProfile?.info?.github?.accessToken || '',
+        repoUrl: targetRepo,
+        commitMessage: commitMessage || `Update from ObsidianIDE AI Agent (${new Date().toLocaleDateString()})`,
+        branch,
+        files: resolvedFiles
+      })
+    });
+
+    const pushData = await pushRes.json();
+    if (!pushRes.ok) {
+      throw new Error(pushData.message || pushData.error || 'Failed to push project to GitHub');
+    }
+
+    setLiveProjectData(prev => ({
+      ...(prev || {}),
+      githubRepoUrl: pushData.repoUrl || targetRepo,
+      githubLastSyncedAt: pushData.syncedAt,
+      githubLastCommitSha: pushData.commitSha
+    }));
+
+    try {
+      const projDocRef = doc(db, 'projects', projectId);
+      await setDoc(projDocRef, {
+        githubRepoUrl: pushData.repoUrl || targetRepo,
+        githubLastSyncedAt: pushData.syncedAt,
+        githubLastCommitSha: pushData.commitSha,
+        updatedAt: pushData.syncedAt
+      }, { merge: true });
+    } catch (fsErr) {
+      console.warn("Save githubRepoUrl notice:", fsErr);
+    }
+
+    return pushData;
+  };
+
   const toggleMenu = (menuName) => {
     setActiveMenu(prev => prev === menuName ? null : menuName);
   };
@@ -3224,9 +3282,13 @@ export const IDEWorkspacePage = () => {
               files={files}
               onApplyModifications={handleApplyAIModifications}
               projectId={projectId}
+              projectTitle={projectData?.title || projectId}
+              projectGithubRepoUrl={projectData?.githubRepoUrl || liveProjectData?.githubRepoUrl || ''}
+              githubInfo={userProfile?.info?.github || null}
               terminalOutput={terminalOutput}
               onRunCommand={handleRunTerminalCommand}
               onRunCode={handleRunTerminalCode}
+              onPushToGitHub={handlePushProjectToGitHub}
               width={rightWidth}
             />
           </>

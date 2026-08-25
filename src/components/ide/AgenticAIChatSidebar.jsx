@@ -9,15 +9,23 @@ export const AgenticAIChatSidebar = ({
   files = [], 
   onApplyModifications,
   projectId = 'default-project',
+  projectTitle = 'Project',
+  projectGithubRepoUrl = '',
+  githubInfo = null,
   terminalOutput = '',
   onRunCommand,
   onRunCode,
+  onPushToGitHub,
   width = 420
 }) => {
   const { currentUser } = useAuth();
   const sessionsStorageKey = `obsidian_ai_sessions_${projectId}`;
   const [includeTerminalLogs, setIncludeTerminalLogs] = useState(true);
   const [dispatchedCmdIds, setDispatchedCmdIds] = useState(new Set());
+  const [pushingGitHubIdx, setPushingGitHubIdx] = useState(null);
+  const [pushedGitHubResults, setPushedGitHubResults] = useState({});
+  const [githubRepoUrlInputs, setGithubRepoUrlInputs] = useState({});
+  const [githubErrorResults, setGithubErrorResults] = useState({});
 
   const createNewSession = (title = 'New Conversation') => ({
     id: 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
@@ -348,6 +356,12 @@ export const AgenticAIChatSidebar = ({
           fileManifest,
           mentionedFiles: mentioned,
           terminalOutput: (includeTerminalLogs && terminalOutput) ? terminalOutput : '',
+          githubInfo,
+          projectInfo: {
+            projectId,
+            title: projectTitle,
+            githubRepoUrl: projectGithubRepoUrl
+          },
           apiKey: userApiKey,
           selectedModel
         })
@@ -361,6 +375,7 @@ export const AgenticAIChatSidebar = ({
           modifications: data.response.fileModifications || [],
           terminalCommands: data.response.terminalCommands || [],
           runScript: data.response.runScript || null,
+          githubAction: data.response.githubAction || null,
           modelUsed: data.response.modelUsed || selectedModel
         };
 
@@ -748,6 +763,145 @@ export const AgenticAIChatSidebar = ({
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {/* Proposed GitHub Upload / Push Action Card */}
+                {msg.githubAction && (
+                  <div className="mt-3 pt-2.5 border-t border-purple-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-[10px] text-purple-400 font-bold">
+                      <span className="flex items-center gap-1">
+                        <span className="material-symbols-outlined text-xs">cloud_upload</span>
+                        <span>GITHUB REPOSITORY UPLOAD</span>
+                      </span>
+                      {githubInfo?.username && (
+                        <span className="text-[9px] text-zinc-400 font-mono">
+                          @{githubInfo.username}
+                        </span>
+                      )}
+                    </div>
+
+                    {(() => {
+                      const isPushing = pushingGitHubIdx === idx;
+                      const pushResult = pushedGitHubResults[idx];
+                      const pushError = githubErrorResults[idx];
+                      const defaultRepo = (msg.githubAction.repoUrl || projectGithubRepoUrl || '').trim();
+                      const currentInput = githubRepoUrlInputs[idx] !== undefined ? githubRepoUrlInputs[idx] : defaultRepo;
+
+                      return (
+                        <div className="bg-[#0D0B14] p-3 rounded-lg border border-purple-500/40 text-[10px] space-y-2.5">
+                          {/* Target Repository Input / Badge */}
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-zinc-400 uppercase font-bold flex justify-between">
+                              <span>Target Repository</span>
+                              <a
+                                href="https://github.com/new"
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-purple-400 hover:underline normal-case text-[9px]"
+                              >
+                                Create New Repo ↗
+                              </a>
+                            </label>
+                            <input
+                              type="text"
+                              value={currentInput}
+                              onChange={(e) => setGithubRepoUrlInputs(prev => ({ ...prev, [idx]: e.target.value }))}
+                              placeholder="https://github.com/username/repository or username/repo"
+                              disabled={isPushing || !!pushResult}
+                              className="w-full bg-[#161220] border border-purple-500/30 p-2 text-[11px] text-white focus:outline-none focus:border-purple-400 font-mono rounded"
+                            />
+                          </div>
+
+                          {/* Commit Message Info */}
+                          <div className="text-[9px] text-zinc-400 font-mono flex items-center justify-between">
+                            <span className="truncate">Commit: {msg.githubAction.commitMessage || `ObsidianIDE: Update ${projectTitle}`}</span>
+                            <span className="text-purple-300 font-bold shrink-0">{files.length} files • main</span>
+                          </div>
+
+                          {/* Success Status Banner */}
+                          {pushResult && (
+                            <div className="p-2 bg-emerald-950/60 border border-emerald-500/60 rounded text-emerald-300 text-[10px] space-y-1">
+                              <div className="flex items-center gap-1.5 font-bold">
+                                <span className="material-symbols-outlined text-xs">check_circle</span>
+                                <span>✓ Successfully Uploaded to GitHub!</span>
+                              </div>
+                              <div className="text-[9px] text-zinc-300 font-mono">
+                                Pushed {pushResult.pushedFilesCount || files.length} files to branch {pushResult.branch || 'main'}.
+                              </div>
+                              {pushResult.repoUrl && (
+                                <a
+                                  href={pushResult.repoUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-[10px] text-cyan-400 hover:underline font-bold mt-1"
+                                >
+                                  <span>Open in GitHub</span>
+                                  <span className="material-symbols-outlined text-xs">open_in_new</span>
+                                </a>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Error Banner */}
+                          {pushError && (
+                            <div className="p-2 bg-rose-950/60 border border-rose-500/60 rounded text-rose-300 text-[10px] space-y-1">
+                              <div className="flex items-center gap-1 font-bold">
+                                <span className="material-symbols-outlined text-xs">error</span>
+                                <span>Upload Failed</span>
+                              </div>
+                              <p className="text-[9px] text-rose-200">{pushError}</p>
+                            </div>
+                          )}
+
+                          {/* Action Trigger Button */}
+                          {!pushResult && (
+                            <button
+                              onClick={async () => {
+                                const targetRepo = (currentInput || defaultRepo).trim();
+                                if (!targetRepo) {
+                                  setGithubErrorResults(prev => ({ ...prev, [idx]: 'Please enter a valid GitHub repository link (e.g. https://github.com/username/repo)' }));
+                                  return;
+                                }
+                                setPushingGitHubIdx(idx);
+                                setGithubErrorResults(prev => ({ ...prev, [idx]: null }));
+                                try {
+                                  if (!onPushToGitHub) {
+                                    throw new Error('GitHub push handler is not connected in workspace.');
+                                  }
+                                  const res = await onPushToGitHub({
+                                    repoUrl: targetRepo,
+                                    commitMessage: msg.githubAction.commitMessage || `Update from ObsidianIDE AI Agent (${new Date().toLocaleDateString()})`,
+                                    branch: msg.githubAction.branch || 'main'
+                                  });
+                                  setPushedGitHubResults(prev => ({ ...prev, [idx]: res }));
+                                } catch (err) {
+                                  console.error("GitHub upload error:", err);
+                                  setGithubErrorResults(prev => ({ ...prev, [idx]: err.message || 'Failed to upload project to GitHub' }));
+                                } finally {
+                                  setPushingGitHubIdx(null);
+                                }
+                              }}
+                              disabled={isPushing}
+                              className={`w-full py-2 px-3 rounded font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow ${
+                                isPushing
+                                  ? 'bg-purple-950 text-purple-300 border border-purple-600 animate-pulse'
+                                  : 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-500 hover:to-indigo-500 border border-purple-400/50 shadow-[0_0_12px_rgba(168,85,247,0.3)]'
+                              }`}
+                            >
+                              <span className="material-symbols-outlined text-xs">
+                                {isPushing ? 'sync' : 'rocket_launch'}
+                              </span>
+                              <span>
+                                {isPushing
+                                  ? 'COMMITTING & UPLOADING TO GITHUB...'
+                                  : `🚀 UPLOAD ALL PROJECT FILES TO GITHUB`}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

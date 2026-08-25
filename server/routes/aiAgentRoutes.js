@@ -200,7 +200,7 @@ router.post('/validate-key', async (req, res) => {
   }
 });
 
-// POST /api/ai-agent/chat: Agentic AI Chatbot with Full Project Codebase & Terminal Context
+// POST /api/ai-agent/chat: Agentic AI Chatbot with Full Project Codebase, Terminal & GitHub Context
 router.post('/chat', verifyToken, async (req, res) => {
   try {
     const { 
@@ -211,7 +211,9 @@ router.post('/chat', verifyToken, async (req, res) => {
       apiKey, 
       selectedModel,
       mentionedFiles = [],
-      terminalOutput = ''
+      terminalOutput = '',
+      githubInfo = null,
+      projectInfo = null
     } = req.body;
 
     if (!prompt || !prompt.trim()) {
@@ -268,16 +270,58 @@ NOTE: The terminal output above contains the latest runtime execution logs, stdo
 `;
     }
 
+    // Build Connected GitHub Account & Repository Context
+    const ghConnected = Boolean(githubInfo && (githubInfo.connected || githubInfo.username));
+    const ghUsername = githubInfo?.username || '';
+    const linkedRepoUrl = (projectInfo?.githubRepoUrl || '').trim();
+
+    // Check if the user mentioned a GitHub repo URL in the prompt
+    const repoMatchInPrompt = prompt.match(/https:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/i)
+      || prompt.match(/\b([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\b/);
+    const discoveredRepoUrl = repoMatchInPrompt
+      ? (repoMatchInPrompt[0].startsWith('http') ? repoMatchInPrompt[0] : `https://github.com/${repoMatchInPrompt[1]}/${repoMatchInPrompt[2]}`)
+      : (linkedRepoUrl || '');
+
+    const githubContextSection = `
+========================================================
+CONNECTED GITHUB & REPOSITORY UPLOAD CONTEXT:
+========================================================
+- Connected GitHub User: ${ghConnected ? `@${ghUsername} (Connected)` : 'No GitHub account connected yet (user can connect in Profile or specify repo)'}
+- Project Linked Repository: ${linkedRepoUrl ? linkedRepoUrl : 'Not yet linked'}
+- Discovered Repository Target: ${discoveredRepoUrl ? discoveredRepoUrl : 'None provided'}
+- GitHub Push Capability: DIRECTLY AVAILABLE. You have the full capability to commit and upload/push project files to GitHub!
+
+GITHUB INSTRUCTIONS:
+If the user asks to push, upload, sync, or commit this project/code to GitHub:
+1. If a repository is already linked (${linkedRepoUrl || 'None'}) OR if the user provides a repository URL or name in their prompt (e.g. ${discoveredRepoUrl || 'https://github.com/username/repo'}):
+   - Confirm you are uploading the project.
+   - Include a "githubAction" object inside the \`\`\`json\`\`\` code fence with:
+\`\`\`json
+{
+  "githubAction": {
+    "type": "push",
+    "repoUrl": "${discoveredRepoUrl || 'https://github.com/username/repo'}",
+    "commitMessage": "ObsidianIDE: Update project files",
+    "branch": "main"
+  }
+}
+\`\`\`
+2. If no repository is linked and no URL was provided by the user:
+   - Ask the user to provide their repository link (e.g. https://github.com/username/repo).
+   - You can also include a "githubAction": { "type": "prompt_repo_url" } in the JSON block so an interactive repository connection input appears immediately in the chat.
+`;
+
     const mentionedSummary = (Array.isArray(mentionedFiles) && mentionedFiles.length > 0)
       ? `\nDEVELOPER FOCUSED MENTIONS:\nThe developer explicitly tagged these files with @: ${mentionedFiles.join(', ')}\n`
       : '';
 
     const systemPrompt = `You are Antigravity-AI, the advanced autonomous agentic coding assistant embedded in ObsidianIDE.
-You have COMPLETE access and vision over the user's entire project workspace, source files, and live terminal execution output.
+You have COMPLETE access and vision over the user's entire project workspace, source files, live terminal execution output, and GitHub integration.
 
 ${codebaseContextSection}
 ${mentionedSummary}
 ${terminalContextSection}
+${githubContextSection}
 ${activeFilePath ? `ACTIVE OPEN BUFFER (${activeFilePath}):\n\`\`\`\n${activeFileContent}\n\`\`\`\n` : ''}
 
 USER INSTRUCTION:
@@ -299,11 +343,18 @@ RESPONSE GUIDELINES:
   "runScript": {
     "filePath": "src/main.py",
     "command": "python src/main.py"
+  },
+  "githubAction": {
+    "type": "push",
+    "repoUrl": "https://github.com/username/repo",
+    "commitMessage": "ObsidianIDE: Update project",
+    "branch": "main"
   }
 }
 \`\`\`
 3. The user has an interactive integrated terminal directly connected. If terminal commands or scripts are recommended to test, build, run, or verify the solution, include them in the "commands" array or "runScript" object.
-4. If no file modifications or commands are needed, just provide your full answer without the modifications JSON block.
+4. If the user asks to push or upload to GitHub, always populate the "githubAction" object.
+5. If no file modifications, commands, or GitHub actions are needed, just provide your full answer without the JSON block.
 `;
 
     // Attempt generation with chosen model and auto-fallback to alternate verified models
@@ -342,6 +393,7 @@ RESPONSE GUIDELINES:
     let fileModifications = [];
     let terminalCommands = [];
     let runScript = null;
+    let githubAction = null;
 
     // Parse any structured modifications JSON code block from response
     const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/g;
@@ -358,8 +410,27 @@ RESPONSE GUIDELINES:
         if (parsed.runScript && typeof parsed.runScript === 'object') {
           runScript = parsed.runScript;
         }
+        if (parsed.githubAction && typeof parsed.githubAction === 'object') {
+          githubAction = parsed.githubAction;
+        }
         displayText = displayText.replace(match[0], '').trim();
       } catch (e) {}
+    }
+
+    // Fallback: If user asked to upload/push to GitHub and a repo exists or was provided in prompt, but AI missed the JSON tag
+    if (!githubAction && /(upload|push|sync|commit).*github|github.*(upload|push|sync|commit)/i.test(prompt)) {
+      if (discoveredRepoUrl) {
+        githubAction = {
+          type: 'push',
+          repoUrl: discoveredRepoUrl,
+          commitMessage: `Update from ObsidianIDE AI Agent (${new Date().toLocaleDateString()})`,
+          branch: 'main'
+        };
+      } else {
+        githubAction = {
+          type: 'prompt_repo_url'
+        };
+      }
     }
 
     res.json({
@@ -369,6 +440,7 @@ RESPONSE GUIDELINES:
         fileModifications,
         terminalCommands,
         runScript,
+        githubAction,
         modelUsed: actualModelUsed,
         filesIndexedCount: Array.isArray(fileManifest) ? fileManifest.length : 0,
         timestamp: new Date().toISOString()
