@@ -406,7 +406,8 @@ router.post('/update-files', async (req, res) => {
       isOwner,
       ownerEmail,
       collaborators,
-      title
+      title,
+      pendingFork
     } = req.body;
 
     if (!projectId) {
@@ -415,8 +416,9 @@ router.post('/update-files', async (req, res) => {
 
     const filesToPersist = (working_files && working_files.length > 0) ? working_files : (project_files || []);
     const timestamp = new Date().toISOString();
-
     const memProj = inMemoryProjectStore.get(projectId) || {};
+    const isPending = pendingFork !== undefined ? Boolean(pendingFork) : (isOwner ? false : Boolean(memProj.pendingFork));
+
     const updatedProj = {
       ...memProj,
       projectId,
@@ -424,7 +426,8 @@ router.post('/update-files', async (req, res) => {
       ownerEmail: ownerEmail || memProj.ownerEmail || (isOwner ? userEmail : 'developer@obsidian.io'),
       collaborators: collaborators || memProj.collaborators || {},
       working_files: filesToPersist,
-      ...(isOwner || master_project_files ? {
+      pendingFork: isPending,
+      ...(isOwner || (!memProj.master_project_files && master_project_files) ? {
         master_project_files: master_project_files || filesToPersist,
         project_files: master_project_files || filesToPersist
       } : {}),
@@ -439,7 +442,8 @@ router.post('/update-files', async (req, res) => {
         const projRef = adminDb.collection('projects').doc(projectId);
         const payload = {
           working_files: filesToPersist,
-          ...(isOwner || master_project_files ? {
+          pendingFork: isPending,
+          ...(isOwner || (!memProj.master_project_files && master_project_files) ? {
             master_project_files: master_project_files || filesToPersist,
             project_files: master_project_files || filesToPersist
           } : {}),

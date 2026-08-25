@@ -30,8 +30,28 @@ export const IDEWorkspacePage = () => {
   const { isDark, toggleTheme } = useTheme();
 
   // Dual Repository State: Master Canonical Repository vs Shared Working Fork
-  const [masterFiles, setMasterFiles] = useState([]);   // Canonical committed state (owner's baseline)
-  const [files, setFiles] = useState([]);               // Live shared workspace files (working copy)
+  const [masterFiles, setMasterFiles] = useState(() => {
+    try {
+      const userEmail = (currentUser?.email || '').trim().toLowerCase();
+      const saved = localStorage.getItem(`obsidian_draft_${projectId}_${userEmail}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [files, setFiles] = useState(() => {
+    try {
+      const userEmail = (currentUser?.email || '').trim().toLowerCase();
+      const saved = localStorage.getItem(`obsidian_draft_${projectId}_${userEmail}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
   const [openFiles, setOpenFiles] = useState([]);
   const [activeFile, setActiveFile] = useState(null);
   const [currentContent, setCurrentContent] = useState('');
@@ -204,9 +224,53 @@ export const IDEWorkspacePage = () => {
           }
 
           // 3. Resolve Live Shared Working Files (Created / uploaded by Owner or Collaborator)
-          const working = (data.working_files && data.working_files.length > 0)
+          let working = (data.working_files && data.working_files.length > 0)
             ? data.working_files
             : master;
+
+          // If working files is smaller than local draft, merge draft files so imported folders never vanish on refresh
+          try {
+            const draftStr = localStorage.getItem(`obsidian_draft_${projectId}_${userEmail}`);
+            if (draftStr) {
+              const draftFiles = JSON.parse(draftStr);
+              if (Array.isArray(draftFiles) && draftFiles.length > working.length) {
+                const workingMap = new Map(working.map(f => [f.filePath || f.fileName, f]));
+                const mergedWithDraft = draftFiles.map(df => workingMap.get(df.filePath || df.fileName) || df);
+                const draftPathSet = new Set(draftFiles.map(df => df.filePath || df.fileName));
+                working.forEach(wf => {
+                  if (!draftPathSet.has(wf.filePath || wf.fileName)) mergedWithDraft.push(wf);
+                });
+                working = mergedWithDraft;
+              }
+            }
+          } catch (e) {}
+
+          // Fallback: If working is completely empty, attempt recovery from subcollection
+          if (!working || working.length === 0) {
+            getDocs(collection(db, 'projects', projectId, 'files')).then(subSnap => {
+              if (!subSnap.empty) {
+                const subFiles = [];
+                subSnap.forEach(d => {
+                  const fd = d.data();
+                  if (fd && (fd.filePath || fd.fileName)) subFiles.push(fd);
+                });
+                if (subFiles.length > 0) {
+                  setFiles(subFiles);
+                  localFilesRef.current = subFiles;
+                  setMasterFiles(subFiles);
+                  localMasterRef.current = subFiles;
+                  if (!activeFileRef.current) {
+                    const first = subFiles[0];
+                    setOpenFiles([first]);
+                    setActiveFile(first);
+                    activeFileRef.current = first;
+                    setCurrentContent(first.content || '');
+                    setSavedContent(first.content || '');
+                  }
+                }
+              }
+            }).catch(() => {});
+          }
 
           // Check if Master baseline is synchronized with working files (Owner saved/merged fork or pendingFork cleared)
           const isMasterSynchronized = data.pendingFork === false ||
@@ -2019,23 +2083,23 @@ export const IDEWorkspacePage = () => {
     try {
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
       const userEmail = (currentUser?.email || 'developer@obsidian.io').trim().toLowerCase();
-      const userName = currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0];
+      const userName = String(currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0] || 'User');
       const timestamp = new Date().toISOString();
 
-      // Prepare new files array with unique fileIds, isBinary, size, and timestamps
+      // Prepare new files array with strictly defined non-null fields
       const newFormattedFiles = incomingFiles.map((f, idx) => {
-        const filePath = (f.filePath || f.fileName || '').replace(/\\/g, '/').replace(/^\/+/, '');
-        const fileName = f.fileName || filePath.split('/').pop() || 'file';
-        const isBinary = f.isBinary !== undefined ? f.isBinary : isBinaryFile(filePath);
+        const filePath = String(f.filePath || f.fileName || '').replace(/\\/g, '/').replace(/^\/+/, '');
+        const fileName = String(f.fileName || filePath.split('/').pop() || 'file');
+        const isBinary = Boolean(f.isBinary !== undefined ? f.isBinary : isBinaryFile(filePath));
         return {
-          fileId: f.fileId || `file_${projectId}_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 6)}`,
-          projectId,
-          filePath,
-          fileName,
+          fileId: String(f.fileId || `file_${projectId}_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 6)}`),
+          projectId: String(projectId),
+          filePath: String(filePath),
+          fileName: String(fileName),
           content: typeof f.content === 'string' ? f.content : '',
-          fileType: f.fileType || (filePath.split('.').pop() || 'plaintext'),
-          isBinary,
-          size: f.size || (typeof f.content === 'string' ? f.content.length : 0),
+          fileType: String(f.fileType || (filePath.split('.').pop() || 'plaintext')),
+          isBinary: Boolean(isBinary),
+          size: Number(f.size || (typeof f.content === 'string' ? f.content.length : 0)),
           createdAt: timestamp,
           updatedAt: timestamp,
           lastModifiedBy: userEmail,
@@ -2051,18 +2115,27 @@ export const IDEWorkspacePage = () => {
         ...newFormattedFiles
       ];
 
-      // Protect with 60-second immunity against snapshot overwrites
+      // Protect local state with grace period
       localMutationTimestampRef.current = Date.now() + 60000;
       localFilesRef.current = mergedFiles;
       setFiles(mergedFiles);
-      setMasterFiles(mergedFiles);
-      localMasterRef.current = mergedFiles;
       setImportModalData(null);
 
       // Save local offline draft in browser localStorage
       try {
         localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(mergedFiles));
       } catch (e) {}
+
+      if (isProjectOwner) {
+        setMasterFiles(mergedFiles);
+        localMasterRef.current = mergedFiles;
+        hasUnsavedForkChangesRef.current = false;
+        isLocalDirtyRef.current = false;
+      } else {
+        // For editor: working files contains the imported folder, master baseline remains canonical
+        hasUnsavedForkChangesRef.current = true;
+        isLocalDirtyRef.current = true;
+      }
 
       if (newFormattedFiles.length > 0) {
         handleSelectFile(newFormattedFiles[0]);
@@ -2072,12 +2145,17 @@ export const IDEWorkspacePage = () => {
       try {
         const payload = {
           working_files: mergedFiles,
-          master_project_files: mergedFiles,
-          project_files: mergedFiles,
-          masterLastSyncedAt: timestamp,
-          masterLastSyncedBy: userEmail,
-          lastWorkingModifiedBy: userEmail,
-          lastWorkingModifiedByName: userName,
+          ...(isProjectOwner ? {
+            master_project_files: mergedFiles,
+            project_files: mergedFiles,
+            masterLastSyncedAt: timestamp,
+            masterLastSyncedBy: userEmail,
+            pendingFork: false
+          } : {
+            lastWorkingModifiedBy: userEmail,
+            lastWorkingModifiedByName: userName,
+            pendingFork: true
+          }),
           updatedAt: timestamp
         };
         await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
@@ -2091,14 +2169,14 @@ export const IDEWorkspacePage = () => {
           if (f && (f.fileId || f.filePath)) {
             const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
             return setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
-              fileId: fileDocId,
-              projectId,
-              filePath: f.filePath,
-              fileName: f.fileName,
-              content: f.content || '',
-              fileType: f.fileType || 'plaintext',
-              isBinary: f.isBinary || false,
-              size: f.size || 0,
+              fileId: String(fileDocId),
+              projectId: String(projectId),
+              filePath: String(f.filePath),
+              fileName: String(f.fileName),
+              content: String(f.content || ''),
+              fileType: String(f.fileType || 'plaintext'),
+              isBinary: Boolean(f.isBinary),
+              size: Number(f.size || 0),
               updatedAt: timestamp,
               lastModifiedBy: userEmail
             }, { merge: true });
@@ -2121,49 +2199,52 @@ export const IDEWorkspacePage = () => {
           body: JSON.stringify({
             projectId,
             working_files: mergedFiles,
-            master_project_files: mergedFiles,
-            project_files: mergedFiles,
+            master_project_files: isProjectOwner ? mergedFiles : masterFiles,
+            project_files: isProjectOwner ? mergedFiles : masterFiles,
             userEmail,
-            ownerEmail: projectData?.ownerEmail || userEmail,
+            ownerEmail: projectData?.ownerEmail || (isProjectOwner ? userEmail : ''),
             collaborators: projectData?.collaborators,
             title: projectData?.title || projectId,
-            isOwner: true
+            isOwner: isProjectOwner,
+            pendingFork: !isProjectOwner
           })
         });
       } catch (apiErr) {
         console.warn('API update-files notice:', apiErr);
       }
 
-      // 4. Persist to Personal Firebase Database
-      syncProjectToPersonalFirestore({
-        projectId,
-        title: projectData?.title || projectId,
-        languageEnv: projectData?.languageEnv || 'PYTHON_3.11',
-        ownerEmail: projectData?.ownerEmail || userEmail,
-        master_project_files: mergedFiles,
-        project_files: mergedFiles,
-        working_files: mergedFiles,
-        collaborators: projectData?.collaborators || { [userEmail]: 'OWNER' }
-      }, userProfile, userEmail).catch(() => {});
+      // 4. Persist to Personal Firebase Database if Project Owner
+      if (isProjectOwner) {
+        syncProjectToPersonalFirestore({
+          projectId,
+          title: projectData?.title || projectId,
+          languageEnv: projectData?.languageEnv || 'PYTHON_3.11',
+          ownerEmail: projectData?.ownerEmail || userEmail,
+          master_project_files: mergedFiles,
+          project_files: mergedFiles,
+          working_files: mergedFiles,
+          collaborators: projectData?.collaborators || { [userEmail]: 'OWNER' }
+        }, userProfile, userEmail).catch(() => {});
+      }
 
       // 5. Broadcast over WebSocket so all connected peers update immediately
       if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
         collaborationWsRef.current.send(JSON.stringify({
-          type: 'FILES_UPDATED',
+          type: isProjectOwner ? 'FILES_UPDATED' : 'FORK_REQUESTED',
           projectId,
           files: mergedFiles,
-          master_project_files: mergedFiles,
+          master_project_files: isProjectOwner ? mergedFiles : masterFiles,
           working_files: mergedFiles,
           requestedBy: userEmail,
           user: {
             email: userEmail,
             displayName: userName,
-            role: 'OWNER'
+            role: isProjectOwner ? 'OWNER' : 'EDITOR'
           }
         }));
       }
 
-      setSaveSyncSuccessMsg(`⚡ Successfully imported ${newFormattedFiles.length} file(s) from folder!`);
+      setSaveSyncSuccessMsg(`⚡ Successfully imported ${newFormattedFiles.length} file(s) into ${isProjectOwner ? 'Master Repository' : 'Working Copy'}!`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error confirming import:', err);
