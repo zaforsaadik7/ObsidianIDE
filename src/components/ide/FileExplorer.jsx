@@ -38,7 +38,7 @@ export const FileExplorer = ({
   width = 256
 }) => {
   // Context Menu State
-  const [activeMenu, setActiveMenu] = useState(null); // { type: 'file' | 'folder' | 'root', id: string, fileObj?: object, folderPath?: string }
+  const [activeMenu, setActiveMenu] = useState(null); // { type: 'file' | 'folder', id: string, fileObj?: object, fileName?: string, folderNode?: object, position: { top: number, left: number } }
   const [exportSubmenuOpen, setExportSubmenuOpen] = useState(false);
   const [importSubmenuOpen, setImportSubmenuOpen] = useState(false);
 
@@ -56,7 +56,40 @@ export const FileExplorer = ({
   const [modalState, setModalState] = useState(null);
   const [modalInputValue, setModalInputValue] = useState('');
 
-  // Close menus on outside click
+  // ── Smart Context Menu Positioning (Prevents Off-Screen Left/Right/Bottom Clipping) ──
+  const getSmartMenuPosition = (targetElement, e = null, menuWidth = 224, menuHeight = 290) => {
+    let top = 100;
+    let left = 8;
+
+    if (e && e.clientX !== undefined) {
+      top = e.clientY + 2;
+      left = e.clientX + 2;
+    } else if (targetElement) {
+      const rect = targetElement.getBoundingClientRect();
+      top = rect.bottom + 4;
+      left = rect.right - menuWidth;
+    }
+
+    // Horizontal Boundary Protection (Never clip off left or right of screen)
+    if (left < 8) left = 8;
+    if (left + menuWidth > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - menuWidth - 8);
+    }
+
+    // Vertical Boundary Protection (Flip upwards if near bottom)
+    if (top + menuHeight > window.innerHeight - 12) {
+      if (targetElement && !e) {
+        const rect = targetElement.getBoundingClientRect();
+        top = Math.max(10, rect.top - menuHeight - 4);
+      } else {
+        top = Math.max(10, top - menuHeight - 8);
+      }
+    }
+
+    return { top, left };
+  };
+
+  // Close menus on outside click or scrolling
   useEffect(() => {
     const handleGlobalClick = (e) => {
       if (!e.target.closest('.explorer-menu-trigger') && !e.target.closest('.explorer-dropdown-menu')) {
@@ -65,8 +98,21 @@ export const FileExplorer = ({
         setImportSubmenuOpen(false);
       }
     };
+    const handleGlobalScroll = (e) => {
+      if (e.target.closest && e.target.closest('.explorer-dropdown-menu')) return;
+      setActiveMenu(null);
+      setExportSubmenuOpen(false);
+      setImportSubmenuOpen(false);
+    };
+
     window.addEventListener('click', handleGlobalClick);
-    return () => window.removeEventListener('click', handleGlobalClick);
+    window.addEventListener('contextmenu', handleGlobalClick);
+    window.addEventListener('scroll', handleGlobalScroll, true);
+    return () => {
+      window.removeEventListener('click', handleGlobalClick);
+      window.removeEventListener('contextmenu', handleGlobalClick);
+      window.removeEventListener('scroll', handleGlobalScroll, true);
+    };
   }, []);
 
   const tree = parseFlatArrayToTreeNodes(files);
@@ -295,6 +341,19 @@ export const FileExplorer = ({
             style={{ paddingLeft: `${depth * 10}px` }}
             draggable={true}
             onDragStart={(e) => handleDragStart(e, folderNode, 'folder')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const pos = getSmartMenuPosition(null, e, 224, 300);
+              setActiveMenu({
+                type: 'folder',
+                id: folderNode.folderPath,
+                folderNode,
+                position: pos
+              });
+              setExportSubmenuOpen(false);
+              setImportSubmenuOpen(false);
+            }}
             className={`group relative flex items-center justify-between py-1 px-1.5 rounded cursor-pointer transition-all text-xs select-none ${
               isCutStaged
                 ? 'opacity-40 border border-dashed border-zinc-500'
@@ -318,12 +377,17 @@ export const FileExplorer = ({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                setActiveMenu(prev => prev?.id === folderNode.folderPath ? null : {
-                  type: 'folder',
-                  id: folderNode.folderPath,
-                  folderPath: folderNode.folderPath,
-                  folderName: folderNode.name
-                });
+                if (activeMenu?.type === 'folder' && activeMenu.id === folderNode.folderPath) {
+                  setActiveMenu(null);
+                } else {
+                  const pos = getSmartMenuPosition(e.currentTarget, null, 224, 300);
+                  setActiveMenu({
+                    type: 'folder',
+                    id: folderNode.folderPath,
+                    folderNode,
+                    position: pos
+                  });
+                }
                 setExportSubmenuOpen(false);
                 setImportSubmenuOpen(false);
               }}
@@ -332,99 +396,6 @@ export const FileExplorer = ({
             >
               <span className="material-symbols-outlined text-sm">more_vert</span>
             </button>
-
-            {/* Folder Context Menu Dropdown */}
-            {activeMenu?.type === 'folder' && activeMenu.id === folderNode.folderPath && (
-              <div 
-                onClick={(e) => e.stopPropagation()}
-                className="explorer-dropdown-menu absolute right-2 top-6 w-56 bg-[#12131A]/95 backdrop-blur-xl border border-white/[0.1] rounded-lg shadow-2xl py-1 z-[250] text-[11px] divide-y divide-white/5 animate-fade-in font-sans"
-              >
-                <div className="py-1">
-                  <button
-                    onClick={() => openModal({ action: 'new_file', targetFolder: folderNode.folderPath })}
-                    className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer font-medium"
-                  >
-                    <span className="material-symbols-outlined text-sm text-cyan-400">note_add</span>
-                    <span>New File in Folder...</span>
-                  </button>
-                  <button
-                    onClick={() => openModal({ action: 'new_folder', targetFolder: folderNode.folderPath })}
-                    className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer font-medium"
-                  >
-                    <span className="material-symbols-outlined text-sm text-cyan-400">create_new_folder</span>
-                    <span>New Subfolder...</span>
-                  </button>
-                </div>
-
-                {/* Import Submenu */}
-                <div className="py-1">
-                  <button
-                    onClick={() => onTriggerImport && onTriggerImport('files', folderNode.folderPath)}
-                    className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-sm text-cyan-400">file_upload</span>
-                    <span>Import Files to Folder...</span>
-                  </button>
-                  <button
-                    onClick={() => onTriggerImport && onTriggerImport('folder', folderNode.folderPath)}
-                    className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-sm text-emerald-400">drive_folder_upload</span>
-                    <span>Import Subfolder Tree...</span>
-                  </button>
-                  <button
-                    onClick={() => onTriggerImport && onTriggerImport('zip', folderNode.folderPath)}
-                    className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-sm text-amber-400">folder_zip</span>
-                    <span>Import & Unzip into Folder...</span>
-                  </button>
-                </div>
-
-                <div className="py-1">
-                  {isPasteTarget && (
-                    <button
-                      onClick={() => handlePaste(folderNode.folderPath)}
-                      className="w-full text-left px-3 py-1.5 text-emerald-300 hover:bg-emerald-500/20 flex items-center gap-2 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-sm text-emerald-400">content_paste</span>
-                      <span>Paste into Folder</span>
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleCut(folderNode.folderPath, 'folder')}
-                    className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-sm text-zinc-400">content_cut</span>
-                    <span>Cut Folder</span>
-                  </button>
-                  <button
-                    onClick={() => handleCopy(folderNode.folderPath, 'folder')}
-                    className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-sm text-zinc-400">content_copy</span>
-                    <span>Copy Folder</span>
-                  </button>
-                </div>
-
-                <div className="py-1">
-                  <button
-                    onClick={() => openModal({ action: 'rename_folder', folderPath: folderNode.folderPath, defaultValue: folderNode.name })}
-                    className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-sm text-amber-400">edit</span>
-                    <span>Rename Folder</span>
-                  </button>
-                  <button
-                    onClick={() => openModal({ action: 'delete_folder', folderPath: folderNode.folderPath, folderName: folderNode.name })}
-                    className="w-full text-left px-3 py-1.5 text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-sm text-rose-400">delete</span>
-                    <span>Delete Folder</span>
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -446,6 +417,21 @@ export const FileExplorer = ({
                   draggable={true}
                   onDragStart={(e) => handleDragStart(e, item.fileObj, 'file')}
                   onClick={() => onSelectFile(item.fileObj)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onSelectFile(item.fileObj);
+                    const pos = getSmartMenuPosition(null, e, 210, 300);
+                    setActiveMenu({
+                      type: 'file',
+                      id: item.fileObj.fileId || item.fileObj.filePath,
+                      fileObj: item.fileObj,
+                      fileName: item.name,
+                      position: pos
+                    });
+                    setExportSubmenuOpen(false);
+                    setImportSubmenuOpen(false);
+                  }}
                   style={{ paddingLeft: isRoot ? '8px' : `${(depth + 1) * 10}px` }}
                   className={`group relative flex items-center justify-between py-1 px-1.5 rounded cursor-pointer transition-colors text-[11px] select-none ${
                     isCutStaged
@@ -499,12 +485,18 @@ export const FileExplorer = ({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      setActiveMenu(prev => prev?.id === (item.fileObj.fileId || item.fileObj.filePath) ? null : {
-                        type: 'file',
-                        id: item.fileObj.fileId || item.fileObj.filePath,
-                        fileObj: item.fileObj,
-                        fileName: item.name
-                      });
+                      if (activeMenu?.type === 'file' && activeMenu.id === (item.fileObj.fileId || item.fileObj.filePath)) {
+                        setActiveMenu(null);
+                      } else {
+                        const pos = getSmartMenuPosition(e.currentTarget, null, 210, 300);
+                        setActiveMenu({
+                          type: 'file',
+                          id: item.fileObj.fileId || item.fileObj.filePath,
+                          fileObj: item.fileObj,
+                          fileName: item.name,
+                          position: pos
+                        });
+                      }
                       setExportSubmenuOpen(false);
                       setImportSubmenuOpen(false);
                     }}
@@ -513,109 +505,6 @@ export const FileExplorer = ({
                   >
                     <span className="material-symbols-outlined text-sm">more_vert</span>
                   </button>
-
-                  {/* File Context Menu Dropdown */}
-                  {activeMenu?.type === 'file' && activeMenu.id === (item.fileObj.fileId || item.fileObj.filePath) && (
-                    <div 
-                      onClick={(e) => e.stopPropagation()}
-                      className="explorer-dropdown-menu absolute right-2 top-6 w-52 bg-[#12131A]/95 backdrop-blur-xl border border-white/[0.1] rounded-lg shadow-2xl py-1 z-[250] text-[11px] divide-y divide-white/5 animate-fade-in font-sans"
-                    >
-                      {/* Export Submenu */}
-                      <div className="py-1 relative">
-                        <button
-                          onClick={() => setExportSubmenuOpen(prev => !prev)}
-                          className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex justify-between items-center cursor-pointer font-medium"
-                        >
-                          <span className="flex items-center gap-2">
-                            <span className="material-symbols-outlined text-sm text-cyan-400">download</span>
-                            <span>Export File</span>
-                          </span>
-                          <span className="material-symbols-outlined text-xs">chevron_right</span>
-                        </button>
-
-                        {exportSubmenuOpen && (
-                          <div className="absolute left-full top-0 ml-1 w-44 bg-[#161722]/98 backdrop-blur-2xl border border-white/[0.12] rounded-lg shadow-2xl py-1 z-[300] divide-y divide-white/5 animate-fade-in">
-                            <button
-                              onClick={() => { exportSingleFile(item.fileObj, 'original'); setActiveMenu(null); }}
-                              className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-sm text-cyan-400">save</span>
-                              <span>Original (.{item.name.split('.').pop()})</span>
-                            </button>
-                            <button
-                              onClick={() => { exportSingleFile(item.fileObj, 'txt'); setActiveMenu(null); }}
-                              className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-sm text-yellow-400">description</span>
-                              <span>Plain Text (.txt)</span>
-                            </button>
-                            <button
-                              onClick={() => { exportSingleFile(item.fileObj, 'md'); setActiveMenu(null); }}
-                              className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-sm text-blue-400">article</span>
-                              <span>Markdown (.md)</span>
-                            </button>
-                            <button
-                              onClick={() => { exportSingleFile(item.fileObj, 'doc'); setActiveMenu(null); }}
-                              className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-sm text-blue-500">wysiwyg</span>
-                              <span>Word Document (.doc)</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="py-1">
-                        <button
-                          onClick={() => handleCut(item.fileObj, 'file')}
-                          className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-sm text-zinc-400">content_cut</span>
-                          <span>Cut</span>
-                        </button>
-                        <button
-                          onClick={() => handleCopy(item.fileObj, 'file')}
-                          className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-sm text-zinc-400">content_copy</span>
-                          <span>Copy</span>
-                        </button>
-                        <button
-                          onClick={() => copyToClipboard(item.fileObj.filePath, 'Relative Path')}
-                          className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-sm text-zinc-400">link</span>
-                          <span>Copy Relative Path</span>
-                        </button>
-                        <button
-                          onClick={() => copyToClipboard(`${projectTitle}/${item.fileObj.filePath}`, 'Full Path')}
-                          className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-sm text-zinc-400">share</span>
-                          <span>Copy Full Path</span>
-                        </button>
-                      </div>
-
-                      <div className="py-1">
-                        <button
-                          onClick={() => openModal({ action: 'rename_file', fileObj: item.fileObj, defaultValue: item.name })}
-                          className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-sm text-amber-400">edit</span>
-                          <span>Rename File</span>
-                        </button>
-                        <button
-                          onClick={() => openModal({ action: 'delete_file', fileObj: item.fileObj, fileName: item.name })}
-                          className="w-full text-left px-3 py-1.5 text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 flex items-center gap-2 cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-sm text-rose-400">delete</span>
-                          <span>Delete File</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -744,6 +633,221 @@ export const FileExplorer = ({
           </div>
         )}
       </div>
+
+      {/* Universal Fixed-Position Context Menu (Never clipped or pushed off-screen) */}
+      {activeMenu && activeMenu.position && (
+        <div 
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            top: `${activeMenu.position.top}px`,
+            left: `${activeMenu.position.left}px`,
+            zIndex: 999
+          }}
+          className="explorer-dropdown-menu w-56 bg-[#12131A] border border-white/10 rounded-lg shadow-2xl py-1 text-[11px] divide-y divide-white/5 animate-fade-in font-sans"
+        >
+          {activeMenu.type === 'folder' && activeMenu.folderNode && (
+            <>
+              <div className="py-1">
+                <button
+                  onClick={() => openModal({ action: 'new_file', targetFolder: activeMenu.folderNode.folderPath })}
+                  className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer font-medium"
+                >
+                  <span className="material-symbols-outlined text-sm text-cyan-400">note_add</span>
+                  <span>New File in Folder...</span>
+                </button>
+                <button
+                  onClick={() => openModal({ action: 'new_folder', targetFolder: activeMenu.folderNode.folderPath })}
+                  className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer font-medium"
+                >
+                  <span className="material-symbols-outlined text-sm text-cyan-400">create_new_folder</span>
+                  <span>New Subfolder...</span>
+                </button>
+              </div>
+
+              {/* Import Submenu */}
+              <div className="py-1">
+                <button
+                  onClick={() => {
+                    if (onTriggerImport) onTriggerImport('files', activeMenu.folderNode.folderPath);
+                    setActiveMenu(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-cyan-400">file_upload</span>
+                  <span>Import Files to Folder...</span>
+                </button>
+                <button
+                  onClick={() => {
+                    if (onTriggerImport) onTriggerImport('folder', activeMenu.folderNode.folderPath);
+                    setActiveMenu(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-emerald-400">drive_folder_upload</span>
+                  <span>Import Subfolder Tree...</span>
+                </button>
+                <button
+                  onClick={() => {
+                    if (onTriggerImport) onTriggerImport('zip', activeMenu.folderNode.folderPath);
+                    setActiveMenu(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-amber-400">folder_zip</span>
+                  <span>Import & Unzip into Folder...</span>
+                </button>
+              </div>
+
+              <div className="py-1">
+                {clipboard && (clipboard.type === 'file' || (clipboard.type === 'folder' && clipboard.folderPath !== activeMenu.folderNode.folderPath)) && (
+                  <button
+                    onClick={() => handlePaste(activeMenu.folderNode.folderPath)}
+                    className="w-full text-left px-3 py-1.5 text-emerald-300 hover:bg-emerald-500/20 flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-sm text-emerald-400">content_paste</span>
+                    <span>Paste into Folder</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => handleCut(activeMenu.folderNode.folderPath, 'folder')}
+                  className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-zinc-400">content_cut</span>
+                  <span>Cut Folder</span>
+                </button>
+                <button
+                  onClick={() => handleCopy(activeMenu.folderNode.folderPath, 'folder')}
+                  className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-zinc-400">content_copy</span>
+                  <span>Copy Folder</span>
+                </button>
+              </div>
+
+              <div className="py-1">
+                <button
+                  onClick={() => openModal({ action: 'rename_folder', folderPath: activeMenu.folderNode.folderPath, defaultValue: activeMenu.folderNode.name })}
+                  className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-amber-400">edit</span>
+                  <span>Rename Folder</span>
+                </button>
+                <button
+                  onClick={() => openModal({ action: 'delete_folder', folderPath: activeMenu.folderNode.folderPath, folderName: activeMenu.folderNode.name })}
+                  className="w-full text-left px-3 py-1.5 text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-rose-400">delete</span>
+                  <span>Delete Folder</span>
+                </button>
+              </div>
+            </>
+          )}
+
+          {activeMenu.type === 'file' && activeMenu.fileObj && (
+            <>
+              {/* Export Submenu */}
+              <div className="py-1 relative">
+                <button
+                  onClick={() => setExportSubmenuOpen(prev => !prev)}
+                  className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex justify-between items-center cursor-pointer font-medium"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-sm text-cyan-400">download</span>
+                    <span>Export File</span>
+                  </span>
+                  <span className="material-symbols-outlined text-xs">{exportSubmenuOpen ? 'expand_less' : 'chevron_right'}</span>
+                </button>
+
+                {exportSubmenuOpen && (
+                  <div className={`absolute top-0 w-44 bg-[#161722] border border-white/10 rounded-lg shadow-2xl py-1 z-[1000] divide-y divide-white/5 animate-fade-in ${
+                    (activeMenu.position.left + 224 + 176 > window.innerWidth)
+                      ? 'right-full mr-1'
+                      : 'left-full ml-1'
+                  }`}>
+                    <button
+                      onClick={() => { exportSingleFile(activeMenu.fileObj, 'original'); setActiveMenu(null); }}
+                      className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-sm text-cyan-400">save</span>
+                      <span>Original (.{activeMenu.fileName?.split('.').pop() || 'txt'})</span>
+                    </button>
+                    <button
+                      onClick={() => { exportSingleFile(activeMenu.fileObj, 'txt'); setActiveMenu(null); }}
+                      className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-sm text-yellow-400">description</span>
+                      <span>Plain Text (.txt)</span>
+                    </button>
+                    <button
+                      onClick={() => { exportSingleFile(activeMenu.fileObj, 'md'); setActiveMenu(null); }}
+                      className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-sm text-blue-400">article</span>
+                      <span>Markdown (.md)</span>
+                    </button>
+                    <button
+                      onClick={() => { exportSingleFile(activeMenu.fileObj, 'doc'); setActiveMenu(null); }}
+                      className="w-full text-left px-3 py-1.5 text-zinc-200 hover:bg-cyan-500/20 hover:text-cyan-300 flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-sm text-blue-500">wysiwyg</span>
+                      <span>Word Document (.doc)</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="py-1">
+                <button
+                  onClick={() => handleCut(activeMenu.fileObj, 'file')}
+                  className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-zinc-400">content_cut</span>
+                  <span>Cut</span>
+                </button>
+                <button
+                  onClick={() => handleCopy(activeMenu.fileObj, 'file')}
+                  className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-zinc-400">content_copy</span>
+                  <span>Copy</span>
+                </button>
+                <button
+                  onClick={() => copyToClipboard(activeMenu.fileObj.filePath, 'Relative Path')}
+                  className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-zinc-400">link</span>
+                  <span>Copy Relative Path</span>
+                </button>
+                <button
+                  onClick={() => copyToClipboard(`${projectTitle}/${activeMenu.fileObj.filePath}`, 'Full Path')}
+                  className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-zinc-400">share</span>
+                  <span>Copy Full Path</span>
+                </button>
+              </div>
+
+              <div className="py-1">
+                <button
+                  onClick={() => openModal({ action: 'rename_file', fileObj: activeMenu.fileObj, defaultValue: activeMenu.fileName })}
+                  className="w-full text-left px-3 py-1.5 text-zinc-300 hover:bg-white/5 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-amber-400">edit</span>
+                  <span>Rename File</span>
+                </button>
+                <button
+                  onClick={() => openModal({ action: 'delete_file', fileObj: activeMenu.fileObj, fileName: activeMenu.fileName })}
+                  className="w-full text-left px-3 py-1.5 text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm text-rose-400">delete</span>
+                  <span>Delete File</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Action Dialog Modal */}
       {modalState && (

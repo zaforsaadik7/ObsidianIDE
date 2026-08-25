@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -63,6 +63,9 @@ export const IDEWorkspacePage = () => {
   const [liveProjectData, setLiveProjectData] = useState(null);
   const [isUnauthorized, setIsUnauthorized] = useState(false);
   const [unauthorizedMsg, setUnauthorizedMsg] = useState('');
+  // Ref that always holds the canonical project ownerEmail â€” updated from Firestore and REST
+  // Used in effects to avoid stale closures without causing re-runs
+  const projectOwnerEmailRef = useRef('');
 
   // Agentic AI State
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
@@ -138,13 +141,13 @@ export const IDEWorkspacePage = () => {
 
   const [saveSyncSuccessMsg, setSaveSyncSuccessMsg] = useState('');
 
-  // ── Helper to detect binary file types (PDF, Images, Archives) ─────────────
+  // â”€â”€ Helper to detect binary file types (PDF, Images, Archives) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const isBinaryFile = (filePath = '') => {
     const ext = (filePath.split('.').pop() || '').toLowerCase();
     return ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'zip', 'tar', 'gz', 'exe', 'bin', 'mp4', 'webm'].includes(ext);
   };
 
-  // ── Active File & Mutation Guard References ───────────────────────────────
+  // â”€â”€ Active File & Mutation Guard References â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const activeFileRef = useRef(null);
   activeFileRef.current = activeFile;
   const isLocalDirtyRef = useRef(false);
@@ -156,7 +159,7 @@ export const IDEWorkspacePage = () => {
   const localMasterRef = useRef([]);
   localMasterRef.current = masterFiles;
 
-  // ── Real-Time Dual Repository Snapshot Listener (Master & Shared Working Fork) ──
+  // â”€â”€ Real-Time Dual Repository Snapshot Listener (Master & Shared Working Fork) â”€â”€
   useEffect(() => {
     if (!projectId) return;
     const userEmail = (currentUser?.email || '').trim().toLowerCase();
@@ -169,7 +172,10 @@ export const IDEWorkspacePage = () => {
           setLiveProjectData(data);
 
           // 1. Resolve User Role (Project Owner email has absolute authority)
+          // Always update the ref so effects that run concurrently can read the latest value
           const docOwnerEmail = (data.ownerEmail || '').trim().toLowerCase();
+          if (docOwnerEmail) projectOwnerEmailRef.current = docOwnerEmail;
+
           if (docOwnerEmail && docOwnerEmail === userEmail) {
             setServerUserRole('OWNER');
           } else if (data.collaborators && userEmail) {
@@ -256,7 +262,7 @@ export const IDEWorkspacePage = () => {
     }
   }, [projectId, currentUser]);
 
-  // ── Periodic Server REST Synchronization (Authoritative Polling Fallback) ──
+  // â”€â”€ Periodic Server REST Synchronization (Authoritative Polling Fallback) â”€â”€
   useEffect(() => {
     if (!projectId) return;
 
@@ -272,8 +278,10 @@ export const IDEWorkspacePage = () => {
           const proj = resData.project;
           if (proj) {
             setLiveProjectData(proj);
-            // 1. Resolve User Role (Project Owner email has absolute authority)
+            // 1. Resolve User Role â€” always update ownerEmail ref too
             const serverOwnerEmail = (proj.ownerEmail || '').trim().toLowerCase();
+            if (serverOwnerEmail) projectOwnerEmailRef.current = serverOwnerEmail;
+
             if (serverOwnerEmail && serverOwnerEmail === userEmail) {
               setServerUserRole('OWNER');
             } else if (resData.userRole) {
@@ -345,17 +353,28 @@ export const IDEWorkspacePage = () => {
     return () => clearInterval(intervalId);
   }, [projectId, currentUser, currentContent, savedContent]);
 
-  // ── Real-Time Active Collaborators & Cursor Coordination Protocol ──────────
+  // â”€â”€ Real-Time Active Collaborators & Cursor Coordination Protocol â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     if (!projectId || !currentUser?.email) return;
 
     const userEmail = currentUser.email.toLowerCase().trim();
+
+    // Compute authoritative role directly â€” never use the activeUserRole state value here
+    // because it may still be the initial null/EDITOR at mount time, causing wrong role broadcast.
+    // Instead, derive from the ownerEmail ref (set by Firestore snapshot/REST) and currentUser.
+    const getAuthoritativeRole = () => {
+      const ownerEmail = projectOwnerEmailRef.current;
+      if (ownerEmail && ownerEmail === userEmail) return 'OWNER';
+      // Fall through to whatever serverUserRole resolved to, but never to 'EDITOR' for owner
+      return activeUserRole || 'EDITOR';
+    };
+
     const userPayload = {
       email: userEmail,
       displayName: currentUser.displayName || userProfile?.info?.fullName || userEmail.split('@')[0],
       username: userProfile?.info?.username || `@${userEmail.split('@')[0]}`,
       avatarUrl: currentUser.photoURL || userProfile?.info?.avatarUrl || '',
-      role: activeUserRole || 'EDITOR'
+      role: getAuthoritativeRole()
     };
 
     // 1. Establish WebSocket for low-latency cursor coordination
@@ -416,7 +435,7 @@ export const IDEWorkspacePage = () => {
               }
             }
             if (msg.type === 'FORK_ACCEPTED') {
-              setSaveSyncSuccessMsg('🎉 Changes merged & synchronized to Master Repository!');
+              setSaveSyncSuccessMsg('ðŸŽ‰ Changes merged & synchronized to Master Repository!');
               setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
             }
           } else if (msg.type === 'FORK_REQUESTED') {
@@ -424,7 +443,7 @@ export const IDEWorkspacePage = () => {
               setFiles(msg.working_files);
               localFilesRef.current = msg.working_files;
             }
-            setSaveSyncSuccessMsg(`🔔 New fork request submitted by ${msg.requestedBy || 'collaborator'}!`);
+            setSaveSyncSuccessMsg(`ðŸ”” New fork request submitted by ${msg.requestedBy || 'collaborator'}!`);
             setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
           } else if (msg.type === 'FORK_REJECTED') {
             if (msg.master_project_files && msg.master_project_files.length > 0) {
@@ -435,7 +454,7 @@ export const IDEWorkspacePage = () => {
               hasUnsavedForkChangesRef.current = false;
               isLocalDirtyRef.current = false;
             }
-            setSaveSyncSuccessMsg('❌ Notice: Collaborator fork request was rejected by the Project Owner. Workspace restored to Master baseline.');
+            setSaveSyncSuccessMsg('âŒ Notice: Collaborator fork request was rejected by the Project Owner. Workspace restored to Master baseline.');
             setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
           }
         } catch (e) {}
@@ -486,7 +505,13 @@ export const IDEWorkspacePage = () => {
         } catch (e) { }
       }
     };
-  }, [projectId, currentUser?.email, activeFile?.filePath, activeUserRole]);
+    // IMPORTANT: activeUserRole is intentionally excluded from deps.
+    // Including it caused the WebSocket to reconnect every time the role resolved from nullâ†’OWNER,
+    // which broadcast EDITOR (the intermediate state) to all peers before OWNER was confirmed.
+    // The role is computed via getAuthoritativeRole() using projectOwnerEmailRef (a ref, not state)
+    // so it always reads the latest value without triggering a reconnect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, currentUser?.email, activeFile?.filePath]);
 
   // Handler for local cursor position update from Monaco editor
   const handleLocalCursorChange = (cursorPos) => {
@@ -501,7 +526,7 @@ export const IDEWorkspacePage = () => {
           displayName: currentUser?.displayName || userProfile?.info?.fullName || currentUser?.email?.split('@')[0],
           username: userProfile?.info?.username || `@${currentUser?.email?.split('@')[0]}`,
           avatarUrl: currentUser?.photoURL || userProfile?.info?.avatarUrl || '',
-          role: activeUserRole || 'EDITOR'
+          role: (projectOwnerEmailRef.current && projectOwnerEmailRef.current === (currentUser?.email || '').toLowerCase().trim()) ? 'OWNER' : (activeUserRole || 'EDITOR')
         },
         activeFilePath: currentPath,
         cursor: cursorPos
@@ -509,7 +534,7 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // ── Debounced Live Working Code Synchronization (Broadcasts live code before merge) ──
+  // â”€â”€ Debounced Live Working Code Synchronization (Broadcasts live code before merge) â”€â”€
   useEffect(() => {
     if (!activeFile || isBinaryFile(activeFile.filePath) || currentContent === savedContent) return;
 
@@ -555,7 +580,7 @@ export const IDEWorkspacePage = () => {
     return () => clearTimeout(timer);
   }, [currentContent, activeFile, savedContent, projectId, currentUser?.email, isProjectOwner, activeUserRole]);
 
-  // ── GitHub Diff Calculation (Working Copy vs Canonical Master Repository) ──
+  // â”€â”€ GitHub Diff Calculation (Working Copy vs Canonical Master Repository) â”€â”€
   const fileStatusMap = useMemo(() => {
     const status = {};
     if (!masterFiles || masterFiles.length === 0) {
@@ -695,7 +720,7 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // ── 1. Save to Editor's Local Storage & Personal DB (No Fork Push to Owner) ──
+  // â”€â”€ 1. Save to Editor's Local Storage & Personal DB (No Fork Push to Owner) â”€â”€
   const handleSaveToLocalStorage = async () => {
     const targetFile = activeFileRef.current || activeFile;
     setIsSaving(true);
@@ -776,7 +801,7 @@ export const IDEWorkspacePage = () => {
         }, { merge: true });
       } catch (uErr) { }
 
-      setSaveSyncSuccessMsg(`💾 Saved ${changedFilesCount || updatedFiles.length} file(s) to your Personal Local Storage & Database!`);
+      setSaveSyncSuccessMsg(`ðŸ’¾ Saved ${changedFilesCount || updatedFiles.length} file(s) to your Personal Local Storage & Database!`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error saving to local storage:', err);
@@ -786,7 +811,7 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // ── 2. Request Fork / Submit Working Copy to Project Owner ─────────────────
+  // â”€â”€ 2. Request Fork / Submit Working Copy to Project Owner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleRequestFork = async () => {
     const targetFile = activeFileRef.current || activeFile;
     setIsSaving(true);
@@ -863,7 +888,7 @@ export const IDEWorkspacePage = () => {
         }).catch(() => {});
       }
 
-      setSaveSyncSuccessMsg(`🍴 Fork requested! ${Object.keys(fileStatusMap).length || updatedFiles.length} change(s) submitted for Project Owner review.`);
+      setSaveSyncSuccessMsg(`ðŸ´ Fork requested! ${Object.keys(fileStatusMap).length || updatedFiles.length} change(s) submitted for Project Owner review.`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
     } catch (err) {
       console.error('Error submitting fork request:', err);
@@ -882,10 +907,10 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // ── 2. Save & Sync to Master (Owner-Gated Canonical Repository Merge) ───────
+  // â”€â”€ 2. Save & Sync to Master (Owner-Gated Canonical Repository Merge) â”€â”€â”€â”€â”€â”€â”€
   const handleSaveAndSyncMaster = async () => {
     if (!isProjectOwner) {
-      alert('🔒 Access Restricted: Only the Project Owner can merge working changes into the canonical Master Repository.');
+      alert('ðŸ”’ Access Restricted: Only the Project Owner can merge working changes into the canonical Master Repository.');
       return;
     }
 
@@ -1013,7 +1038,7 @@ export const IDEWorkspacePage = () => {
       hasUnsavedForkChangesRef.current = false;
       isLocalDirtyRef.current = false;
       setIsDiffViewActive(false);
-      setSaveSyncSuccessMsg('🎉 All working changes merged and synchronized to Master Repository!');
+      setSaveSyncSuccessMsg('ðŸŽ‰ All working changes merged and synchronized to Master Repository!');
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error syncing master repository:', err);
@@ -1023,10 +1048,10 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // ── 3. Reject Fork (Project Owner Declines Collaborator Changes & Restores Master) ──
+  // â”€â”€ 3. Reject Fork (Project Owner Declines Collaborator Changes & Restores Master) â”€â”€
   const handleRejectFork = async () => {
     if (!isProjectOwner) {
-      alert('🔒 Access Restricted: Only the Project Owner can decline or reject collaborator fork requests.');
+      alert('ðŸ”’ Access Restricted: Only the Project Owner can decline or reject collaborator fork requests.');
       return;
     }
 
@@ -1130,7 +1155,7 @@ export const IDEWorkspacePage = () => {
       }
 
       setIsDiffViewActive(false);
-      setSaveSyncSuccessMsg('❌ Fork request rejected. Shared workspace restored to Master baseline.');
+      setSaveSyncSuccessMsg('âŒ Fork request rejected. Shared workspace restored to Master baseline.');
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error rejecting fork request:', err);
@@ -1182,7 +1207,7 @@ export const IDEWorkspacePage = () => {
       if (res.ok) {
         const finalUrl = data.inviteUrl || inviteUrl;
         navigator.clipboard.writeText(finalUrl);
-        alert(`✓ Collaborator ${email} added as ${role} to ${projTitle}!\n\nInvitation link copied to clipboard:\n${finalUrl}`);
+        alert(`âœ“ Collaborator ${email} added as ${role} to ${projTitle}!\n\nInvitation link copied to clipboard:\n${finalUrl}`);
       } else {
         alert(`Error inviting teammate: ${data.error || 'Server error'}`);
       }
@@ -1294,7 +1319,7 @@ export const IDEWorkspacePage = () => {
         });
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`⚡ Applied AI edits to ${actualFilePath}`);
+      setSaveSyncSuccessMsg(`âš¡ Applied AI edits to ${actualFilePath}`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error applying AI modifications:', err);
@@ -1435,7 +1460,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[→] Renamed to '${cleanNewPath}'`);
+      setSaveSyncSuccessMsg(`[â†’] Renamed to '${cleanNewPath}'`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error renaming file:', err);
@@ -1591,7 +1616,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[→] Renamed folder /${cleanOld} to /${cleanNew}`);
+      setSaveSyncSuccessMsg(`[â†’] Renamed folder /${cleanOld} to /${cleanNew}`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error renaming folder:', err);
@@ -1652,7 +1677,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[×] Deleted folder /${cleanFolder}`);
+      setSaveSyncSuccessMsg(`[Ã—] Deleted folder /${cleanFolder}`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
     } catch (err) {
       console.error('Error deleting folder:', err);
@@ -1699,13 +1724,13 @@ export const IDEWorkspacePage = () => {
   const handleDownloadProjectZip = async () => {
     const isOwner = activeUserRole === 'OWNER' || projectData?.ownerId === currentUser?.uid || projectData?.ownerEmail === currentUser?.email;
     if (!isOwner) {
-      alert('🔒 Access Denied: Downloading the project as a ZIP archive is restricted to the Project Owner.');
+      alert('ðŸ”’ Access Denied: Downloading the project as a ZIP archive is restricted to the Project Owner.');
       return;
     }
     await exportProjectZip(files, projectData?.title || 'Quantum_Router');
   };
 
-  // ── Drag & Drop Move Handler ──────────────────────────────────────────────
+  // â”€â”€ Drag & Drop Move Handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleMoveItem = async (sourceType, sourcePath, targetFolderPath = '') => {
     const cleanTarget = targetFolderPath.replace(/^\/+|\/+$/g, '');
     const prefix = cleanTarget ? `${cleanTarget}/` : '';
@@ -1774,7 +1799,7 @@ export const IDEWorkspacePage = () => {
           }
         } catch (fsErr) { }
 
-        setSaveSyncSuccessMsg(`[→] Moved ${fileName} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'}`);
+        setSaveSyncSuccessMsg(`[â†’] Moved ${fileName} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'}`);
         setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
       } catch (err) {
         console.error('Error moving file:', err);
@@ -1786,7 +1811,7 @@ export const IDEWorkspacePage = () => {
       const newFolderTarget = `${prefix}${folderBase}`;
 
       if (newFolderTarget === cleanOld || cleanTarget === cleanOld || cleanTarget.startsWith(cleanOld + '/')) {
-        alert('⚠️ Cannot move a folder into itself or one of its own subdirectories.');
+        alert('âš ï¸ Cannot move a folder into itself or one of its own subdirectories.');
         return;
       }
 
@@ -1825,7 +1850,7 @@ export const IDEWorkspacePage = () => {
           return f;
         }));
 
-        // Persist to Shared Working Fork (NOT project_files — that's the master baseline)
+        // Persist to Shared Working Fork (NOT project_files â€” that's the master baseline)
         try {
           await setDoc(doc(db, 'projects', projectId), {
             working_files: updatedFiles,
@@ -1847,7 +1872,7 @@ export const IDEWorkspacePage = () => {
           });
         } catch (fsErr) { }
 
-        setSaveSyncSuccessMsg(`[→] Moved folder /${cleanOld} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'} in Working Fork`);
+        setSaveSyncSuccessMsg(`[â†’] Moved folder /${cleanOld} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'} in Working Fork`);
         setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
       } catch (err) {
         console.error('Error moving folder:', err);
@@ -1856,7 +1881,7 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // ── Import Actions & File Pickers ───────────────────────────────────────────
+  // â”€â”€ Import Actions & File Pickers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleTriggerImport = (type, targetFolder = '') => {
     setImportTargetFolder(targetFolder || '');
     if (type === 'files' && fileInputRef.current) {
@@ -2005,7 +2030,7 @@ export const IDEWorkspacePage = () => {
         console.warn('Import working copy sync notice:', fsErr);
       }
 
-      setSaveSyncSuccessMsg(`⚡ Imported ${newFormattedFiles.length} file(s) into Working Copy! (${isProjectOwner ? 'Owner merge ready' : 'Pending Owner review'})`);
+      setSaveSyncSuccessMsg(`âš¡ Imported ${newFormattedFiles.length} file(s) into Working Copy! (${isProjectOwner ? 'Owner merge ready' : 'Pending Owner review'})`);
       setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
     } catch (err) {
       console.error('Error confirming import:', err);
@@ -2105,7 +2130,7 @@ export const IDEWorkspacePage = () => {
             {unauthorizedMsg || `Your account email (${currentUser?.email}) is not authorized to access repository '${projectId}'.`}
           </p>
           <div className="p-3.5 bg-red-950/50 border border-red-800/70 rounded text-[11px] text-red-200 leading-relaxed">
-            🔒 <strong>Security Enforcement:</strong> Access to this repository is restricted to authorized team members. Contact the repository owner to request access permissions.
+            ðŸ”’ <strong>Security Enforcement:</strong> Access to this repository is restricted to authorized team members. Contact the repository owner to request access permissions.
           </div>
           <button
             onClick={() => navigate('/dashboard')}
@@ -2143,7 +2168,7 @@ export const IDEWorkspacePage = () => {
             </span>
           </Link>
 
-          {/* ── VS Code-Style Menu Bar ── */}
+          {/* â”€â”€ VS Code-Style Menu Bar â”€â”€ */}
           <nav className="hidden lg:flex items-center gap-1 text-[11px] text-zinc-400 relative z-[210]">
             {/* 1. File Menu */}
             <div className="relative">
@@ -2154,7 +2179,7 @@ export const IDEWorkspacePage = () => {
                 File
               </button>
               {activeMenu === 'file' && (
-                <div className="absolute top-8 left-0 w-64 bg-[#12131A]/98 backdrop-blur-2xl border border-white/[0.12] rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in font-sans text-xs">
+                <div className="absolute top-8 left-0 w-64 bg-[#12131A] border border-white/[0.12] rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in font-sans text-xs">
                   <div className="py-1">
                     <button
                       onClick={() => {
@@ -2304,7 +2329,7 @@ export const IDEWorkspacePage = () => {
                 Edit
               </button>
               {activeMenu === 'edit' && (
-                <div className="absolute top-8 left-0 w-56 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
+                <div className="absolute top-8 left-0 w-56 bg-[#16171F] border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
                   <div className="py-0.5">
                     <button
                       onClick={() => {
@@ -2354,7 +2379,7 @@ export const IDEWorkspacePage = () => {
                 Selection
               </button>
               {activeMenu === 'selection' && (
-                <div className="absolute top-8 left-0 w-52 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] animate-fade-in">
+                <div className="absolute top-8 left-0 w-52 bg-[#16171F] border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] animate-fade-in">
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(currentContent);
@@ -2387,7 +2412,7 @@ export const IDEWorkspacePage = () => {
                 View
               </button>
               {activeMenu === 'view' && (
-                <div className="absolute top-8 left-0 w-64 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
+                <div className="absolute top-8 left-0 w-64 bg-[#16171F] border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
                   <div className="py-0.5">
                     {/* Live Sandbox Preview Toggle */}
                     <button
@@ -2402,7 +2427,7 @@ export const IDEWorkspacePage = () => {
                           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                           : 'bg-white/5 text-zinc-500 border-white/5'
                         }`}>
-                        {isSandboxOpen ? '✓ ON' : 'OFF'}
+                        {isSandboxOpen ? 'âœ“ ON' : 'OFF'}
                       </span>
                     </button>
 
@@ -2431,7 +2456,7 @@ export const IDEWorkspacePage = () => {
                           ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
                           : 'bg-white/5 text-zinc-500 border-white/5'
                         }`}>
-                        {isAIChatOpen ? '✓ ON' : 'OFF'}
+                        {isAIChatOpen ? 'âœ“ ON' : 'OFF'}
                       </span>
                     </button>
 
@@ -2462,7 +2487,7 @@ export const IDEWorkspacePage = () => {
                           ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
                           : 'bg-white/5 text-zinc-500 border-white/5'
                         }`}>
-                        {showActiveCollaborators ? `✓ ON (${remoteCollaborators.length + 1})` : 'OFF'}
+                        {showActiveCollaborators ? `âœ“ ON (${remoteCollaborators.length + 1})` : 'OFF'}
                       </span>
                     </button>
                   </div>
@@ -2495,13 +2520,13 @@ export const IDEWorkspacePage = () => {
                 Run
               </button>
               {activeMenu === 'run' && (
-                <div className="absolute top-8 left-0 w-60 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
+                <div className="absolute top-8 left-0 w-60 bg-[#16171F] border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
                   <div className="py-0.5">
                     <button
                       onClick={() => { handleRunCode(); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 font-bold flex justify-between items-center cursor-pointer"
                     >
-                      <span>▶ Run Code</span>
+                      <span>â–¶ Run Code</span>
                       <span className="text-[10px] text-zinc-500">Ctrl+R / F5</span>
                     </button>
                     <button
@@ -2536,7 +2561,7 @@ export const IDEWorkspacePage = () => {
                 Terminal
               </button>
               {activeMenu === 'terminal' && (
-                <div className="absolute top-8 left-0 w-56 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] animate-fade-in">
+                <div className="absolute top-8 left-0 w-56 bg-[#16171F] border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] animate-fade-in">
                   <button
                     onClick={() => {
                       setIsExecTerminalOpen(true);
@@ -2570,7 +2595,7 @@ export const IDEWorkspacePage = () => {
                 Help
               </button>
               {activeMenu === 'help' && (
-                <div className="absolute top-8 left-0 w-60 bg-[#16171F]/95 backdrop-blur-2xl border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
+                <div className="absolute top-8 left-0 w-60 bg-[#16171F] border border-white/10 rounded-lg shadow-2xl py-1.5 z-[300] divide-y divide-white/5 animate-fade-in">
                   <div className="py-0.5">
                     <button
                       onClick={() => { setIsShortcutsOpen(true); setActiveMenu(null); }}
@@ -2615,7 +2640,7 @@ export const IDEWorkspacePage = () => {
             {activeUserRole}
           </span>
 
-          {/* ── Single Unified Clean Play Button (Run Code) ── */}
+          {/* â”€â”€ Single Unified Clean Play Button (Run Code) â”€â”€ */}
           <button
             onClick={handleRunCode}
             disabled={isExecuting || !activeFile}
@@ -2657,7 +2682,7 @@ export const IDEWorkspacePage = () => {
             </button>
 
             {isCollaboratorsDrawerOpen && (
-              <div className="absolute right-0 top-9 w-72 bg-[#12131A]/98 backdrop-blur-2xl border border-white/[0.12] rounded-xl shadow-2xl p-3 z-[300] space-y-2 animate-fade-in font-sans">
+              <div className="absolute right-0 top-9 w-72 bg-[#12131A] border border-white/[0.12] rounded-xl shadow-2xl p-3 z-[300] space-y-2 animate-fade-in font-sans">
                 <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
                   <div className="flex items-center gap-2 text-xs font-bold text-zinc-200">
                     <span className="material-symbols-outlined text-sm text-cyan-400">group</span>
@@ -2763,7 +2788,7 @@ export const IDEWorkspacePage = () => {
             <span>AI Assistant</span>
           </button>
 
-          {/* ── Dual-Tier Architecture: Owner Master Commit vs Editor Local Save & Fork Request ── */}
+          {/* â”€â”€ Dual-Tier Architecture: Owner Master Commit vs Editor Local Save & Fork Request â”€â”€ */}
           {isProjectOwner ? (
             <div className="flex items-center gap-2">
               <button
@@ -2827,7 +2852,7 @@ export const IDEWorkspacePage = () => {
 
       {/* Save / Sync Notification Toast Banner */}
       {saveSyncSuccessMsg && (
-        <div className="fixed top-12 left-1/2 -translate-x-1/2 z-[250] bg-[#12131C]/95 border border-cyan-500/50 backdrop-blur-xl text-cyan-200 px-4 py-2 rounded-xl shadow-[0_0_25px_rgba(6,182,212,0.3)] text-xs font-mono flex items-center gap-2.5 animate-fade-in">
+        <div className="fixed top-12 left-1/2 -translate-x-1/2 z-[250] bg-[#12131C] border border-cyan-500/50 text-cyan-200 px-4 py-2 rounded-xl shadow-[0_0_25px_rgba(6,182,212,0.3)] text-xs font-mono flex items-center gap-2.5 animate-fade-in">
           <span className="material-symbols-outlined text-cyan-400 text-sm">verified</span>
           <span>{saveSyncSuccessMsg}</span>
         </div>
@@ -2865,7 +2890,7 @@ export const IDEWorkspacePage = () => {
               width={leftWidth}
             />
 
-            {/* ── Left Draggable Partition Splitter (Explorer <-> Editor) ── */}
+            {/* â”€â”€ Left Draggable Partition Splitter (Explorer <-> Editor) â”€â”€ */}
             <div
               onMouseDown={() => setIsDraggingLeft(true)}
               className={`w-1.5 hover:w-2 bg-white/[0.06] hover:bg-cyan-500 cursor-col-resize z-40 transition-all select-none relative group shrink-0 ${isDraggingLeft ? 'bg-cyan-400 !w-2 shadow-[0_0_10px_#06b6d4]' : ''
@@ -2950,7 +2975,7 @@ export const IDEWorkspacePage = () => {
                             ? 'bg-amber-950 text-amber-300 border border-amber-500/40'
                             : 'bg-rose-950 text-rose-300 border border-rose-500/40'
                         }`}>
-                        {fileStatusMap[activeFile.filePath] === 'ADDED' ? '• NEW PROPOSED FILE' : '• PROPOSED MODIFICATION'}
+                        {fileStatusMap[activeFile.filePath] === 'ADDED' ? 'â€¢ NEW PROPOSED FILE' : 'â€¢ PROPOSED MODIFICATION'}
                       </span>
                     )}
                     {isBinaryFile(activeFile.filePath) && (
@@ -3025,7 +3050,7 @@ export const IDEWorkspacePage = () => {
               )}
             </div>
 
-            {/* ── Right Draggable Partition Splitter (Editor <-> Live Sandbox) ── */}
+            {/* â”€â”€ Right Draggable Partition Splitter (Editor <-> Live Sandbox) â”€â”€ */}
             {isSandboxOpen && (
               <div
                 onMouseDown={() => setIsDraggingRight(true)}
@@ -3047,7 +3072,7 @@ export const IDEWorkspacePage = () => {
               />
             )}
 
-            {/* ── Integrated Terminal Bottom Drawer ── */}
+            {/* â”€â”€ Integrated Terminal Bottom Drawer â”€â”€ */}
             {isExecTerminalOpen && (
               <div
                 className="absolute bottom-8 bg-[#0A0A0D] border-t border-white/[0.08] shadow-2xl z-[150] flex flex-col transition-all duration-75"
@@ -3138,7 +3163,7 @@ export const IDEWorkspacePage = () => {
             </span>
           )}
         </div>
-        <div>© 2026 Obsidian Systems. Built via agile workspace methodology layers.</div>
+        <div>Â© 2026 Obsidian Systems. Built via agile workspace methodology layers.</div>
       </footer>
 
       {/* Keyboard Shortcuts Cheat Sheet Modal */}

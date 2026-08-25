@@ -8,6 +8,7 @@
     "dev:frontend": "vite",
     "dev:backend": "node server/index.js",
     "start": "node server/index.js",
+    "start:dev": "node scripts/dev.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test server/tests/projectRoutes.test.js"
@@ -25,6 +26,7 @@
     "express-rate-limit": "^8.6.1",
     "firebase": "^11.10.0",
     "firebase-admin": "^14.2.0",
+    "http-proxy": "^1.18.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.479.0",
     "nodemailer": "^9.0.5",

@@ -1,18 +1,26 @@
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { inMemoryProjectStore } from './projectRoutes.js';
+import { adminDb } from '../config/firebaseAdmin.js';
 
 const router = express.Router();
 
-// Helper to resolve authoritative user role from repository baseline
-const resolveAuthoritativeRole = (projectId, email, providedRole) => {
+// In-process cache: Map<projectId, { ownerEmail, collaborators }> — avoids repeated Firestore lookups
+const projectRoleCache = new Map();
+
+// Helper to resolve authoritative user role from repository baseline.
+// Checks in-memory store first (fast path), then cache, then Firestore Admin (cold path).
+const resolveAuthoritativeRole = async (projectId, email, providedRole) => {
   const cleanEmail = (email || '').trim().toLowerCase();
   if (!cleanEmail) return (providedRole || 'EDITOR').toUpperCase();
 
+  // 1. Check in-memory project store (populated by REST /api/projects calls)
   const memProj = inMemoryProjectStore.get(projectId);
   if (memProj) {
     const owner = (memProj.ownerEmail || '').trim().toLowerCase();
     if (owner && owner === cleanEmail) {
+      // Cache it for WebSocket use
+      projectRoleCache.set(projectId, { ownerEmail: owner, collaborators: memProj.collaborators || {} });
       return 'OWNER';
     }
     if (memProj.collaborators) {
@@ -23,6 +31,47 @@ const resolveAuthoritativeRole = (projectId, email, providedRole) => {
       }
     }
   }
+
+  // 2. Check local cache (set by previous Firestore lookups)
+  const cached = projectRoleCache.get(projectId);
+  if (cached) {
+    const cachedOwner = (cached.ownerEmail || '').trim().toLowerCase();
+    if (cachedOwner && cachedOwner === cleanEmail) return 'OWNER';
+    if (cached.collaborators) {
+      const matched = Object.entries(cached.collaborators).find(([k]) => k.trim().toLowerCase() === cleanEmail);
+      if (matched) {
+        const v = matched[1];
+        return (typeof v === 'string' ? v : (v?.role || 'EDITOR')).toUpperCase();
+      }
+    }
+  }
+
+  // 3. Cold path: query Firestore Admin to get authoritative ownerEmail
+  if (adminDb) {
+    try {
+      const doc = await adminDb.collection('projects').doc(projectId).get();
+      if (doc.exists) {
+        const data = doc.data();
+        const firestoreOwner = (data.ownerEmail || '').trim().toLowerCase();
+        const collabs = data.collaborators || {};
+        // Cache the result
+        projectRoleCache.set(projectId, { ownerEmail: firestoreOwner, collaborators: collabs });
+        // Also populate in-memory store so subsequent requests are fast
+        if (!inMemoryProjectStore.has(projectId)) {
+          inMemoryProjectStore.set(projectId, { ...data, projectId });
+        }
+        if (firestoreOwner && firestoreOwner === cleanEmail) return 'OWNER';
+        const matched = Object.entries(collabs).find(([k]) => k.trim().toLowerCase() === cleanEmail);
+        if (matched) {
+          const v = matched[1];
+          return (typeof v === 'string' ? v : (v?.role || 'EDITOR')).toUpperCase();
+        }
+      }
+    } catch (e) {
+      // Silent fallback — don't crash presence heartbeat
+    }
+  }
+
   return (providedRole || 'EDITOR').toUpperCase();
 };
 
@@ -73,7 +122,7 @@ const cleanupInactiveUsers = (projectId) => {
 // ── REST API Endpoints ───────────────────────────────────────────────────────
 
 // 1. POST /api/collaboration/:projectId/presence (Heartbeat & Cursor Position)
-router.post('/:projectId/presence', (req, res) => {
+router.post('/:projectId/presence', async (req, res) => {
   try {
     const { projectId } = req.params;
     const { 
@@ -97,7 +146,7 @@ router.post('/:projectId/presence', (req, res) => {
 
     const room = projectRooms.get(projectId);
     const userColor = getColorForEmail(email);
-    const effectiveRole = resolveAuthoritativeRole(projectId, email, role);
+    const effectiveRole = await resolveAuthoritativeRole(projectId, email, role);
 
     const presenceData = {
       email: email.trim().toLowerCase(),
@@ -269,7 +318,7 @@ export const createCollaborationWebSocket = () => {
   };
 
   wss.on('connection', (ws) => {
-    ws.on('message', (raw) => {
+    ws.on('message', async (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
         const { type, projectId, user, cursor, activeFilePath } = msg;
@@ -284,7 +333,7 @@ export const createCollaborationWebSocket = () => {
         const room = projectRooms.get(projectId);
 
         if (type === 'JOIN_ROOM' || type === 'JOIN_PROJECT' || type === 'HEARTBEAT' || type === 'CURSOR_MOVE') {
-          const effectiveRole = resolveAuthoritativeRole(projectId, email, user.role);
+          const effectiveRole = await resolveAuthoritativeRole(projectId, email, user.role);
           const presenceData = {
             email,
             displayName: user.displayName || email.split('@')[0],

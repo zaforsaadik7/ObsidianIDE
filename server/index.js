@@ -315,13 +315,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.join(__dirname, '../dist');
 
-if (fs.existsSync(path.join(distPath, 'index.html')) || process.env.NODE_ENV === 'production') {
+// Serve static production frontend assets ONLY in explicit production mode.
+// In development, the Vite dev server (port 3000) serves the latest source.
+// NEVER serve the dist/ folder in dev mode — it would serve stale built assets.
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+if (IS_PRODUCTION && fs.existsSync(path.join(distPath, 'index.html'))) {
   app.use(express.static(distPath));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/ws')) {
       return next();
     }
     res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else if (!IS_PRODUCTION) {
+  // In development: inform any accidental port-5000 browser hits
+  app.get('/', (req, res) => {
+    res.status(302).redirect('http://localhost:3000');
   });
 }
 
