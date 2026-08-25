@@ -125,12 +125,14 @@ export const processLocalFiles = async (fileList, targetFolder = '') => {
     const content = await readFileContent(file);
     const fileName = file.name.replace(/\\/g, '/').split('/').pop();
     const filePath = cleanTarget ? `${cleanTarget}/${fileName}` : fileName;
+    const isBinary = isBinaryFileName(fileName);
 
     results.push({
       fileName,
       filePath,
       content,
       fileType: inferFileType(fileName),
+      isBinary,
       size: file.size,
       lastModified: file.lastModified || Date.now()
     });
@@ -158,12 +160,14 @@ export const processLocalFolder = async (fileList, targetFolder = '') => {
     const content = await readFileContent(file);
     const fileName = rawPath.split('/').pop();
     const filePath = cleanTarget ? `${cleanTarget}/${rawPath}` : rawPath;
+    const isBinary = isBinaryFileName(fileName);
 
     results.push({
       fileName,
       filePath,
       content,
       fileType: inferFileType(fileName),
+      isBinary,
       size: file.size,
       lastModified: file.lastModified || Date.now()
     });
@@ -212,7 +216,8 @@ export const processZipArchive = async (zipFile, targetFolder = '') => {
         filePath,
         content,
         fileType: inferFileType(fileName),
-        size: content.length,
+        isBinary,
+        size: entry._data?.uncompressedSize || content.length,
         lastModified: entry.date ? entry.date.getTime() : Date.now()
       });
     } catch (err) {
