@@ -257,6 +257,33 @@ export const InteractiveTerminal = ({
     setLastRunTimestamp(new Date().toLocaleTimeString());
   }, [currentCode, activeFilePath, connectWebSocket]);
 
+  const runCommandInTerminal = useCallback((cmdString, customCode = null, targetPath = null) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectWebSocket().then(() => {
+        setTimeout(() => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({
+              type: 'exec_command',
+              command: cmdString,
+              code: customCode,
+              filePath: targetPath
+            }));
+            setLastRunTimestamp(new Date().toLocaleTimeString());
+          }
+        }, 600);
+      });
+      return;
+    }
+
+    wsRef.current.send(JSON.stringify({
+      type: 'exec_command',
+      command: cmdString,
+      code: customCode,
+      filePath: targetPath
+    }));
+    setLastRunTimestamp(new Date().toLocaleTimeString());
+  }, [connectWebSocket]);
+
   const sendInterrupt = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'interrupt' }));
@@ -284,6 +311,7 @@ export const InteractiveTerminal = ({
     if (onTerminalReady) {
       onTerminalReady({
         runCode: (code, path) => executeCodeInTerminal(code, path),
+        runCommand: (cmd, code, path) => runCommandInTerminal(cmd, code, path),
         interrupt: () => sendInterrupt(),
         clear: () => clearScreen(),
         reconnect: () => handleReconnect(),
@@ -291,7 +319,7 @@ export const InteractiveTerminal = ({
         clearOutput: () => { outputBufferRef.current = ''; if (onOutput) onOutput(''); }
       });
     }
-  }, [onTerminalReady, executeCodeInTerminal, sendInterrupt, clearScreen, onOutput]);
+  }, [onTerminalReady, executeCodeInTerminal, runCommandInTerminal, sendInterrupt, clearScreen, onOutput]);
 
   const statusConfig = {
     connected: { color: 'bg-emerald-400', glow: 'shadow-[0_0_8px_#34d399]', label: 'ONLINE' },

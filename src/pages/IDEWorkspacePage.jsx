@@ -2129,6 +2129,24 @@ export const IDEWorkspacePage = () => {
     }
   };
 
+  const handleRunTerminalCommand = (cmdString, customCode = null, targetPath = null) => {
+    setIsExecTerminalOpen(true);
+    setActiveTerminalTab('interactive');
+    if (terminalController?.runCommand) {
+      terminalController.runCommand(cmdString, customCode, targetPath);
+    } else if (terminalController?.runCode && customCode) {
+      terminalController.runCode(customCode, targetPath || activeFile?.filePath || 'src/main.py');
+    }
+  };
+
+  const handleRunTerminalCode = (code, targetPath = null) => {
+    setIsExecTerminalOpen(true);
+    setActiveTerminalTab('interactive');
+    if (terminalController?.runCode) {
+      terminalController.runCode(code, targetPath || activeFile?.filePath || 'src/main.py');
+    }
+  };
+
   const toggleMenu = (menuName) => {
     setActiveMenu(prev => prev === menuName ? null : menuName);
   };
@@ -3207,6 +3225,8 @@ export const IDEWorkspacePage = () => {
               onApplyModifications={handleApplyAIModifications}
               projectId={projectId}
               terminalOutput={terminalOutput}
+              onRunCommand={handleRunTerminalCommand}
+              onRunCode={handleRunTerminalCode}
               width={rightWidth}
             />
           </>

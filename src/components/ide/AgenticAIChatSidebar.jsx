@@ -10,11 +10,14 @@ export const AgenticAIChatSidebar = ({
   onApplyModifications,
   projectId = 'default-project',
   terminalOutput = '',
+  onRunCommand,
+  onRunCode,
   width = 420
 }) => {
   const { currentUser } = useAuth();
   const sessionsStorageKey = `obsidian_ai_sessions_${projectId}`;
   const [includeTerminalLogs, setIncludeTerminalLogs] = useState(true);
+  const [dispatchedCmdIds, setDispatchedCmdIds] = useState(new Set());
 
   const createNewSession = (title = 'New Conversation') => ({
     id: 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
@@ -356,6 +359,8 @@ export const AgenticAIChatSidebar = ({
           sender: 'ai',
           text: data.response.text,
           modifications: data.response.fileModifications || [],
+          terminalCommands: data.response.terminalCommands || [],
+          runScript: data.response.runScript || null,
           modelUsed: data.response.modelUsed || selectedModel
         };
 
@@ -612,28 +617,133 @@ export const AgenticAIChatSidebar = ({
                       const modKey = `${idx}_${mIdx}`;
                       const isApplied = appliedModIds.has(modKey);
                       return (
-                        <div key={mIdx} className="bg-[#0A0A0B] p-2.5 rounded border border-outline-variant/50 text-[10px] space-y-1.5">
+                        <div key={mIdx} className="bg-[#0A0A0B] p-2.5 rounded border border-outline-variant/50 text-[10px] space-y-2">
                           <div className="text-cyan-300 font-bold flex items-center justify-between">
                             <span className="truncate">{mod.filePath}</span>
                             <span className="text-[9px] text-zinc-500 font-mono">
                               {mod.newContent ? `${mod.newContent.split('\n').length} lines` : ''}
                             </span>
                           </div>
+                          
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            <button
+                              onClick={() => {
+                                onApplyModifications(mod.filePath, mod.newContent);
+                                setAppliedModIds(prev => new Set(prev).add(modKey));
+                              }}
+                              className={`py-1.5 px-2 rounded font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shadow ${
+                                isApplied
+                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-600/80 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                                  : 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 hover:bg-cyan-900'
+                              }`}
+                            >
+                              <span className="material-symbols-outlined text-xs">
+                                {isApplied ? 'check_circle' : 'task_alt'}
+                              </span>
+                              <span>{isApplied ? 'APPLIED' : 'APPLY EDITS'}</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                onApplyModifications(mod.filePath, mod.newContent);
+                                setAppliedModIds(prev => new Set(prev).add(modKey));
+                                if (onRunCode) {
+                                  onRunCode(mod.newContent, mod.filePath);
+                                } else if (onRunCommand) {
+                                  onRunCommand(`python ${mod.filePath}`, mod.newContent, mod.filePath);
+                                }
+                              }}
+                              className="py-1.5 px-2 rounded font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shadow bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 border border-emerald-400/50"
+                              title="Apply changes to workspace and execute immediately in interactive terminal"
+                            >
+                              <span className="material-symbols-outlined text-xs">play_arrow</span>
+                              <span>APPLY & RUN</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Proposed Terminal Command & Script Execution Actions */}
+                {((msg.terminalCommands && msg.terminalCommands.length > 0) || msg.runScript) && (
+                  <div className="mt-3 pt-2.5 border-t border-cyan-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-[10px] text-cyan-400 font-bold">
+                      <span className="flex items-center gap-1">
+                        <span className="material-symbols-outlined text-xs">terminal</span>
+                        <span>TERMINAL EXECUTION ACTIONS</span>
+                      </span>
+                    </div>
+
+                    {/* Dedicated Run Script Action */}
+                    {msg.runScript && (
+                      <div className="bg-[#0A0A0E] p-2.5 rounded border border-cyan-500/40 text-[10px] space-y-1.5">
+                        <div className="text-cyan-300 font-bold flex items-center justify-between">
+                          <span className="flex items-center gap-1 truncate">
+                            <span className="material-symbols-outlined text-xs text-amber-400">play_circle</span>
+                            <span className="truncate">{msg.runScript.filePath || msg.runScript.command || 'Execute Script'}</span>
+                          </span>
+                          {msg.runScript.command && (
+                            <span className="text-[9px] text-zinc-500 font-mono">{msg.runScript.command}</span>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => {
+                            const cmdKey = `runscript_${idx}`;
+                            if (onRunCommand && msg.runScript.command) {
+                              onRunCommand(msg.runScript.command, msg.runScript.code, msg.runScript.filePath);
+                            } else if (onRunCode && msg.runScript.code) {
+                              onRunCode(msg.runScript.code, msg.runScript.filePath);
+                            } else if (onRunCommand && msg.runScript.filePath) {
+                              onRunCommand(`python ${msg.runScript.filePath}`);
+                            }
+                            setDispatchedCmdIds(prev => new Set(prev).add(cmdKey));
+                          }}
+                          className={`w-full py-1.5 px-2 rounded font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow ${
+                            dispatchedCmdIds.has(`runscript_${idx}`)
+                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-600 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                              : 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-500 hover:to-blue-500 border border-cyan-400/50'
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-xs">
+                            {dispatchedCmdIds.has(`runscript_${idx}`) ? 'done' : 'play_arrow'}
+                          </span>
+                          <span>
+                            {dispatchedCmdIds.has(`runscript_${idx}`)
+                              ? 'EXECUTED IN TERMINAL'
+                              : `▶ RUN IN TERMINAL (${msg.runScript.filePath || msg.runScript.command || 'SCRIPT'})`}
+                          </span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Individual Terminal Commands */}
+                    {msg.terminalCommands && msg.terminalCommands.map((cmdItem, cIdx) => {
+                      const cmdStr = typeof cmdItem === 'string' ? cmdItem : (cmdItem.command || cmdItem.cmd || '');
+                      if (!cmdStr) return null;
+                      const cmdKey = `cmd_${idx}_${cIdx}`;
+                      const isDispatched = dispatchedCmdIds.has(cmdKey);
+                      return (
+                        <div key={cIdx} className="bg-[#0A0A0E] p-2.5 rounded border border-cyan-500/30 text-[10px] space-y-1.5">
+                          <div className="text-zinc-300 font-mono flex items-center justify-between">
+                            <span className="truncate text-cyan-300 font-bold">$ {cmdStr}</span>
+                          </div>
                           <button
                             onClick={() => {
-                              onApplyModifications(mod.filePath, mod.newContent);
-                              setAppliedModIds(prev => new Set(prev).add(modKey));
+                              if (onRunCommand) onRunCommand(cmdStr);
+                              setDispatchedCmdIds(prev => new Set(prev).add(cmdKey));
                             }}
-                            className={`w-full py-1.5 px-2 rounded font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow ${
-                              isApplied
-                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-600/80 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                            className={`w-full py-1.5 px-2 rounded font-bold font-mono transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow ${
+                              isDispatched
+                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-600 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
                                 : 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 hover:bg-cyan-900'
                             }`}
                           >
                             <span className="material-symbols-outlined text-xs">
-                              {isApplied ? 'check_circle' : 'task_alt'}
+                              {isDispatched ? 'check_circle' : 'terminal'}
                             </span>
-                            <span>{isApplied ? 'EDITS APPLIED TO WORKSPACE' : 'APPLY EDITS TO WORKSPACE'}</span>
+                            <span>{isDispatched ? 'EXECUTED IN TERMINAL' : `▶ RUN IN TERMINAL`}</span>
                           </button>
                         </div>
                       );

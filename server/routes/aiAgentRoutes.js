@@ -282,7 +282,6 @@ ${activeFilePath ? `ACTIVE OPEN BUFFER (${activeFilePath}):\n\`\`\`\n${activeFil
 
 USER INSTRUCTION:
 ${prompt}
-
 RESPONSE GUIDELINES:
 1. Provide a comprehensive, clear, and professional response. Explain any code analysis, bugs, terminal errors/tracebacks, architecture, or solutions clearly.
 2. If code modifications or new files are needed across the workspace, you MUST include a clean JSON block at the very end of your response inside a \`\`\`json\`\`\` code fence formatted EXACTLY as follows:
@@ -293,10 +292,18 @@ RESPONSE GUIDELINES:
       "filePath": "path/to/file.ext",
       "newContent": "COMPLETE updated source code for this file"
     }
-  ]
+  ],
+  "commands": [
+    "python src/main.py"
+  ],
+  "runScript": {
+    "filePath": "src/main.py",
+    "command": "python src/main.py"
+  }
 }
 \`\`\`
-3. If no file modifications are needed, just provide your full answer without the modifications JSON block.
+3. The user has an interactive integrated terminal directly connected. If terminal commands or scripts are recommended to test, build, run, or verify the solution, include them in the "commands" array or "runScript" object.
+4. If no file modifications or commands are needed, just provide your full answer without the modifications JSON block.
 `;
 
     // Attempt generation with chosen model and auto-fallback to alternate verified models
@@ -333,6 +340,8 @@ RESPONSE GUIDELINES:
     const rawResponseText = result.response.text();
     let displayText = rawResponseText;
     let fileModifications = [];
+    let terminalCommands = [];
+    let runScript = null;
 
     // Parse any structured modifications JSON code block from response
     const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/g;
@@ -342,9 +351,14 @@ RESPONSE GUIDELINES:
         const parsed = JSON.parse(match[1]);
         if (parsed.modifications && Array.isArray(parsed.modifications)) {
           fileModifications = parsed.modifications;
-          // Clean up the JSON block from the readable display text if desired
-          displayText = displayText.replace(match[0], '').trim();
         }
+        if (parsed.commands && Array.isArray(parsed.commands)) {
+          terminalCommands = parsed.commands;
+        }
+        if (parsed.runScript && typeof parsed.runScript === 'object') {
+          runScript = parsed.runScript;
+        }
+        displayText = displayText.replace(match[0], '').trim();
       } catch (e) {}
     }
 
@@ -353,6 +367,8 @@ RESPONSE GUIDELINES:
       response: {
         text: displayText || rawResponseText,
         fileModifications,
+        terminalCommands,
+        runScript,
         modelUsed: actualModelUsed,
         filesIndexedCount: Array.isArray(fileManifest) ? fileManifest.length : 0,
         timestamp: new Date().toISOString()

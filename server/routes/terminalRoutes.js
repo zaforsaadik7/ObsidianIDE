@@ -471,6 +471,20 @@ export function createTerminalWebSocket() {
             runFileWithAutoCompile(code, filePath);
             return;
           }
+
+          // Trigger "▶ Execute Command / Script" (From AI Assistant or Runner)
+          if (payload.type === 'exec_command' || payload.type === 'run_command') {
+            const cmd = (payload.command || payload.cmd || '').trim();
+            const code = payload.code || null;
+            const filePath = payload.filePath || null;
+            if (cmd) {
+              ws.send(`\r\n\x1b[36m$ ${cmd}\x1b[0m\r\n`);
+              executeCommand(cmd, code, filePath);
+            } else if (code) {
+              runFileWithAutoCompile(code, filePath || 'script.py');
+            }
+            return;
+          }
         } catch {}
       }
 
