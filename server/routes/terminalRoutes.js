@@ -103,6 +103,149 @@ const CSC_CMD = fs.existsSync('C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.303
   ? 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe'
   : 'csc';
 
+// ─── MIME TYPE RESOLVER & FILE SYNC ENGINE ─────────────────────────────────
+const BINARY_EXTENSIONS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'pdf',
+  'mp4', 'webm', 'zip', 'tar', 'gz', 'pkl', 'bin', 'h5', 'pt', 'onnx', 'joblib', 'npy', 'npz'
+]);
+
+function getMimeType(fileName) {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  const map = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    svg: 'image/svg+xml',
+    webp: 'image/webp',
+    ico: 'image/x-icon',
+    pdf: 'application/pdf',
+    mp4: 'video/mp4',
+    webm: 'video/webm',
+    zip: 'application/zip',
+    tar: 'application/x-tar',
+    gz: 'application/gzip',
+    json: 'application/json',
+    csv: 'text/csv',
+    txt: 'text/plain',
+    html: 'text/html',
+    py: 'text/x-python',
+    js: 'application/javascript',
+    ts: 'application/typescript'
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
+function populateWorkspaceFilesToSandbox(sandboxDir, workspaceFiles = []) {
+  if (!Array.isArray(workspaceFiles) || workspaceFiles.length === 0) return;
+  for (const f of workspaceFiles) {
+    try {
+      const rel = (f.filePath || f.fileName || '').replace(/^\/+/, '');
+      if (!rel || rel.startsWith('node_modules') || rel.startsWith('.git')) continue;
+      const destPath = path.join(sandboxDir, rel);
+      const destDir = path.dirname(destPath);
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+      }
+      const content = f.content !== undefined ? f.content : '';
+      const ext = (rel.split('.').pop() || '').toLowerCase();
+      if ((f.isBinary || BINARY_EXTENSIONS.has(ext)) && typeof content === 'string' && content.startsWith('data:')) {
+        const base64Data = content.split(',')[1] || content;
+        fs.writeFileSync(destPath, Buffer.from(base64Data, 'base64'));
+      } else {
+        fs.writeFileSync(destPath, String(content), 'utf-8');
+      }
+    } catch (err) {
+      console.warn('[Terminal Sandbox] Populate file warning:', f?.filePath, err.message);
+    }
+  }
+}
+
+function getSandboxFileTree(dir, base = '') {
+  const results = [];
+  if (!fs.existsSync(dir)) return results;
+  try {
+    const list = fs.readdirSync(dir, { withFileTypes: true });
+    for (const item of list) {
+      if (item.name === '.git' || item.name === 'node_modules' || item.name === '.venv' || item.name === '__pycache__') continue;
+      const relPath = base ? `${base}/${item.name}` : item.name;
+      const fullPath = path.join(dir, item.name);
+      if (item.isDirectory()) {
+        results.push(...getSandboxFileTree(fullPath, relPath));
+      } else if (item.isFile()) {
+        // Skip compiler intermediates
+        if (item.name.endsWith('.obj') || item.name.endsWith('.o') || item.name.endsWith('.tmp')) continue;
+        results.push({
+          relPath: relPath.replace(/\\/g, '/'),
+          fullPath,
+          name: item.name
+        });
+      }
+    }
+  } catch {}
+  return results;
+}
+
+function scanAndSyncGeneratedFiles(sandboxDir, ws, projectId, authenticatedEmail) {
+  try {
+    const filesOnDisk = getSandboxFileTree(sandboxDir);
+    if (filesOnDisk.length === 0) return [];
+
+    const generatedFiles = [];
+    const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB limit
+
+    for (const file of filesOnDisk) {
+      try {
+        const stat = fs.statSync(file.fullPath);
+        if (stat.size > MAX_FILE_SIZE) continue;
+
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        const isBinary = BINARY_EXTENSIONS.has(ext);
+
+        let fileContent = '';
+        if (isBinary) {
+          const buf = fs.readFileSync(file.fullPath);
+          const mime = getMimeType(file.name);
+          fileContent = `data:${mime};base64,${buf.toString('base64')}`;
+        } else {
+          fileContent = fs.readFileSync(file.fullPath, 'utf-8');
+        }
+
+        generatedFiles.push({
+          filePath: file.relPath,
+          fileName: file.name,
+          fileType: ext || 'txt',
+          content: fileContent,
+          size: stat.size,
+          isBinary,
+          lastModifiedBy: authenticatedEmail || 'terminal_runner',
+          lastModifiedAt: new Date(stat.mtimeMs).toISOString()
+        });
+      } catch (fErr) {
+        console.warn('[Terminal Sandbox] Read file error:', file.relPath, fErr.message);
+      }
+    }
+
+    if (generatedFiles.length > 0 && ws.readyState === ws.OPEN) {
+      // Send WebSocket payload to client
+      ws.send(JSON.stringify({
+        type: 'workspace_files_synced',
+        generatedFiles
+      }));
+
+      // Send terminal feedback notification
+      const summaryList = generatedFiles.slice(0, 4).map(f => f.filePath).join(', ');
+      const extraCount = generatedFiles.length > 4 ? ` +${generatedFiles.length - 4} more` : '';
+      ws.send(`\r\n\x1b[32m[📁 Auto-synced ${generatedFiles.length} file(s) to Project Explorer: ${summaryList}${extraCount}]\x1b[0m\r\n`);
+    }
+
+    return generatedFiles;
+  } catch (err) {
+    console.error('[Terminal Sandbox] scanAndSyncGeneratedFiles error:', err);
+    return [];
+  }
+}
+
 const activeSessions = new Map();
 
 // ─── ATTACH WEBSOCKET SERVER ─────────────────────────────────────────────────
@@ -326,6 +469,14 @@ export function createTerminalWebSocket() {
             const exitStatus = code !== null ? `exit code ${code}` : `signal ${signal}`;
             const color = code === 0 ? '\x1b[90m' : '\x1b[31m';
             ws.send(`\r\n${color}[Process finished with ${exitStatus}]\x1b[0m\r\n`);
+
+            // Automatically scan sandbox for generated output files (e.g. PNGs, CSVs, models, reports) and sync to workspace
+            try {
+              scanAndSyncGeneratedFiles(sandboxDir, ws, projectId, authenticatedEmail);
+            } catch (scanErr) {
+              console.warn('[Terminal Sandbox] Auto-scan error:', scanErr.message);
+            }
+
             ws.send(`\x1b[32mobsidian\x1b[0m:\x1b[34m~/${projectId}\x1b[0m$ `);
           }
         });
@@ -345,7 +496,12 @@ export function createTerminalWebSocket() {
     };
 
     // ── 6. Helper: Auto-Compile & Run Any File by Extension ──────────────────
-    const runFileWithAutoCompile = (code, filePath) => {
+    const runFileWithAutoCompile = (code, filePath, workspaceFiles = []) => {
+      // 0. Populate all project files into sandbox if provided
+      if (Array.isArray(workspaceFiles) && workspaceFiles.length > 0) {
+        populateWorkspaceFilesToSandbox(sandboxDir, workspaceFiles);
+      }
+
       const fileName = path.basename(filePath);
       const ext = fileName.split('.').pop()?.toLowerCase() || 'py';
       const fileBaseName = fileName.replace(/\.[^/.]+$/, '');
@@ -464,11 +620,23 @@ export function createTerminalWebSocket() {
             return;
           }
 
+          // Sync Project Files to Sandbox
+          if (payload.type === 'sync_workspace_files') {
+            if (Array.isArray(payload.workspaceFiles)) {
+              populateWorkspaceFilesToSandbox(sandboxDir, payload.workspaceFiles);
+            }
+            scanAndSyncGeneratedFiles(sandboxDir, ws, projectId, authenticatedEmail);
+            return;
+          }
+
           // Trigger "▶ Run Code"
           if (payload.type === 'run_code') {
             const code = payload.code || '';
             const filePath = payload.filePath || 'main.py';
-            runFileWithAutoCompile(code, filePath);
+            if (Array.isArray(payload.workspaceFiles)) {
+              populateWorkspaceFilesToSandbox(sandboxDir, payload.workspaceFiles);
+            }
+            runFileWithAutoCompile(code, filePath, payload.workspaceFiles);
             return;
           }
 
@@ -477,11 +645,14 @@ export function createTerminalWebSocket() {
             const cmd = (payload.command || payload.cmd || '').trim();
             const code = payload.code || null;
             const filePath = payload.filePath || null;
+            if (Array.isArray(payload.workspaceFiles)) {
+              populateWorkspaceFilesToSandbox(sandboxDir, payload.workspaceFiles);
+            }
             if (cmd) {
               ws.send(`\r\n\x1b[36m$ ${cmd}\x1b[0m\r\n`);
               executeCommand(cmd, code, filePath);
             } else if (code) {
-              runFileWithAutoCompile(code, filePath || 'script.py');
+              runFileWithAutoCompile(code, filePath || 'script.py', payload.workspaceFiles);
             }
             return;
           }

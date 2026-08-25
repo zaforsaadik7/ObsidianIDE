@@ -355,6 +355,9 @@ RESPONSE GUIDELINES:
 3. The user has an interactive integrated terminal directly connected. If terminal commands or scripts are recommended to test, build, run, or verify the solution, include them in the "commands" array or "runScript" object.
 4. If the user asks to push or upload to GitHub, always populate the "githubAction" object.
 5. If no file modifications, commands, or GitHub actions are needed, just provide your full answer without the JSON block.
+6. FILE GENERATION & DIRECTORY ORGANIZATION: ObsidianIDE automatically detects and captures all files and plots generated when code is executed in the terminal (such as PNG/JPG plots from Matplotlib/Seaborn/SHAP/XAI, CSV/JSON datasets, reports, or model binaries) and syncs them in real-time into the left-hand Workspace Directory Explorer. When generating or modifying code that saves output files:
+   - Always ensure scripts create the target directory if needed (e.g. \`import os; os.makedirs('outputs', exist_ok=True)\` or \`os.makedirs('plots', exist_ok=True)\`).
+   - Use clean, structured relative paths (e.g. \`shap_summary.png\` or \`outputs/shap_summary.png\` or \`plots/xai_analysis.png\`) and clearly document in your explanation which files are generated and their exact folder locations so everyone on the team understands where each file is saved.
 `;
 
     // Attempt generation with chosen model and auto-fallback to alternate verified models

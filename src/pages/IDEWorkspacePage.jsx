@@ -2205,6 +2205,79 @@ export const IDEWorkspacePage = () => {
     return pushData;
   };
 
+  const handleFilesGenerated = useCallback((generatedFiles = []) => {
+    if (!Array.isArray(generatedFiles) || generatedFiles.length === 0) return;
+
+    localMutationTimestampRef.current = Date.now();
+
+    setFiles(prevFiles => {
+      const updated = [...prevFiles];
+      let newlyAddedCount = 0;
+      let newlyAddedPaths = [];
+
+      for (const genFile of generatedFiles) {
+        const targetPath = genFile.filePath || genFile.fileName;
+        if (!targetPath) continue;
+
+        const existingIndex = updated.findIndex(f => (f.filePath || f.fileName) === targetPath);
+
+        if (existingIndex >= 0) {
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            content: genFile.content,
+            size: genFile.size || genFile.content?.length || 0,
+            isBinary: genFile.isBinary !== undefined ? genFile.isBinary : isBinaryFile(targetPath),
+            lastModifiedAt: new Date().toISOString(),
+            lastModifiedBy: currentUser?.displayName || currentUser?.email || 'terminal_runner'
+          };
+        } else {
+          updated.push({
+            filePath: targetPath,
+            fileName: genFile.fileName || targetPath.split('/').pop(),
+            fileType: genFile.fileType || targetPath.split('.').pop() || 'txt',
+            content: genFile.content,
+            size: genFile.size || genFile.content?.length || 0,
+            isBinary: genFile.isBinary !== undefined ? genFile.isBinary : isBinaryFile(targetPath),
+            lastModifiedAt: new Date().toISOString(),
+            lastModifiedBy: currentUser?.displayName || currentUser?.email || 'terminal_runner'
+          });
+          newlyAddedCount++;
+          newlyAddedPaths.push(targetPath);
+        }
+      }
+
+      localFilesRef.current = updated;
+
+      // Persist to backend and Firestore
+      const userEmail = (currentUser?.email || '').trim().toLowerCase();
+      const tokenPromise = currentUser?.getIdToken ? currentUser.getIdToken() : Promise.resolve('');
+
+      tokenPromise.then(authHeader => {
+        fetch('/api/projects/update-files', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authHeader ? { 'Authorization': `Bearer ${authHeader}` } : {})
+          },
+          body: JSON.stringify({
+            projectId,
+            working_files: updated,
+            master_project_files: isProjectOwner ? updated : masterFiles,
+            userEmail,
+            isOwner: isProjectOwner
+          })
+        }).catch(e => console.warn('Sync generated files notice:', e));
+      });
+
+      if (newlyAddedCount > 0) {
+        setSaveSyncSuccessMsg(`📁 Generated ${newlyAddedCount} new project file(s): ${newlyAddedPaths.slice(0, 3).join(', ')}`);
+        setTimeout(() => setSaveSyncSuccessMsg(''), 4000);
+      }
+
+      return updated;
+    });
+  }, [projectId, isProjectOwner, currentUser, masterFiles, isBinaryFile]);
+
   const toggleMenu = (menuName) => {
     setActiveMenu(prev => prev === menuName ? null : menuName);
   };
@@ -3265,9 +3338,11 @@ export const IDEWorkspacePage = () => {
                     currentUser={currentUser}
                     currentCode={currentContent}
                     activeFilePath={activeFile?.filePath || 'src/main.py'}
+                    files={files}
                     isVisible={isExecTerminalOpen}
                     onTerminalReady={(ctrl) => setTerminalController(ctrl)}
                     onOutput={(out) => setTerminalOutput(out)}
+                    onFilesGenerated={handleFilesGenerated}
                   />
                 </div>
               </div>

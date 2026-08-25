@@ -31,9 +31,11 @@ export const InteractiveTerminal = ({
   currentUser,
   currentCode = '',
   activeFilePath = 'src/main.py',
+  files = [],
   isVisible = true,
   onTerminalReady,
   onOutput,
+  onFilesGenerated,
 }) => {
   const terminalContainerRef = useRef(null);
   const xtermInstanceRef = useRef(null);
@@ -189,9 +191,24 @@ export const InteractiveTerminal = ({
       };
 
       socket.onmessage = (event) => {
-        term?.write(event.data);
+        const rawData = event.data;
+
+        // Check if message is a system sync JSON event for newly generated project files
+        if (typeof rawData === 'string' && rawData.startsWith('{') && rawData.endsWith('}')) {
+          try {
+            const parsed = JSON.parse(rawData);
+            if ((parsed.type === 'workspace_files_synced' || parsed.type === 'files_generated') && Array.isArray(parsed.generatedFiles)) {
+              if (onFilesGenerated) {
+                onFilesGenerated(parsed.generatedFiles);
+              }
+              return;
+            }
+          } catch {}
+        }
+
+        term?.write(rawData);
         try {
-          const rawText = typeof event.data === 'string' ? event.data : '';
+          const rawText = typeof rawData === 'string' ? rawData : '';
           if (rawText) {
             const cleanChunk = stripAnsiCodes(rawText);
             outputBufferRef.current = (outputBufferRef.current + cleanChunk).slice(-20000);
@@ -221,7 +238,7 @@ export const InteractiveTerminal = ({
     };
 
     createSocket(primaryWsUrl);
-  }, [currentUser, projectId, onOutput]);
+  }, [currentUser, projectId, onOutput, onFilesGenerated]);
 
   // ── Auto-Connect on Mount ──────────────────────────────────────────────────
   useEffect(() => {
@@ -233,41 +250,18 @@ export const InteractiveTerminal = ({
 
   // ── 4. Terminal Commands & Controller ──────────────────────────────────────
   const executeCodeInTerminal = useCallback((codeToRun = currentCode, targetPath = activeFilePath) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      connectWebSocket().then(() => {
-        setTimeout(() => {
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-              type: 'run_code',
-              code: codeToRun,
-              filePath: targetPath,
-            }));
-            setLastRunTimestamp(new Date().toLocaleTimeString());
-          }
-        }, 600);
-      });
-      return;
-    }
-
-    wsRef.current.send(JSON.stringify({
+    const payload = {
       type: 'run_code',
       code: codeToRun,
       filePath: targetPath,
-    }));
-    setLastRunTimestamp(new Date().toLocaleTimeString());
-  }, [currentCode, activeFilePath, connectWebSocket]);
+      workspaceFiles: files
+    };
 
-  const runCommandInTerminal = useCallback((cmdString, customCode = null, targetPath = null) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       connectWebSocket().then(() => {
         setTimeout(() => {
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-              type: 'exec_command',
-              command: cmdString,
-              code: customCode,
-              filePath: targetPath
-            }));
+            wsRef.current.send(JSON.stringify(payload));
             setLastRunTimestamp(new Date().toLocaleTimeString());
           }
         }, 600);
@@ -275,14 +269,34 @@ export const InteractiveTerminal = ({
       return;
     }
 
-    wsRef.current.send(JSON.stringify({
+    wsRef.current.send(JSON.stringify(payload));
+    setLastRunTimestamp(new Date().toLocaleTimeString());
+  }, [currentCode, activeFilePath, files, connectWebSocket]);
+
+  const runCommandInTerminal = useCallback((cmdString, customCode = null, targetPath = null) => {
+    const payload = {
       type: 'exec_command',
       command: cmdString,
       code: customCode,
-      filePath: targetPath
-    }));
+      filePath: targetPath,
+      workspaceFiles: files
+    };
+
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectWebSocket().then(() => {
+        setTimeout(() => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify(payload));
+            setLastRunTimestamp(new Date().toLocaleTimeString());
+          }
+        }, 600);
+      });
+      return;
+    }
+
+    wsRef.current.send(JSON.stringify(payload));
     setLastRunTimestamp(new Date().toLocaleTimeString());
-  }, [connectWebSocket]);
+  }, [files, connectWebSocket]);
 
   const sendInterrupt = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
