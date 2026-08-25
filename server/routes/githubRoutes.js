@@ -362,7 +362,8 @@ router.get('/manifest/callback/:stateKey', async (req, res) => {
       appId: appData.id
     };
     const oauthState = Buffer.from(JSON.stringify(oauthStateObj)).toString('base64');
-    const oauthCallbackUrl = 'http://localhost:5000/api/github/manifest/oauth-callback';
+    const serverDomain = resolveServerDomain(req);
+    const oauthCallbackUrl = `${serverDomain}/api/github/manifest/oauth-callback`;
     const oauthUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(appData.client_id)}&scope=repo,read:user,user:email&state=${encodeURIComponent(oauthState)}&redirect_uri=${encodeURIComponent(oauthCallbackUrl)}`;
 
     console.log(`[Manifest] Redirecting to OAuth with new app clientId=${appData.client_id} slug=${appData.slug}`);
