@@ -1979,6 +1979,24 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #146: AI Assistant Key Auto-Detection, Live Diagnostic Surfacing & Inline Key Strip
+* **Symptoms**:
+  - Entering a newly created Gemini API key into the AI Assistant continued to show generic error messages without revealing whether the issue was an invalid key, quota exhaustion, or unpersisted modal state.
+* **Root Cause**:
+  1. **Swallowed Diagnostic Details**: When both backend and direct Google API endpoints responded with an error or rejection, the caught exceptions were logged to `console.warn` but replaced with a generic fallback message, preventing developers from seeing Google's exact diagnostic error (e.g. `API_KEY_INVALID`, `RESOURCE_EXHAUSTED`, `PERMISSION_DENIED`).
+  2. **Manual Modal Persistence Friction**: If a user pasted an API key into the prompt box or closed the modal without explicitly clicking "Save & Apply", the key remained unpersisted in `localStorage`.
+  3. **Unsanitized Key String Format**: Leading/trailing quotes or whitespace were not stripped before being passed into Google's REST URL parameters.
+* **Solutions Implemented**:
+  1. **Instant Key Auto-Detection & Sanitization**: Added automatic regex detection (`/^AIzaSy[A-Za-z0-9_-]{33}$/`) in the chat input. Pasting a Gemini API key directly into the chat prompt instantly sanitizes, stores, and activates the key in the Vault with an instant confirmation bubble.
+  2. **Exact Live Error Diagnostics**: Updated `handleSendPrompt` so that if generation fails, the exact diagnostic error message returned by Google API or the Express backend is displayed in the AI chat bubble.
+  3. **Inline Quick Key Setup Strip**: Added an unobtrusive, prominent key setup strip directly above the prompt input whenever no active key is stored, enabling 1-click key entry and discovery.
+  4. **Model Name Normalization**: Ensured model parameters cleanly normalize prefixes (e.g. `models/gemini-1.5-flash` -> `gemini-1.5-flash`) for REST API compatibility.
+* **QA & Automated Verification**:
+  - Production build compiled with **0 errors in 11.44s**.
+  - Pushed to `origin/main` commit `89bed7a`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
