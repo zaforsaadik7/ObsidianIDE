@@ -1997,6 +1997,25 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #147: Google Gemini Model Deprecation & Upgrade to Gemini 3.0/3.5
+* **Symptoms**:
+  - Render terminal logs showed 404 errors during AI chat generation:
+    - `[404 Not Found] This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.0-flash for the latest features and improvements.`
+    - `[404 Not Found] This model models/gemini-2.0-flash-lite is no longer available. Please update your code to use models/gemini-3.5-flash-lite...`
+* **Root Cause**:
+  - Google updated their Generative Language API, deprecating older model names (`gemini-2.5-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-flash` on certain new API keys) in favor of the active standard models: **`gemini-3.0-flash`**, **`gemini-3.5-flash-lite`**, and **`gemini-3.0-pro`**.
+* **Solutions Implemented**:
+  1. **Dynamic Model Discovery Resolution**: Updated `discoverWorkingModels(apiKey)` in `server/routes/aiAgentRoutes.js` and `AgenticAIChatSidebar.jsx` to dynamically list available models for the user's API key and prioritize `gemini-3.0-flash`, `gemini-3.5-flash-lite`, `gemini-3.0-pro`, `gemini-2.0-flash-001`, `gemini-1.5-flash-002`.
+  2. **Updated Default Client & Server Models**:
+     - `availableModels` default list updated to `gemini-3.0-flash` (Recommended), `gemini-3.5-flash-lite`, and `gemini-3.0-pro`.
+     - `selectedModel` initial state set to `gemini-3.0-flash`.
+     - `callDirectGeminiApi` client-side REST caller updated to use `gemini-3.0-flash` as primary.
+* **QA & Automated Verification**:
+  - Production build compiled in **10.35s with 0 errors**.
+  - Pushed to `origin/main` commit `c3363d4`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
