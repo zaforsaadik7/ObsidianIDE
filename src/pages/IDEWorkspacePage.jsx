@@ -215,6 +215,40 @@ export const IDEWorkspacePage = () => {
 
   const toManifest = safeFilesPayload;
 
+  // Helper to initialize active file & open tabs from saved user preference or default
+  const resolveActiveFileAndTabs = useCallback((fileList = []) => {
+    if (!fileList || fileList.length === 0) return;
+    const userEmail = (currentUser?.email || '').trim().toLowerCase();
+    const savedActivePath = localStorage.getItem(`obsidian_active_file_${projectId}_${userEmail}`);
+    const savedOpenTabsRaw = localStorage.getItem(`obsidian_open_tabs_${projectId}_${userEmail}`);
+
+    let savedOpenTabs = [];
+    try {
+      savedOpenTabs = savedOpenTabsRaw ? JSON.parse(savedOpenTabsRaw) : [];
+    } catch (e) {}
+
+    // Find the target active file (Exact match on saved path, then main.py, then first file)
+    const targetActive = (savedActivePath && fileList.find(f => f.filePath === savedActivePath || f.fileName === savedActivePath)) ||
+      fileList.find(f => f.filePath === 'src/main.py' || f.fileName === 'main.py') ||
+      fileList[0];
+
+    // Restore open tabs
+    let restoredTabs = [];
+    if (Array.isArray(savedOpenTabs) && savedOpenTabs.length > 0) {
+      restoredTabs = savedOpenTabs.map(p => fileList.find(f => f.filePath === p || f.fileName === p)).filter(Boolean);
+    }
+    if (restoredTabs.length === 0 && targetActive) {
+      restoredTabs = [targetActive];
+    } else if (targetActive && !restoredTabs.some(f => f.filePath === targetActive.filePath)) {
+      restoredTabs.push(targetActive);
+    }
+
+    setOpenFiles(restoredTabs);
+    setActiveFile(targetActive);
+    activeFileRef.current = targetActive;
+    setCurrentContent(targetActive?.content || '');
+    setSavedContent(targetActive?.content || '');
+  }, [currentUser?.email, projectId]);
 
   // ── Real-Time Dual Repository Snapshot Listener (Master & Shared Working Fork) ──
   useEffect(() => {
@@ -288,12 +322,7 @@ export const IDEWorkspacePage = () => {
                     setFiles(draftFiles);
                     localFilesRef.current = draftFiles;
                     if (!activeFileRef.current && draftFiles.length > 0) {
-                      const first = draftFiles[0];
-                      setOpenFiles([first]);
-                      setActiveFile(first);
-                      activeFileRef.current = first;
-                      setCurrentContent(first.content || '');
-                      setSavedContent(first.content || '');
+                      resolveActiveFileAndTabs(draftFiles);
                     }
                   }
                 }
@@ -327,12 +356,7 @@ export const IDEWorkspacePage = () => {
                   setFiles(hydrated);
                   localFilesRef.current = hydrated;
                   if (!activeFileRef.current) {
-                    const first = hydrated[0];
-                    setOpenFiles([first]);
-                    setActiveFile(first);
-                    activeFileRef.current = first;
-                    setCurrentContent(first.content || '');
-                    setSavedContent(first.content || '');
+                    resolveActiveFileAndTabs(hydrated);
                   }
                   // Update localStorage cache with hydrated files
                   try {
@@ -387,12 +411,7 @@ export const IDEWorkspacePage = () => {
 
           // 5. Active File & Content synchronization (Safe: Never overwrites live typing buffer unless Master synchronized)
           if (!activeFileRef.current && working && working.length > 0) {
-            const first = working[0];
-            setOpenFiles([first]);
-            setActiveFile(first);
-            activeFileRef.current = first;
-            setCurrentContent(first.content || '');
-            setSavedContent(first.content || '');
+            resolveActiveFileAndTabs(working);
           } else if (activeFileRef.current && working && working.length > 0) {
             const matching = working.find(f =>
               (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
@@ -402,12 +421,14 @@ export const IDEWorkspacePage = () => {
               setActiveFile(matching);
               activeFileRef.current = matching;
               setOpenFiles(prev => prev.map(of =>
-                (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? { ...of, fileName: matching.fileName } : of
+                (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? { ...of, fileName: matching.fileName, content: matching.content } : of
               ));
-              // Update editor text ONLY if user is not actively editing or typing in the buffer
-              const isUserActivelyEditing = (currentContentRef.current !== savedContentRef.current) ||
+              // Update editor text if Master is synchronized or user is not typing dirty in this file
+              const isUserActivelyEditing = !isMasterSynchronized && (
                 isLocalDirtyRef.current ||
-                ((Date.now() - localMutationTimestampRef.current) < 30000);
+                (currentContentRef.current !== savedContentRef.current) ||
+                ((Date.now() - localMutationTimestampRef.current) < 30000)
+              );
 
               if (!isUserActivelyEditing && matching.content !== undefined && matching.content !== currentContentRef.current) {
                 setCurrentContent(matching.content);
@@ -968,14 +989,22 @@ export const IDEWorkspacePage = () => {
     if (!fileObj) return;
     const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
     const latest = currentFiles.find(f => f.fileId === fileObj.fileId || f.filePath === fileObj.filePath) || fileObj;
+    let nextOpenTabs = openFiles;
     if (!openFiles.some((f) => f.fileId === latest.fileId || f.filePath === latest.filePath)) {
-      setOpenFiles(prev => [...prev, latest]);
+      nextOpenTabs = [...openFiles, latest];
+      setOpenFiles(nextOpenTabs);
     }
     setActiveFile(latest);
     activeFileRef.current = latest;
     setCurrentContent(latest.content || '');
     setSavedContent(latest.content || '');
     setIsDiffViewActive(false);
+
+    try {
+      const userEmail = (currentUser?.email || '').trim().toLowerCase();
+      localStorage.setItem(`obsidian_active_file_${projectId}_${userEmail}`, latest.filePath);
+      localStorage.setItem(`obsidian_open_tabs_${projectId}_${userEmail}`, JSON.stringify(nextOpenTabs.map(f => f.filePath)));
+    } catch (e) {}
   };
 
   const handleSelectTab = (fileObj) => {
@@ -987,25 +1016,43 @@ export const IDEWorkspacePage = () => {
     setCurrentContent(latest.content || '');
     setSavedContent(latest.content || '');
     setIsDiffViewActive(false);
+
+    try {
+      const userEmail = (currentUser?.email || '').trim().toLowerCase();
+      localStorage.setItem(`obsidian_active_file_${projectId}_${userEmail}`, latest.filePath);
+    } catch (e) {}
   };
 
   const handleCloseTab = (fileObj) => {
     const nextTabs = openFiles.filter((f) => f.fileId !== fileObj.fileId && f.filePath !== fileObj.filePath);
     setOpenFiles(nextTabs);
+    let nextActive = null;
     if (activeFile?.fileId === fileObj.fileId || activeFile?.filePath === fileObj.filePath) {
       if (nextTabs.length > 0) {
-        const lastTab = nextTabs[nextTabs.length - 1];
-        setActiveFile(lastTab);
-        activeFileRef.current = lastTab;
-        setCurrentContent(lastTab.content || '');
-        setSavedContent(lastTab.content || '');
+        nextActive = nextTabs[nextTabs.length - 1];
+        setActiveFile(nextActive);
+        activeFileRef.current = nextActive;
+        setCurrentContent(nextActive.content || '');
+        setSavedContent(nextActive.content || '');
       } else {
         setActiveFile(null);
         activeFileRef.current = null;
         setCurrentContent('');
         setSavedContent('');
       }
+    } else {
+      nextActive = activeFile;
     }
+
+    try {
+      const userEmail = (currentUser?.email || '').trim().toLowerCase();
+      if (nextActive) {
+        localStorage.setItem(`obsidian_active_file_${projectId}_${userEmail}`, nextActive.filePath);
+      } else {
+        localStorage.removeItem(`obsidian_active_file_${projectId}_${userEmail}`);
+      }
+      localStorage.setItem(`obsidian_open_tabs_${projectId}_${userEmail}`, JSON.stringify(nextTabs.map(f => f.filePath)));
+    } catch (e) {}
   };
 
   // â”€â”€ 1. Save to Editor's Local Storage & Personal DB (No Fork Push to Owner) â”€â”€
