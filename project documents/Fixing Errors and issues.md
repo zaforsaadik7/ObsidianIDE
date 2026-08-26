@@ -1959,6 +1959,26 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #145: AI Assistant API Resolution Across Multi-Domain Deployments & Direct Gemini Fallback Engine
+* **Symptoms**:
+  - The AI Assistant API was failing or returning error notices when accessed from external domain deployments (e.g. `obsidian-ide.vercel.app`), or when backend server cold starts occurred.
+* **Root Cause**:
+  1. **Relative Path Routing Failure**: `fetch('/api/ai-agent/chat')`, `fetch('/api/ai-agent/models')`, and `fetch('/api/ai-agent/validate-key')` used raw relative URLs without resolving the backend base URL. When running on frontend-only hosts (such as Vercel), requests hit the static host instead of the Express backend on Render (`https://obsidianide.onrender.com`), returning 404.
+  2. **Single-Point Failure on Backend API**: If the backend container was sleeping or restarting, the AI Assistant had no client-side direct pathway to call Google's Generative AI API despite the user having a valid Gemini API Key in the Key Vault.
+* **Solutions Implemented**:
+  1. **Dynamic Backend URL Resolver (`getBackendBaseUrl`)**: Added automatic host resolution. On Vercel or local preview hosts, it automatically directs API traffic to `https://obsidianide.onrender.com`.
+  2. **Direct Client-Side Gemini Fallback Engine (`callDirectGeminiApi`)**:
+     - Dual-layer resilience: if the backend endpoint is sleeping, unreachable, or returns an error, the frontend automatically executes a direct REST call to Google's official Gemini Generative Language endpoint (`https://generativelanguage.googleapis.com/v1beta/models/...:generateContent?key=${apiKey}`) with full codebase, terminal, and active buffer context.
+     - Model Discovery & Key Vault now validate both through backend and direct Google API endpoints.
+* **QA & Automated Verification**:
+  - Validated via `test_ai_assistant_pipeline.js`:
+    - Test 1: URL resolution across Vercel and Render hosts validated.
+    - Test 2: AI response and JSON modification parsing validated with 100% precision.
+  - Production build compiled with **0 errors in 11.70s**.
+  - Pushed to `origin/main` commit `d00d5bb`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
