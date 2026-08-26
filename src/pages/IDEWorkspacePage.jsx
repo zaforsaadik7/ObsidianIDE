@@ -170,16 +170,40 @@ export const IDEWorkspacePage = () => {
   // â”€â”€ Active File & Mutation Guard References â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const activeFileRef = useRef(null);
   activeFileRef.current = activeFile;
+  // Stable content refs — used inside onSnapshot/syncFromServer callbacks to avoid stale closures
+  const currentContentRef = useRef(currentContent);
+  currentContentRef.current = currentContent;
+  const savedContentRef = useRef(savedContent);
+  savedContentRef.current = savedContent;
   const isLocalDirtyRef = useRef(false);
-  isLocalDirtyRef.current = (currentContent !== savedContent);
+  // NOTE: Do NOT overwrite isLocalDirtyRef on every render — it is set explicitly in handlers
   const hasUnsavedForkChangesRef = useRef(false);
   const localMutationTimestampRef = useRef(0);
-  const localFilesRef = useRef([]);
-  localFilesRef.current = files;
-  const localMasterRef = useRef([]);
-  localMasterRef.current = masterFiles;
+  // Hard immunity flag: when true, onSnapshot and syncFromServer will NOT overwrite local files state.
+  const isImportingRef = useRef(false);
+  // NOTE: Do NOT set localFilesRef/localMasterRef on every render — only in handlers.
+  const localFilesRef = useRef(files);
+  const localMasterRef = useRef(masterFiles);
 
-  // â”€â”€ Real-Time Dual Repository Snapshot Listener (Master & Shared Working Fork) â”€â”€
+  // Helper: Ensures file payloads are safe for Firestore document size (< 800 KB).
+  // Preserves full content for normal projects, and strips content into manifests only if payload exceeds 800 KB.
+  const safeFilesPayload = useCallback((fileArray = []) => {
+    try {
+      const jsonStr = JSON.stringify(fileArray);
+      if (jsonStr.length < 800000) {
+        return fileArray;
+      }
+    } catch (e) {}
+    return fileArray.map(({ content, ...rest }) => ({
+      ...rest,
+      _manifestOnly: true
+    }));
+  }, []);
+
+  const toManifest = safeFilesPayload;
+
+
+  // ── Real-Time Dual Repository Snapshot Listener (Master & Shared Working Fork) ──
   useEffect(() => {
     if (!projectId) return;
     const userEmail = (currentUser?.email || '').trim().toLowerCase();
@@ -190,6 +214,13 @@ export const IDEWorkspacePage = () => {
         if (snap.exists()) {
           const data = snap.data();
           setLiveProjectData(data);
+
+          // ── IMPORT GUARD: If actively importing a folder, skip all file state updates ──
+          // This prevents the old Firestore data from overwriting the newly imported files
+          if (isImportingRef.current) {
+            setLoading(false);
+            return;
+          }
 
           // 1. Resolve User Role (Project Owner email has absolute authority)
           // Always update the ref so effects that run concurrently can read the latest value
@@ -218,7 +249,7 @@ export const IDEWorkspacePage = () => {
                 ? data.working_files
                 : [];
 
-          if (master && master.length > 0) {
+          if (master && master.length > 0 && master.some(f => f.content !== undefined)) {
             setMasterFiles(master);
             localMasterRef.current = master;
           }
@@ -228,51 +259,83 @@ export const IDEWorkspacePage = () => {
             ? data.working_files
             : master;
 
-          // If working files is smaller than local draft, merge draft files so imported folders never vanish on refresh
-          try {
-            const draftStr = localStorage.getItem(`obsidian_draft_${projectId}_${userEmail}`);
-            if (draftStr) {
-              const draftFiles = JSON.parse(draftStr);
-              if (Array.isArray(draftFiles) && draftFiles.length > working.length) {
-                const workingMap = new Map(working.map(f => [f.filePath || f.fileName, f]));
-                const mergedWithDraft = draftFiles.map(df => workingMap.get(df.filePath || df.fileName) || df);
-                const draftPathSet = new Set(draftFiles.map(df => df.filePath || df.fileName));
-                working.forEach(wf => {
-                  if (!draftPathSet.has(wf.filePath || wf.fileName)) mergedWithDraft.push(wf);
-                });
-                working = mergedWithDraft;
+          // ── SUBCOLLECTION HYDRATION ──
+          // If working files are manifests (no content) or empty, hydrate from subcollection
+          const needsHydration = working.length > 0 && working.some(f => f._manifestOnly || (f.filePath && f.content === undefined && !f.isBinary));
+          
+          if (needsHydration || (!working || working.length === 0)) {
+            // First, try localStorage draft as immediate cache
+            try {
+              const draftStr = localStorage.getItem(`obsidian_draft_${projectId}_${userEmail}`);
+              if (draftStr) {
+                const draftFiles = JSON.parse(draftStr);
+                if (Array.isArray(draftFiles) && draftFiles.length > 0) {
+                  // Use draft files immediately while subcollection loads
+                  if (draftFiles.length >= working.length) {
+                    setFiles(draftFiles);
+                    localFilesRef.current = draftFiles;
+                    if (!activeFileRef.current && draftFiles.length > 0) {
+                      const first = draftFiles[0];
+                      setOpenFiles([first]);
+                      setActiveFile(first);
+                      activeFileRef.current = first;
+                      setCurrentContent(first.content || '');
+                      setSavedContent(first.content || '');
+                    }
+                  }
+                }
               }
-            }
-          } catch (e) {}
-
-          // Fallback: If working is completely empty, attempt recovery from subcollection
-          if (!working || working.length === 0) {
+            } catch (e) {}
+            
+            // Then hydrate from subcollection (async)
             getDocs(collection(db, 'projects', projectId, 'files')).then(subSnap => {
+              if (isImportingRef.current) return; // Guard: skip if import started while loading
               if (!subSnap.empty) {
-                const subFiles = [];
+                const contentMap = new Map();
                 subSnap.forEach(d => {
                   const fd = d.data();
-                  if (fd && (fd.filePath || fd.fileName)) subFiles.push(fd);
+                  if (fd && fd.filePath) contentMap.set(fd.filePath, fd);
                 });
-                if (subFiles.length > 0) {
-                  setFiles(subFiles);
-                  localFilesRef.current = subFiles;
-                  setMasterFiles(subFiles);
-                  localMasterRef.current = subFiles;
+
+                // Merge subcollection content into manifest entries
+                const manifests = working.length > 0 ? working : [];
+                const hydrated = manifests.map(f => {
+                  const sub = contentMap.get(f.filePath);
+                  return sub ? { ...f, content: sub.content || '', _manifestOnly: undefined } : f;
+                });
+                // Also add subcollection files not present in manifest
+                contentMap.forEach((fd, path) => {
+                  if (!manifests.some(w => w.filePath === path)) {
+                    hydrated.push(fd);
+                  }
+                });
+
+                if (hydrated.length > 0) {
+                  setFiles(hydrated);
+                  localFilesRef.current = hydrated;
                   if (!activeFileRef.current) {
-                    const first = subFiles[0];
+                    const first = hydrated[0];
                     setOpenFiles([first]);
                     setActiveFile(first);
                     activeFileRef.current = first;
                     setCurrentContent(first.content || '');
                     setSavedContent(first.content || '');
                   }
+                  // Update localStorage cache with hydrated files
+                  try {
+                    localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(hydrated));
+                  } catch (e) {}
                 }
               }
             }).catch(() => {});
+            
+            setLoading(false);
+            return; // Skip normal file state update — hydration handles it
           }
 
-          // Check if Master baseline is synchronized with working files (Owner saved/merged fork or pendingFork cleared)
+          // ── NORMAL PATH: Working files have full content ──
+
+          // Check if Master baseline is synchronized with working files
           const isMasterSynchronized = data.pendingFork === false ||
             (master.length > 0 && master.length === working.length && master.every(mf => {
               const wf = working.find(w => w.filePath === mf.filePath);
@@ -286,7 +349,8 @@ export const IDEWorkspacePage = () => {
           }
 
           // 4. Update working files state with strict mutation protection
-          const hasLocalTypingDirty = (currentContent !== savedContent);
+          // Use refs (not stale closure variables) for accurate comparison
+          const hasLocalTypingDirty = (currentContentRef.current !== savedContentRef.current);
           const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 30000;
           const hasStagedForkChanges = hasUnsavedForkChangesRef.current;
           if (isMasterSynchronized || (!isRecentLocalMutation && !hasLocalTypingDirty && !hasStagedForkChanges)) {
@@ -321,14 +385,18 @@ export const IDEWorkspacePage = () => {
               (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
               f.filePath === activeFileRef.current.filePath
             );
-            if (matching && (isMasterSynchronized || !isRecentLocalMutation)) {
+            if (matching) {
               setActiveFile(matching);
               activeFileRef.current = matching;
               setOpenFiles(prev => prev.map(of =>
-                (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? matching : of
+                (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? { ...of, fileName: matching.fileName } : of
               ));
-              // Update editor text when master is synced or when local user is not typing unsaved changes
-              if ((isMasterSynchronized || !isLocalDirtyRef.current) && matching.content !== undefined) {
+              // Update editor text ONLY if user is not actively editing or typing in the buffer
+              const isUserActivelyEditing = (currentContentRef.current !== savedContentRef.current) ||
+                isLocalDirtyRef.current ||
+                ((Date.now() - localMutationTimestampRef.current) < 30000);
+
+              if (!isUserActivelyEditing && matching.content !== undefined && matching.content !== currentContentRef.current) {
                 setCurrentContent(matching.content);
                 setSavedContent(matching.content);
               }
@@ -349,11 +417,14 @@ export const IDEWorkspacePage = () => {
     }
   }, [projectId, currentUser]);
 
-  // â”€â”€ Periodic Server REST Synchronization (Authoritative Polling Fallback) â”€â”€
+  // ── Periodic Server REST Synchronization (Authoritative Polling Fallback) ──
   useEffect(() => {
     if (!projectId) return;
 
     const syncFromServer = async () => {
+      // ── IMPORT GUARD: Skip polling if actively importing ──
+      if (isImportingRef.current) return;
+
       try {
         const userEmail = (currentUser?.email || '').trim().toLowerCase();
         const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
@@ -365,7 +436,7 @@ export const IDEWorkspacePage = () => {
           const proj = resData.project;
           if (proj) {
             setLiveProjectData(proj);
-            // 1. Resolve User Role â€” always update ownerEmail ref too
+            // 1. Resolve User Role — always update ownerEmail ref too
             const serverOwnerEmail = (proj.ownerEmail || '').trim().toLowerCase();
             if (serverOwnerEmail) projectOwnerEmailRef.current = serverOwnerEmail;
 
@@ -414,7 +485,8 @@ export const IDEWorkspacePage = () => {
               localMutationTimestampRef.current = 0;
             }
 
-            const hasStagedModifications = hasUnsavedForkChangesRef.current || (currentContent !== savedContent);
+            // Use refs instead of stale closure variables for accurate comparison
+            const hasStagedModifications = hasUnsavedForkChangesRef.current || (currentContentRef.current !== savedContentRef.current);
             const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 30000;
             if (isServerMasterSynced || (!isRecentLocalMutation && !hasStagedModifications)) {
               if (serverWorking && serverWorking.length > 0) {
@@ -435,7 +507,7 @@ export const IDEWorkspacePage = () => {
             }
 
             // Sync active file metadata
-            if (activeFileRef.current && serverWorking && serverWorking.length > 0 && (isServerMasterSynced || (!isRecentLocalMutation && !hasStagedModifications))) {
+            if (activeFileRef.current && serverWorking && serverWorking.length > 0) {
               const matching = serverWorking.find(f =>
                 (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
                 f.filePath === activeFileRef.current.filePath
@@ -444,9 +516,14 @@ export const IDEWorkspacePage = () => {
                 setActiveFile(matching);
                 activeFileRef.current = matching;
                 setOpenFiles(prev => prev.map(of =>
-                  (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? matching : of
+                  (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? { ...of, fileName: matching.fileName } : of
                 ));
-                if ((isServerMasterSynced || !isLocalDirtyRef.current) && matching.content !== undefined) {
+                // Update editor text ONLY if user is not actively editing or typing in the buffer
+                const isUserActivelyEditing = (currentContentRef.current !== savedContentRef.current) ||
+                  isLocalDirtyRef.current ||
+                  ((Date.now() - localMutationTimestampRef.current) < 30000);
+
+                if (!isUserActivelyEditing && matching.content !== undefined && matching.content !== currentContentRef.current) {
                   setCurrentContent(matching.content);
                   setSavedContent(matching.content);
                 }
@@ -461,7 +538,8 @@ export const IDEWorkspacePage = () => {
     syncFromServer();
     const intervalId = setInterval(syncFromServer, 5000);
     return () => clearInterval(intervalId);
-  }, [projectId, currentUser, currentContent, savedContent]);
+  // FIXED: Removed currentContent/savedContent from deps — using refs instead.
+  }, [projectId, currentUser]);
 
   // â”€â”€ Real-Time Active Collaborators & Cursor Coordination Protocol â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
@@ -529,11 +607,17 @@ export const IDEWorkspacePage = () => {
                 setMasterFiles(msg.master_project_files);
                 localMasterRef.current = msg.master_project_files;
               }
-              hasUnsavedForkChangesRef.current = false;
-              isLocalDirtyRef.current = false;
-              localMutationTimestampRef.current = 0;
+              const isUserActivelyEditing = (currentContentRef.current !== savedContentRef.current) ||
+                isLocalDirtyRef.current ||
+                ((Date.now() - localMutationTimestampRef.current) < 30000);
 
-              // Seamlessly update active file content
+              if (!isUserActivelyEditing) {
+                hasUnsavedForkChangesRef.current = false;
+                isLocalDirtyRef.current = false;
+                localMutationTimestampRef.current = 0;
+              }
+
+              // Seamlessly update active file content ONLY if user is not actively editing
               if (activeFileRef.current) {
                 const matched = incomingFiles.find(f =>
                   (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
@@ -543,9 +627,9 @@ export const IDEWorkspacePage = () => {
                   setActiveFile(matched);
                   activeFileRef.current = matched;
                   setOpenFiles(prev => prev.map(of =>
-                    (of.filePath === matched.filePath || (matched.fileId && of.fileId === matched.fileId)) ? matched : of
+                    (of.filePath === matched.filePath || (matched.fileId && of.fileId === matched.fileId)) ? { ...of, fileName: matched.fileName } : of
                   ));
-                  if (matched.content !== undefined) {
+                  if (!isUserActivelyEditing && matched.content !== undefined && matched.content !== currentContentRef.current) {
                     setCurrentContent(matched.content);
                     setSavedContent(matched.content);
                   }
@@ -697,12 +781,29 @@ export const IDEWorkspacePage = () => {
           }));
         }
 
+        const manifestFiles = toManifest(updatedFiles);
         setDoc(doc(db, 'projects', projectId), {
-          working_files: updatedFiles,
+          working_files: manifestFiles,
           lastWorkingModifiedBy: userEmail,
           lastWorkingModifiedByName: userName,
           updatedAt: timestamp
         }, { merge: true }).catch(() => {});
+
+        if (activeFile && (activeFile.fileId || activeFile.filePath)) {
+          const fileDocId = activeFile.fileId || `file_${projectId}_${activeFile.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+          setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+            fileId: String(fileDocId),
+            projectId: String(projectId),
+            filePath: String(activeFile.filePath),
+            fileName: String(activeFile.fileName || activeFile.filePath.split('/').pop()),
+            content: String(currentContent || ''),
+            fileType: String(activeFile.fileType || 'plaintext'),
+            isBinary: Boolean(activeFile.isBinary),
+            size: Number(currentContent ? currentContent.length : 0),
+            updatedAt: timestamp,
+            lastModifiedBy: userEmail
+          }, { merge: true }).catch(() => {});
+        }
       }
     }, 1200);
 
@@ -727,7 +828,7 @@ export const IDEWorkspacePage = () => {
         : wf.content;
       if (!mf) {
         status[wf.filePath] = 'ADDED';
-      } else if (mf.content !== effectiveContent) {
+      } else if (mf.content !== undefined && effectiveContent !== undefined && mf.content !== effectiveContent) {
         status[wf.filePath] = 'MODIFIED';
       }
     });
@@ -816,6 +917,25 @@ export const IDEWorkspacePage = () => {
     if (!activeFile) return false;
     return fileStatusMap[activeFile.filePath] === 'MODIFIED' || (activeMasterFile && activeMasterFile.content !== currentContent);
   }, [fileStatusMap, activeFile, activeMasterFile, currentContent]);
+
+  const handleEditorContentChange = useCallback((newContent) => {
+    const val = typeof newContent === 'string' ? newContent : '';
+    setCurrentContent(val);
+    currentContentRef.current = val;
+    isLocalDirtyRef.current = true;
+    localMutationTimestampRef.current = Date.now();
+
+    // Synchronously reflect change into localFilesRef so file tree & tab switching never lose the typed/deleted buffer
+    if (activeFileRef.current) {
+      const activePath = activeFileRef.current.filePath;
+      const activeId = activeFileRef.current.fileId;
+      localFilesRef.current = (localFilesRef.current || []).map(f =>
+        ((activeId && f.fileId === activeId) || f.filePath === activePath)
+          ? { ...f, content: val }
+          : f
+      );
+    }
+  }, []);
 
   const handleSelectFile = (fileObj) => {
     if (!fileObj) return;
@@ -977,13 +1097,30 @@ export const IDEWorkspacePage = () => {
 
       // 1. Direct Firestore write for instant real-time delivery to Owner
       try {
+        const manifestFiles = toManifest(updatedFiles);
         setDoc(doc(db, 'projects', projectId), {
-          working_files: updatedFiles,
+          working_files: manifestFiles,
           lastWorkingModifiedBy: userEmail,
           lastWorkingModifiedByName: currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0],
           pendingFork: true,
           updatedAt: timestamp
         }, { merge: true }).catch(() => {});
+
+        if (targetFile && (targetFile.fileId || targetFile.filePath)) {
+          const fileDocId = targetFile.fileId || `file_${projectId}_${targetFile.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+          setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+            fileId: String(fileDocId),
+            projectId: String(projectId),
+            filePath: String(targetFile.filePath),
+            fileName: String(targetFile.fileName || targetFile.filePath.split('/').pop()),
+            content: String(currentContent || ''),
+            fileType: String(targetFile.fileType || 'plaintext'),
+            isBinary: Boolean(targetFile.isBinary),
+            size: Number(currentContent ? currentContent.length : 0),
+            updatedAt: timestamp,
+            lastModifiedBy: userEmail
+          }, { merge: true }).catch(() => {});
+        }
       } catch (fsErr) {}
 
       // 2. Broadcast FORK_REQUESTED immediately over WebSocket so Owner sees new proposal within < 50ms
@@ -1064,10 +1201,11 @@ export const IDEWorkspacePage = () => {
 
       // 1. Commit to Client Firestore Master & Working files in Website Database (Instant atomic doc update)
       try {
+        const manifestFiles = toManifest(targetWorkingFiles);
         await setDoc(doc(db, 'projects', projectId), {
-          master_project_files: targetWorkingFiles,
-          project_files: targetWorkingFiles,
-          working_files: targetWorkingFiles,
+          master_project_files: manifestFiles,
+          project_files: manifestFiles,
+          working_files: manifestFiles,
           pending_patches: [],
           pendingFork: false,
           lastWorkingModifiedBy: userEmail,
@@ -1203,9 +1341,10 @@ export const IDEWorkspacePage = () => {
 
       // 1. Reset working_files and pending_patches in Firestore
       try {
+        const manifestMaster = toManifest(targetMasterFiles);
         await setDoc(doc(db, 'projects', projectId), {
-          working_files: targetMasterFiles,
-          project_files: targetMasterFiles,
+          working_files: manifestMaster,
+          project_files: manifestMaster,
           pending_patches: [],
           lastForkRejectedAt: timestamp,
           lastForkRejectedBy: userEmail,
@@ -1428,11 +1567,29 @@ export const IDEWorkspacePage = () => {
 
       // Persist to Client Firestore
       try {
+        const manifestFiles = toManifest(updatedFiles);
         await setDoc(doc(db, 'projects', projectId), {
-          working_files: updatedFiles,
+          working_files: manifestFiles,
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
         }, { merge: true });
+
+        const modFile = updatedFiles.find(f => (existingFile && (f.fileId === existingFile.fileId || clean(f.filePath) === clean(existingFile.filePath))) || clean(f.filePath) === targetClean);
+        if (modFile && (modFile.fileId || modFile.filePath)) {
+          const fileDocId = modFile.fileId || `file_${projectId}_${modFile.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+          setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+            fileId: String(fileDocId),
+            projectId: String(projectId),
+            filePath: String(modFile.filePath),
+            fileName: String(modFile.fileName || modFile.filePath.split('/').pop()),
+            content: String(newContent || ''),
+            fileType: String(modFile.fileType || 'plaintext'),
+            isBinary: Boolean(modFile.isBinary),
+            size: Number(newContent ? newContent.length : 0),
+            updatedAt: new Date().toISOString(),
+            lastModifiedBy: userEmail
+          }, { merge: true }).catch(() => {});
+        }
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
@@ -1491,13 +1648,29 @@ export const IDEWorkspacePage = () => {
 
       // Persist to Shared Working Fork & Master baseline in Firestore & REST API
       try {
+        const manifestFiles = toManifest(updatedFiles);
         const payload = {
-          working_files: updatedFiles,
-          ...(isProjectOwner ? { master_project_files: updatedFiles, project_files: updatedFiles } : {}),
+          working_files: manifestFiles,
+          ...(isProjectOwner ? { master_project_files: manifestFiles, project_files: manifestFiles } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
         };
         await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
+
+        // Save new file directly to subcollection with full content
+        const fileDocId = newFileObj.fileId || `file_${projectId}_${newFileObj.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+        setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+          fileId: String(fileDocId),
+          projectId: String(projectId),
+          filePath: String(newFileObj.filePath),
+          fileName: String(newFileObj.fileName),
+          content: String(newFileObj.content || ''),
+          fileType: String(newFileObj.fileType || 'plaintext'),
+          isBinary: Boolean(newFileObj.isBinary),
+          size: Number(newFileObj.content ? newFileObj.content.length : 0),
+          updatedAt: new Date().toISOString(),
+          lastModifiedBy: userEmail
+        }, { merge: true }).catch(() => {});
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
@@ -1565,13 +1738,25 @@ export const IDEWorkspacePage = () => {
 
       // Persist to Shared Working Fork & Master
       try {
+        const manifestFiles = toManifest(updatedFiles);
         const payload = {
-          working_files: updatedFiles,
-          ...(isProjectOwner ? { master_project_files: updatedFiles, project_files: updatedFiles } : {}),
+          working_files: manifestFiles,
+          ...(isProjectOwner ? { master_project_files: manifestFiles, project_files: manifestFiles } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
         };
         await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
+
+        // Update renamed file in subcollection
+        const fileDocId = fileObj.fileId || `file_${projectId}_${cleanNewPath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+        setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+          fileId: String(fileDocId),
+          projectId: String(projectId),
+          filePath: String(cleanNewPath),
+          fileName: String(cleanNewPath.split('/').pop()),
+          updatedAt: new Date().toISOString(),
+          lastModifiedBy: userEmail
+        }, { merge: true }).catch(() => {});
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
@@ -1625,13 +1810,18 @@ export const IDEWorkspacePage = () => {
 
       // Persist to Shared Working Fork & Master
       try {
+        const manifestFiles = toManifest(remainingFiles);
         const payload = {
-          working_files: remainingFiles,
-          ...(isProjectOwner ? { master_project_files: remainingFiles, project_files: remainingFiles } : {}),
+          working_files: manifestFiles,
+          ...(isProjectOwner ? { master_project_files: manifestFiles, project_files: manifestFiles } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
         };
         await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
+
+        // Delete from subcollection
+        const fileDocId = fileObj.fileId || `file_${projectId}_${(fileObj.filePath || '').replace(/[^a-zA-Z0-9_]/g, '_')}`;
+        deleteDoc(doc(db, 'projects', projectId, 'files', fileDocId)).catch(() => {});
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
@@ -1712,9 +1902,10 @@ export const IDEWorkspacePage = () => {
 
       // Persist to Shared Working Fork & Master
       try {
+        const manifestFiles = toManifest(updatedFiles);
         const payload = {
-          working_files: updatedFiles,
-          ...(isProjectOwner ? { master_project_files: updatedFiles, project_files: updatedFiles } : {}),
+          working_files: manifestFiles,
+          ...(isProjectOwner ? { master_project_files: manifestFiles, project_files: manifestFiles } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
         };
@@ -1782,9 +1973,10 @@ export const IDEWorkspacePage = () => {
 
       // Persist to Shared Working Fork & Master
       try {
+        const manifestFiles = toManifest(remaining);
         const payload = {
-          working_files: remaining,
-          ...(isProjectOwner ? { master_project_files: remaining, project_files: remaining } : {}),
+          working_files: manifestFiles,
+          ...(isProjectOwner ? { master_project_files: manifestFiles, project_files: manifestFiles } : {}),
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
         };
@@ -1861,7 +2053,7 @@ export const IDEWorkspacePage = () => {
     await exportProjectZip(files, projectData?.title || 'Quantum_Router');
   };
 
-  // â”€â”€ Drag & Drop Move Handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Drag & Drop Move Handler ──────────────────────────────────────────────
   const handleMoveItem = async (sourceType, sourcePath, targetFolderPath = '') => {
     const cleanTarget = targetFolderPath.replace(/^\/+|\/+$/g, '');
     const prefix = cleanTarget ? `${cleanTarget}/` : '';
@@ -1898,13 +2090,25 @@ export const IDEWorkspacePage = () => {
 
         // Persist to Shared Working Fork & Master
         try {
+          const manifestFiles = toManifest(updatedFiles);
           const payload = {
-            working_files: updatedFiles,
-            ...(isProjectOwner ? { master_project_files: updatedFiles, project_files: updatedFiles } : {}),
+            working_files: manifestFiles,
+            ...(isProjectOwner ? { master_project_files: manifestFiles, project_files: manifestFiles } : {}),
             updatedAt: new Date().toISOString(),
             lastWorkingModifiedBy: userEmail
           };
           await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
+
+          // Update moved file in subcollection
+          const fileDocId = targetFile.fileId || `file_${projectId}_${newPath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+          setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+            fileId: String(fileDocId),
+            projectId: String(projectId),
+            filePath: String(newPath),
+            fileName: String(fileName),
+            updatedAt: new Date().toISOString(),
+            lastModifiedBy: userEmail
+          }, { merge: true }).catch(() => {});
 
           await fetch('/api/projects/update-files', {
             method: 'POST',
@@ -1983,8 +2187,9 @@ export const IDEWorkspacePage = () => {
 
         // Persist to Shared Working Fork (NOT project_files — that's the master baseline)
         try {
+          const manifestFiles = toManifest(updatedFiles);
           await setDoc(doc(db, 'projects', projectId), {
-            working_files: updatedFiles,
+            working_files: manifestFiles,
             updatedAt: new Date().toISOString(),
             lastWorkingModifiedBy: userEmail
           }, { merge: true });
@@ -2012,7 +2217,7 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // â”€â”€ Import Actions & File Pickers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Import Actions & File Pickers ──────────────────────────────────────────────
   const handleTriggerImport = (type, targetFolder = '') => {
     setImportTargetFolder(targetFolder || '');
     if (type === 'files' && fileInputRef.current) {
@@ -2080,6 +2285,9 @@ export const IDEWorkspacePage = () => {
   };
 
   const handleConfirmImport = async (incomingFiles) => {
+    // ── SET IMPORT GUARD: Block onSnapshot and syncFromServer from overwriting local state ──
+    isImportingRef.current = true;
+
     try {
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
       const userEmail = (currentUser?.email || 'developer@obsidian.io').trim().toLowerCase();
@@ -2121,7 +2329,7 @@ export const IDEWorkspacePage = () => {
       setFiles(mergedFiles);
       setImportModalData(null);
 
-      // Save local offline draft in browser localStorage
+      // Save local offline draft in browser localStorage (full content for instant reload)
       try {
         localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(mergedFiles));
       } catch (e) {}
@@ -2141,13 +2349,16 @@ export const IDEWorkspacePage = () => {
         handleSelectFile(newFormattedFiles[0]);
       }
 
-      // 1. Persist to Firestore: Project document
+      // 1. Persist MANIFEST-ONLY to Firestore parent document (no file content)
+      //    This prevents hitting the 1 MiB Firestore document size limit — the PRIMARY fix.
+      //    Full file content is stored exclusively in the subcollection (step 2).
       try {
+        const manifestFiles = toManifest(mergedFiles);
         const payload = {
-          working_files: mergedFiles,
+          working_files: manifestFiles,
           ...(isProjectOwner ? {
-            master_project_files: mergedFiles,
-            project_files: mergedFiles,
+            master_project_files: manifestFiles,
+            project_files: manifestFiles,
             masterLastSyncedAt: timestamp,
             masterLastSyncedBy: userEmail,
             pendingFork: false
@@ -2163,9 +2374,9 @@ export const IDEWorkspacePage = () => {
         console.warn('Parent project document update notice:', fsErr);
       }
 
-      // 2. Persist individual files in subcollection (chunked for resilience)
+      // 2. Persist individual files WITH FULL CONTENT in subcollection (chunked for resilience)
       try {
-        const chunkPromises = newFormattedFiles.map(f => {
+        const chunkPromises = mergedFiles.map(f => {
           if (f && (f.fileId || f.filePath)) {
             const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
             return setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
@@ -2249,6 +2460,11 @@ export const IDEWorkspacePage = () => {
     } catch (err) {
       console.error('Error confirming import:', err);
       alert(`Failed to import files: ${err.message}`);
+    } finally {
+      // ── CLEAR IMPORT GUARD after all persistence is complete ──
+      // Use a short delay to ensure any pending onSnapshot callbacks that were queued
+      // during the import window don't overwrite the new state.
+      setTimeout(() => { isImportingRef.current = false; }, 5000);
     }
   };
 
@@ -3408,7 +3624,7 @@ export const IDEWorkspacePage = () => {
                   onSelectTab={handleSelectTab}
                   onCloseTab={handleCloseTab}
                   currentContent={currentContent}
-                  onChangeContent={setCurrentContent}
+                  onChangeContent={handleEditorContentChange}
                   onSaveFile={handleSaveFile}
                   isSaving={isSaving}
                   isUnsaved={isUnsaved}

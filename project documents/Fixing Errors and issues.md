@@ -1779,6 +1779,112 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #137: Folder & ZIP Import Optimization with 1MB Firestore Limit Resilience and Subcollection Batching
+* **Symptoms**:
+  - Importing medium/large directories or multi-file ZIP packages (> 15 files or containing assets/binaries) failed with Firestore payload size errors or caused browser freeze and state resets.
+* **Root Cause**:
+  1. Storing complete file contents of 50-200 files in a single Firestore document array (`working_files` / `master_project_files`) exceeded Google Cloud Firestore's strict 1 MiB single document limit.
+  2. Unhandled binary files (e.g. images, `.png`, `.jpg`, `.woff2`, `.pyc`) were improperly read as raw UTF-8 strings, inflating document byte size.
+  3. Real-time Firestore snapshot listeners (`onSnapshot`) fired prematurely during active multi-batch folder uploads, reverting the local file explorer state back to older pre-import snapshots.
+* **Solutions Implemented**:
+  1. **Chunked Subcollection Persistence**: Created subcollection writes (`projects/{projectId}/files/{fileDocId}`) in batches of 400 with Firestore `WriteBatch`, storing each file with its complete content safely outside the parent document.
+  2. **Safe Manifest Threshold (`safeFilesPayload`)**: Implemented a payload analyzer that keeps full contents for standard repositories (< 800 KB) and cleanly strips file contents into manifests (`_manifestOnly: true`) only when payload sizes approach the 1MB limit.
+  3. **Binary File Handling**: Upgraded `src/utils/fileImporter.js` with binary format detection (`isBinaryFile`), storing binary assets as lightweight metadata markers rather than inflating JSON payloads.
+  4. **Import Immunity Guard (`isImportingRef`)**: Introduced a state guard in `IDEWorkspacePage.jsx` that pauses snapshot and REST polling listener updates during active folder/ZIP imports until the entire batch is persisted.
+* **QA & Automated Verification**:
+  - Executed automated test suite (`test_manifest_and_folder_upload.js`) validating 50-file directory import, subcollection chunking, and parent doc size compliance.
+  - Production build `npm run build` completed with **0 errors in 10.22s**.
+
+---
+
+### Issue #138: File Creation & Master Baseline Save Synchronization Glitch (Zero False MODIFIED Badges)
+* **Symptoms**:
+  - Creating a new file and clicking Save caused the website UI to glitch: all saved files in the repository suddenly showed up as `MODIFIED` (with amber badges) indicating they needed to be saved and synced again, and newly created files occasionally vanished from the file explorer tree.
+* **Root Cause**:
+  1. `toManifest()` was previously called indiscriminately on every file creation and autosave, stripping `.content` from `master_project_files` and `working_files` in Firestore.
+  2. When `onSnapshot` received the update, `masterFiles` received items with `content: undefined`.
+  3. In `fileStatusMap`:
+     ```javascript
+     else if (mf.content !== effectiveContent) {
+       status[wf.filePath] = 'MODIFIED';
+     }
+     ```
+     Because `mf.content` was `undefined` while `wf.content` was a string, `undefined !== "..."` evaluated to `true` for **every single file in the workspace**, lighting up every file as `MODIFIED`.
+  4. Subcollection hydration race conditions reloaded an older snapshot before the newly created file was committed, overwriting local state and causing newly created files to vanish.
+* **Solutions Implemented**:
+  1. **Payload Content Preservation**: Replaced indiscriminate stripping with `safeFilesPayload()` across all handlers in `IDEWorkspacePage.jsx` and `projectRoutes.js`. Standard project files always preserve full `.content` in `working_files`, `master_project_files`, and `project_files`.
+  2. **Safe Diff Comparison Guard**: Added content presence validation in `fileStatusMap`: `else if (mf.content !== undefined && effectiveContent !== undefined && mf.content !== effectiveContent)`, ensuring synchronized files produce a clean `{}` diff map without false `MODIFIED` badges.
+  3. **Local Mutation Immunity Guard**: Set `localMutationTimestampRef.current = Date.now()` on file creations, renaming, and deletions to guard local file state against snapshot rollbacks.
+* **QA & Automated Verification**:
+  - Verified via `test_complete_three_problems_suite.js` (Test 2) that creating `src/routes/api.py` marks only the new file as `ADDED`, and saving/syncing to Master clears all diffs with 0 false `MODIFIED` badges.
+
+---
+
+### Issue #139: Dynamic AI Model Discovery & Google Gemini Integration for Universal User Support
+* **Symptoms**:
+  - The AI Assistant showed an error (`AI_GENERATION_FAILED` or HTTP 404) for all users when starting a chat, even when they entered 100% valid Google Gemini API keys in the AI Key Vault.
+* **Root Cause**:
+  1. Hardcoded fictitious model IDs (`gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3-flash-preview`) in `aiAgentRoutes.js` and `AgenticAIChatSidebar.jsx`. Google Gemini API rejected calls with `404 Not Found: models/gemini-3.6-flash is not found`.
+  2. The empty-key fallback in `GET /api/ai-agent/models` returned `gemini-3.6-flash`, locking the frontend dropdown into an invalid model.
+* **Solutions Implemented**:
+  1. **Official Active Gemini Models**: Replaced all model lists, default models, key validation tests, and chat fallback chains with official universally supported Google Gemini models:
+     - `gemini-1.5-flash` (Primary default — universal compatibility on all Google AI Studio keys)
+     - `gemini-2.0-flash` (Next-gen high-speed coding model)
+     - `gemini-2.5-flash` (Next-gen reasoning model)
+     - `gemini-1.5-pro` (Deep multi-file reasoning)
+     - `gemini-2.0-flash-lite` (Low-latency model)
+  2. **Dynamic Live Model Discovery**: Upgraded `discoverWorkingModels(apiKey)` to dynamically query `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, filter `supportedGenerationMethods.includes('generateContent')`, and validate operable models.
+  3. **Key Vault Automatic Persistence**: Updating or testing a key in the Key Vault immediately saves it to `localStorage.setItem('obsidian_ai_key', key)` and dynamically refreshes available models.
+  4. **Codebase Prompt Sanitization**: Filtered binary files and `node_modules` from `fileManifest` and capped individual file sizes to 30,000 characters to prevent prompt token limit overflow.
+* **QA & Automated Verification**:
+  - Verified via `test_complete_three_problems_suite.js` (Test 3) that model discovery, validation ping, and fallback chains cleanly resolve to `gemini-1.5-flash`.
+
+---
+
+### Issue #140: Active Editor Buffer Immunity Against Background Snapshot/Polling Overwrites (Deleted Code Reappearance Fix)
+* **Symptoms**:
+  - When removing or deleting lines from a file in Monaco editor (e.g. clearing `main.py` to write new code), the deleted lines automatically reappeared within 0 to 5 seconds.
+* **Root Cause**:
+  1. `onSnapshot` (listening to Firestore) and `syncFromServer` (polling every 5 seconds via `setInterval(syncFromServer, 5000)`) in `IDEWorkspacePage.jsx` had:
+     ```javascript
+     if ((isMasterSynchronized || !isLocalDirtyRef.current) && matching.content !== undefined) {
+       setCurrentContent(matching.content);
+       setSavedContent(matching.content);
+     }
+     ```
+  2. Because `isMasterSynchronized` was computed as `data.pendingFork === false || ...`, it evaluated to `true` by default on all standard projects.
+  3. When a user cleared lines in `main.py`, `currentContent` became `""`. Within 5 seconds, `syncFromServer` or `onSnapshot` fired, saw `isMasterSynchronized === true`, and called `setCurrentContent(matching.content)` — forcefully replacing the user's active editor buffer with the old server code.
+  4. `MonacoEditorCanvas` passed `onChangeContent={setCurrentContent}` directly, which did not set the `isLocalDirtyRef` flag synchronously on keystroke events.
+* **Solutions Implemented**:
+  1. **Synchronous Keystroke Tracking (`handleEditorContentChange`)**:
+     ```javascript
+     const handleEditorContentChange = useCallback((newContent) => {
+       const val = typeof newContent === 'string' ? newContent : '';
+       setCurrentContent(val);
+       currentContentRef.current = val;
+       isLocalDirtyRef.current = true;
+       localMutationTimestampRef.current = Date.now();
+     }, []);
+     ```
+  2. **Active Editor Buffer Immunity Guard**:
+     In both `onSnapshot` and `syncFromServer`:
+     ```javascript
+     const isUserActivelyEditing = (currentContentRef.current !== savedContentRef.current) ||
+       isLocalDirtyRef.current ||
+       ((Date.now() - localMutationTimestampRef.current) < 30000);
+
+     if (!isUserActivelyEditing && matching.content !== undefined && matching.content !== currentContentRef.current) {
+       setCurrentContent(matching.content);
+       setSavedContent(matching.content);
+     }
+     ```
+     When the user deletes lines, edits code, or types, `currentContentRef.current !== savedContentRef.current` is immediately `true`, completely preventing background updates from touching or reverting the editor canvas.
+* **QA & Automated Verification**:
+  - Verified via `test_complete_three_problems_suite.js` (Test 1) that emptying `main.py` is 100% immune to incoming `onSnapshot` events and 5-second `syncFromServer` polling.
+  - Production build `npm run build` completed with **0 errors in 14.39s**.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 

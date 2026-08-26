@@ -251,3 +251,43 @@
 - [x] **Task 24.2**: Standardize brand logo in `Header.jsx` and `TermsPage.jsx` with gradient icon and direct `<Link to="/dashboard">`.
 - [x] **Task 24.3**: Verify production build (`npm run build` completed cleanly with 0 errors).
 
+---
+
+## 📦 Module 25: Large Folder & ZIP Package Import Engine with 1MB Firestore Limit Resilience
+*Goal: Allow seamless folder and ZIP package imports of any size without hitting Firestore 1MB document size limits.*
+
+- [x] **Task 25.1**: Subcollection persistence (`projects/{projectId}/files/{fileDocId}`) in chunks of 400 with Firestore `WriteBatch`.
+- [x] **Task 25.2**: Manifest-only parent doc payload threshold (`safeFilesPayload` < 800 KB) preventing 1 MiB document size limits.
+- [x] **Task 25.3**: Binary file detection (`isBinaryFile`) and import immunity guard (`isImportingRef`) preventing premature snapshot resets.
+
+---
+
+## 🛡️ Module 26: Dual Baseline Synchronization & Zero-Flicker Workspace File Mutation Engine
+*Goal: Synchronize created/renamed/deleted files between master and working copies with zero false MODIFIED diff flags.*
+
+- [x] **Task 26.1**: Dual baseline commit across `working_files`, `master_project_files`, and `project_files` in Firestore.
+- [x] **Task 26.2**: Diff calculation guard in `fileStatusMap` preventing false `MODIFIED` badges on synchronized files.
+- [x] **Task 26.3**: Mutation timestamp guard (`localMutationTimestampRef`) preserving newly created files across snapshot updates.
+
+---
+
+## 🤖 Module 27: Google Gemini Multi-Model Agentic AI Engine & Universal Key Vault Compatibility
+*Goal: Connect Agentic AI Assistant to real official Google Gemini models with live discovery and universal key compatibility.*
+
+- [x] **Task 27.1**: Configure universal official Google Gemini models (`gemini-1.5-flash`, `gemini-2.0-flash`, `gemini-2.5-flash`, `gemini-1.5-pro`).
+- [x] **Task 27.2**: Implement dynamic model discovery endpoint `GET /api/ai-agent/models` querying Google's live API list.
+- [x] **Task 27.3**: Automatic Key Vault persistence in `localStorage` and payload sanitization in `AgenticAIChatSidebar.jsx`.
+
+---
+
+## ⚡ Module 28: Active Editor Buffer Immunity Engine & Real-Time Typing Protection
+*Goal: Prevent real-time Firestore snapshots and 5-second REST polling from overwriting active user typing or deleted code lines.*
+
+- [x] **Task 28.1**: Implement `handleEditorContentChange` on `MonacoEditorCanvas` for synchronous keystroke and buffer dirty state tracking.
+- [x] **Task 28.2**: Implement active editing immunity guard (`isUserActivelyEditing`) in `onSnapshot` and `syncFromServer` (5s polling).
+- [x] **Task 28.3**: Verify user-deleted lines in `main.py` and active code typing never get reverted or overwritten by background sync.
+
+---
+
+*Checklist verified and maintained for BUBT SDP 4 Project Defense.*
+

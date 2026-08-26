@@ -141,6 +141,13 @@ export const processLocalFiles = async (fileList, targetFolder = '') => {
   return results;
 };
 
+// Helper to check if a file path is OS metadata or internal VCS metadata
+export const isIgnoredImportPath = (path = '') => {
+  const normalized = path.replace(/\\/g, '/').toLowerCase();
+  const parts = normalized.split('/');
+  return parts.some(p => p === '.ds_store' || p === 'thumbs.db' || p === '.git' || p === '__macosx' || p === '.svn' || p === '.idea');
+};
+
 /**
  * Process a directory upload (from webkitdirectory input)
  * Preserves folder structure: e.g. folder "ProjectA/src/index.js" -> "ProjectA/src/index.js"
@@ -154,8 +161,8 @@ export const processLocalFolder = async (fileList, targetFolder = '') => {
     // webkitRelativePath contains "FolderName/subfolder/file.ext"
     const rawPath = (file.webkitRelativePath || file.name || '').replace(/\\/g, '/').replace(/^\/+/, '');
     
-    // Ignore hidden files / OS metadata like .DS_Store or .git
-    if (rawPath.includes('/.') || rawPath.startsWith('.')) continue;
+    // Ignore OS metadata and internal VCS directories (e.g. .DS_Store, .git/, __MACOSX)
+    if (isIgnoredImportPath(rawPath)) continue;
 
     const content = await readFileContent(file);
     const fileName = rawPath.split('/').pop();
@@ -189,8 +196,8 @@ export const processZipArchive = async (zipFile, targetFolder = '') => {
   for (const relativePath of entries) {
     const entry = unzipped.files[relativePath];
     
-    // Skip directory entries themselves and hidden files
-    if (entry.dir || relativePath.includes('__MACOSX') || relativePath.includes('/.') || relativePath.startsWith('.')) {
+    // Skip directory entries themselves and OS metadata
+    if (entry.dir || isIgnoredImportPath(relativePath)) {
       continue;
     }
 

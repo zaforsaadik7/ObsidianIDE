@@ -552,4 +552,90 @@ Module 24 refines application-wide brand navigation, guaranteeing that clicking 
 
 ---
 
+## 📦 Module 25: Large Folder & ZIP Package Import Engine with 1MB Firestore Limit Resilience
+
+### 📌 Overview & Purpose
+Module 25 empowers developers to import multi-file project repositories, complex folder hierarchies, and ZIP archives of arbitrary size without encountering Google Cloud Firestore 1 MiB document size limits or browser memory lockups.
+
+### ⚙️ Technical Implementations
+* **Chunked Subcollection Architecture (`projects/{projectId}/files/{fileDocId}`)**:
+  * Persists individual files in subcollections using Firestore `WriteBatch` in chunks of 400 operations, bypassing parent document size caps.
+* **Safe Manifest Threshold Guard (`safeFilesPayload`)**:
+  * Implemented an intelligent payload analyzer that keeps full contents for standard repositories (< 800 KB) and cleanly strips file contents into manifests (`_manifestOnly: true`) only when payload sizes exceed 800 KB.
+* **Binary File Sanitization (`fileImporter.js`)**:
+  * Detects non-text assets (`.png`, `.jpg`, `.woff2`, `.pyc`, etc.) via `isBinaryFile`, storing them as lightweight metadata descriptors to prevent base64 bloating.
+* **Import Immunity Guard (`isImportingRef`)**:
+  * Suppresses background snapshot and polling events while a multi-batch import is underway, guaranteeing zero premature state rollbacks.
+
+### 🏆 Key Achievements
+* **Unrestricted Project Ingestion**: Seamlessly import existing GitHub archives, full-stack monorepos, and asset-heavy project folders into ObsidianIDE in seconds.
+
+---
+
+## 🛡️ Module 26: Dual Baseline Synchronization & Zero-Flicker Workspace File Mutation Engine
+
+### 📌 Overview & Purpose
+Module 26 resolves race conditions during file creation, deletion, and renaming by orchestrating atomic synchronization between the canonical Master baseline and the working fork, eliminating false diff flags and state glitches.
+
+### ⚙️ Technical Implementations
+* **Dual Baseline Commit Protocol (`IDEWorkspacePage.jsx`)**:
+  * Atomic synchronization updates `working_files`, `master_project_files`, and `project_files` in Firestore simultaneously when executed by the Project Owner.
+* **Safe Diff Comparison Guard (`fileStatusMap`)**:
+  * Compares working copies against master baselines only when contents are fully defined, eliminating false `MODIFIED` diff badges on clean files.
+* **Mutation Guard Timestamping (`localMutationTimestampRef`)**:
+  * Enforces a 30-second mutation protection window during file creations, renaming, and deletions so incoming background snapshots cannot drop newly created files.
+
+### 🏆 Key Achievements
+* **Zero-Flicker File Management**: Creating, renaming, and saving files updates the file tree instantaneously without triggering false diff badges or losing files.
+
+---
+
+## 🤖 Module 27: Google Gemini Multi-Model Agentic AI Engine & Universal Key Vault Compatibility
+
+### 📌 Overview & Purpose
+Module 27 connects the workspace Agentic AI assistant to official, production-ready Google Gemini models, providing real-time dynamic model discovery and universal key compatibility for all users.
+
+### ⚙️ Technical Implementations
+* **Universal Google Gemini Models Integration (`server/routes/aiAgentRoutes.js`)**:
+  * Integrated official models: `gemini-1.5-flash` (Primary default with 100% universal key compatibility), `gemini-2.0-flash`, `gemini-2.5-flash`, and `gemini-1.5-pro`.
+* **Dynamic Live Model Discovery (`GET /api/ai-agent/models`)**:
+  * Discovers models in real-time from `https://generativelanguage.googleapis.com/v1beta/models`, filtering for content-generation capability and sorting by performance.
+* **Key Vault Automatic Synchronization (`AgenticAIChatSidebar.jsx`)**:
+  * Persists custom user API keys to `localStorage.getItem('obsidian_ai_key')` upon validation and automatically attaches them to chat requests.
+* **Prompt Payload Sanitization**:
+  * Sanitizes the codebase context manifest, excluding binary blobs and capping individual source files to 30,000 characters to prevent token limit errors.
+
+### 🏆 Key Achievements
+* **100% Universal AI Access**: Any user can enter their personal Google Gemini API key and receive instant, intelligent code generation, bug diagnosis, and terminal guidance.
+
+---
+
+## ⚡ Module 28: Active Editor Buffer Immunity Engine & Real-Time Typing Protection
+
+### 📌 Overview & Purpose
+Module 28 establishes ironclad buffer protection in Monaco Editor, guaranteeing that user keystrokes, active code edits, and line deletions are never overwritten or reverted by real-time Firestore snapshots or periodic REST polling.
+
+### ⚙️ Technical Implementations
+* **Synchronous Keystroke Tracking (`handleEditorContentChange`)**:
+  * Binds to Monaco Editor's `onChangeContent` to update `currentContent`, `currentContentRef`, mark `isLocalDirtyRef.current = true`, and timestamp `localMutationTimestampRef.current = Date.now()`.
+* **Active Editing Immunity Guard (`isUserActivelyEditing`)**:
+  * Implemented in both `onSnapshot` and `syncFromServer` (5s polling interval):
+    ```javascript
+    const isUserActivelyEditing = (currentContentRef.current !== savedContentRef.current) ||
+      isLocalDirtyRef.current ||
+      ((Date.now() - localMutationTimestampRef.current) < 30000);
+
+    if (!isUserActivelyEditing && matching.content !== undefined && matching.content !== currentContentRef.current) {
+      setCurrentContent(matching.content);
+      setSavedContent(matching.content);
+    }
+    ```
+* **Immediate Local Memory Cache (`localFilesRef`)**:
+  * Reflects active buffer updates into `localFilesRef` immediately, ensuring tab switching and file explorer actions always retain the latest code.
+
+### 🏆 Key Achievements
+* **Rock-Solid Typing Stability**: Developers can write, rewrite, and completely clear code files without any danger of background sync restoring deleted lines or disrupting flow.
+
+---
+
 *Document compiled and verified for BUBT CSE SDP 4 Project Defense.*

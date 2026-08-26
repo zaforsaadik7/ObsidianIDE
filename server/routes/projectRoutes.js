@@ -440,12 +440,23 @@ router.post('/update-files', async (req, res) => {
     if (adminDb) {
       try {
         const projRef = adminDb.collection('projects').doc(projectId);
+        // Preserve full contents for normal projects (< 800 KB); strip only if payload exceeds 800 KB to avoid 1 MiB limit
+        const safeServerFilesPayload = (fileArray = []) => {
+          try {
+            if (JSON.stringify(fileArray).length < 800000) return fileArray;
+          } catch (e) {}
+          return fileArray.map(({ content, ...rest }) => ({ ...rest, _manifestOnly: true }));
+        };
+
+        const payloadWorking = safeServerFilesPayload(filesToPersist || []);
+        const payloadMaster = safeServerFilesPayload(master_project_files || filesToPersist || []);
+
         const payload = {
-          working_files: filesToPersist,
+          working_files: payloadWorking,
           pendingFork: isPending,
           ...(isOwner || (!memProj.master_project_files && master_project_files) ? {
-            master_project_files: master_project_files || filesToPersist,
-            project_files: master_project_files || filesToPersist
+            master_project_files: payloadMaster,
+            project_files: payloadMaster
           } : {}),
           updatedAt: timestamp,
           lastWorkingModifiedBy: userEmail || 'developer@obsidian.io',
@@ -453,7 +464,7 @@ router.post('/update-files', async (req, res) => {
         };
         await projRef.set(payload, { merge: true });
 
-        // Update individual file docs safely in chunks of 400
+        // Update individual file docs safely with FULL content in chunks of 400
         const chunkSize = 400;
         for (let i = 0; i < filesToPersist.length; i += chunkSize) {
           const chunk = filesToPersist.slice(i, i + chunkSize);
@@ -469,6 +480,8 @@ router.post('/update-files', async (req, res) => {
                 fileName: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file'),
                 content: f.content || '',
                 fileType: f.fileType || 'plaintext',
+                isBinary: Boolean(f.isBinary),
+                size: Number(f.size || (f.content ? f.content.length : 0)),
                 updatedAt: timestamp,
                 lastModifiedBy: userEmail || 'developer@obsidian.io'
               }, { merge: true });
@@ -521,10 +534,19 @@ router.post('/sync-master', async (req, res) => {
 
     if (adminDb) {
       try {
-        await adminDb.collection('projects').doc(projectId).set({
-          master_project_files: files,
-          project_files: files,
-          working_files: files,
+        const safeServerFilesPayload = (fileArray = []) => {
+          try {
+            if (JSON.stringify(fileArray).length < 800000) return fileArray;
+          } catch (e) {}
+          return fileArray.map(({ content, ...rest }) => ({ ...rest, _manifestOnly: true }));
+        };
+
+        const payloadFiles = safeServerFilesPayload(files);
+        const projRef = adminDb.collection('projects').doc(projectId);
+        await projRef.set({
+          master_project_files: payloadFiles,
+          project_files: payloadFiles,
+          working_files: payloadFiles,
           pending_patches: [],
           pendingFork: false,
           lastWorkingModifiedBy: ownerEmail || 'owner@obsidian.io',
@@ -532,6 +554,32 @@ router.post('/sync-master', async (req, res) => {
           masterLastSyncedBy: ownerEmail,
           updatedAt: timestamp
         }, { merge: true });
+
+        // Update files subcollection with FULL content in chunks of 400
+        const chunkSize = 400;
+        for (let i = 0; i < files.length; i += chunkSize) {
+          const chunk = files.slice(i, i + chunkSize);
+          const batch = adminDb.batch();
+          for (const f of chunk) {
+            if (f && (f.fileId || f.filePath)) {
+              const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+              const fileRef = projRef.collection('files').doc(fileDocId);
+              batch.set(fileRef, {
+                fileId: fileDocId,
+                projectId,
+                filePath: f.filePath || '',
+                fileName: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file'),
+                content: f.content || '',
+                fileType: f.fileType || 'plaintext',
+                isBinary: Boolean(f.isBinary),
+                size: Number(f.size || (f.content ? f.content.length : 0)),
+                updatedAt: timestamp,
+                lastModifiedBy: ownerEmail || 'owner@obsidian.io'
+              }, { merge: true });
+            }
+          }
+          await batch.commit();
+        }
       } catch (dbErr) {
         console.warn('AdminDB sync-master notice:', dbErr.message);
       }
@@ -980,6 +1028,57 @@ router.get('/:projectId', verifyToken, async (req, res) => {
         const snap = await projRef.get();
         if (snap.exists) {
           projData = snap.data();
+
+          // Hydrate full file contents from subcollection if files exist or are manifests
+          try {
+            const filesSnap = await projRef.collection('files').get();
+            if (!filesSnap.empty) {
+              const subFilesMap = new Map();
+              filesSnap.forEach(d => {
+                const fd = d.data();
+                if (fd && (fd.filePath || fd.fileName)) {
+                  subFilesMap.set(fd.filePath || fd.fileName, fd);
+                }
+              });
+
+              // Hydrate working_files
+              if (Array.isArray(projData.working_files) && projData.working_files.length > 0) {
+                projData.working_files = projData.working_files.map(wf => {
+                  const sub = subFilesMap.get(wf.filePath || wf.fileName);
+                  return sub ? { ...wf, content: sub.content !== undefined ? sub.content : (wf.content || ''), _manifestOnly: undefined } : wf;
+                });
+                subFilesMap.forEach((fd, path) => {
+                  if (!projData.working_files.some(wf => (wf.filePath || wf.fileName) === path)) {
+                    projData.working_files.push(fd);
+                  }
+                });
+              } else if (subFilesMap.size > 0) {
+                projData.working_files = Array.from(subFilesMap.values());
+              }
+
+              // Hydrate master_project_files
+              if (Array.isArray(projData.master_project_files) && projData.master_project_files.length > 0) {
+                projData.master_project_files = projData.master_project_files.map(mf => {
+                  const sub = subFilesMap.get(mf.filePath || mf.fileName);
+                  return sub ? { ...mf, content: sub.content !== undefined ? sub.content : (mf.content || ''), _manifestOnly: undefined } : mf;
+                });
+              } else if (subFilesMap.size > 0) {
+                projData.master_project_files = projData.working_files;
+              }
+
+              // Hydrate project_files
+              if (Array.isArray(projData.project_files) && projData.project_files.length > 0) {
+                projData.project_files = projData.project_files.map(pf => {
+                  const sub = subFilesMap.get(pf.filePath || pf.fileName);
+                  return sub ? { ...pf, content: sub.content !== undefined ? sub.content : (pf.content || ''), _manifestOnly: undefined } : pf;
+                });
+              } else if (subFilesMap.size > 0) {
+                projData.project_files = projData.master_project_files;
+              }
+            }
+          } catch (subErr) {
+            console.warn("Project Admin subcollection files hydration notice:", subErr.message);
+          }
         }
       }
     } catch (e) {

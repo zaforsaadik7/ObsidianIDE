@@ -75,12 +75,11 @@ export const AgenticAIChatSidebar = ({
   // ── Dynamic Model Discovery State ──
   const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('obsidian_ai_key') || '');
   const [availableModels, setAvailableModels] = useState([
-    { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', description: 'Next-Gen Fast Code Model' },
-    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', description: 'High-Speed Intelligence' },
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Preview Model' },
-    { id: 'gemini-flash-lite-latest', name: 'Gemini Flash Lite', description: 'Lightweight Low-Latency' }
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Recommended)', description: 'Fast, reliable standard model' },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen high-speed model' },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Deep multi-file reasoning' }
   ]);
-  const [selectedModel, setSelectedModel] = useState('gemini-3.6-flash');
+  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [hasValidApiKey, setHasValidApiKey] = useState(Boolean(userApiKey));
 
@@ -266,6 +265,10 @@ export const AgenticAIChatSidebar = ({
       });
       const data = await res.json();
       if (res.ok && data.valid) {
+        setUserApiKey(key);
+        localStorage.setItem('obsidian_ai_key', key);
+        setHasValidApiKey(true);
+        fetchAvailableModels(key);
         setKeyValidationStatus({
           valid: true,
           message: `✅ Key is live & working! ${data.workingModels?.length || 0} models ready.`
@@ -289,8 +292,10 @@ export const AgenticAIChatSidebar = ({
     setUserApiKey(key);
     if (key) {
       localStorage.setItem('obsidian_ai_key', key);
+      setHasValidApiKey(true);
     } else {
       localStorage.removeItem('obsidian_ai_key');
+      setHasValidApiKey(false);
     }
     fetchAvailableModels(key);
     setIsKeyModalOpen(false);
@@ -334,15 +339,20 @@ export const AgenticAIChatSidebar = ({
     setIsSending(true);
 
     try {
-      // Build comprehensive whole-project codebase manifest
-      const fileManifest = files.map(f => ({
-        filePath: f.filePath || f.fileName,
-        fileName: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file'),
-        content: f.content !== undefined ? String(f.content) : '',
-        fileType: f.fileType || (f.filePath ? f.filePath.split('.').pop() : 'txt')
-      }));
+      // Build comprehensive whole-project codebase manifest (filtered for code files & safe size)
+      const fileManifest = (files || [])
+        .filter(f => !f.isBinary && (!f.filePath || (!f.filePath.includes('node_modules') && !f.filePath.includes('.git'))))
+        .slice(0, 80)
+        .map(f => ({
+          filePath: f.filePath || f.fileName,
+          fileName: f.fileName || (f.filePath ? f.filePath.split('/').pop() : 'file'),
+          content: f.content !== undefined ? String(f.content).slice(0, 30000) : '',
+          fileType: f.fileType || (f.filePath ? f.filePath.split('.').pop() : 'txt')
+        }));
 
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const effectiveApiKey = (userApiKey || localStorage.getItem('obsidian_ai_key') || '').trim();
+
       const res = await fetch('/api/ai-agent/chat', {
         method: 'POST',
         headers: { 
@@ -362,7 +372,7 @@ export const AgenticAIChatSidebar = ({
             title: projectTitle,
             githubRepoUrl: projectGithubRepoUrl
           },
-          apiKey: userApiKey,
+          apiKey: effectiveApiKey,
           selectedModel
         })
       });

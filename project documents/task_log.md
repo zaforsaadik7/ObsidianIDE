@@ -210,6 +210,26 @@
   - *Location*: `src/pages/IDEWorkspacePage.jsx`, `src/components/layout/Header.jsx`, `src/pages/TermsPage.jsx`
   - *Status*: `100% COMPLETE`
 
+- [x] **Optimization 22 (Module 25 — Large Folder & ZIP Package Import Engine with 1MB Firestore Limit Resilience)**:
+  - *Description*: Implemented subcollection chunking (`projects/{projectId}/files/{fileDocId}`) in batches of 400, manifest-only threshold for large parent docs (`safeFilesPayload` < 800 KB), binary file detection, and import immunity guards.
+  - *Location*: `src/utils/fileImporter.js`, `src/pages/IDEWorkspacePage.jsx`, `server/routes/projectRoutes.js`
+  - *Status*: `100% COMPLETE`
+
+- [x] **Optimization 23 (Module 26 — Dual Baseline Synchronization & Zero-Flicker Workspace File Mutation Engine)**:
+  - *Description*: Synchronized file tree creations, renames, and deletions across `working_files`, `master_project_files`, and `project_files`, guarded `fileStatusMap` against false `MODIFIED` diff badges, and enforced a 30s mutation guard window.
+  - *Location*: `src/pages/IDEWorkspacePage.jsx`, `server/routes/projectRoutes.js`
+  - *Status*: `100% COMPLETE`
+
+- [x] **Optimization 24 (Module 27 — Google Gemini Multi-Model Agentic AI Engine & Universal Key Vault Compatibility)**:
+  - *Description*: Integrated official production Google Gemini models (`gemini-1.5-flash`, `gemini-2.0-flash`, `gemini-2.5-flash`, `gemini-1.5-pro`), enabled live API model discovery, automatic Key Vault persistence in `localStorage`, and prompt context sanitization.
+  - *Location*: `server/routes/aiAgentRoutes.js`, `src/components/ide/AgenticAIChatSidebar.jsx`
+  - *Status*: `100% COMPLETE`
+
+- [x] **Optimization 25 (Module 28 — Active Editor Buffer Immunity Engine & Real-Time Typing Protection)**:
+  - *Description*: Implemented `handleEditorContentChange` on Monaco Editor for synchronous keystroke tracking and introduced strict `isUserActivelyEditing` immunity guards in `onSnapshot` and `syncFromServer` (5s polling) to prevent background updates from overwriting user-deleted code lines or active typing.
+  - *Location*: `src/pages/IDEWorkspacePage.jsx`, `src/components/ide/MonacoEditorCanvas.jsx`
+  - *Status*: `100% COMPLETE`
+
 ---
 
 ## 📊 Milestone Summary Checkpoint
@@ -245,6 +265,12 @@
 | **Module 22** | Agentic AI Assistant Gemini Engine, Dynamic Discovery & Codebase Vision | `COMPLETE` | `2026-08-15 18:40` |
 | **Module 23** | Agentic AI File Modification Engine & Monaco Editor Live Sync | `COMPLETE` | `2026-08-15 18:55` |
 | **Module 24** | Universal Top-Level Brand Navigation & Routing Optimization | `COMPLETE` | `2026-08-15 18:58` |
+| **Module 25** | Large Folder & ZIP Package Import Engine with 1MB Firestore Resilience | `COMPLETE` | `2026-08-26 16:30` |
+| **Module 26** | Dual Baseline Synchronization & Zero-Flicker Workspace File Mutation | `COMPLETE` | `2026-08-26 17:15` |
+| **Module 27** | Google Gemini Multi-Model Agentic AI Engine & Key Vault Sync | `COMPLETE` | `2026-08-26 17:40` |
+| **Module 28** | Active Editor Buffer Immunity Engine & Real-Time Typing Protection | `COMPLETE` | `2026-08-26 17:55` |
+
+---
 
 ---
 

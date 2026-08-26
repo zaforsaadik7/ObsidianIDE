@@ -40,30 +40,29 @@ const discoverWorkingModels = async (apiKey) => {
       m.supportedGenerationMethods.includes('generateContent')
     );
 
-    // Prioritized model candidate patterns (newest & most powerful first)
+    // Prioritized official working Gemini models (universal standard models first)
     const priorityNames = [
-      'gemini-3.6-flash',
-      'gemini-3.5-flash',
-      'gemini-3-flash-preview',
-      'gemini-3.1-flash-lite-preview',
-      'gemini-flash-lite-latest',
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
       'gemini-1.5-flash',
+      'gemini-2.0-flash',
+      'gemini-2.5-flash',
       'gemini-1.5-pro',
-      'gemini-pro-latest'
+      'gemini-2.0-flash-lite',
+      'gemini-1.5-flash-8b',
+      'gemini-pro'
     ];
 
     const discoveredMap = new Map();
     generateContentModels.forEach(m => {
       const id = cleanModelId(m.name);
-      // Exclude specialized non-chat / vision-only / image-gen models
+      // Exclude specialized non-chat / vision-only / image-gen / embedding models
       if (
         !id.includes('image') && 
         !id.includes('tts') && 
         !id.includes('robotics') && 
         !id.includes('video-understanding') &&
-        !id.includes('customtools')
+        !id.includes('customtools') &&
+        !id.includes('embedding') &&
+        !id.includes('aqa')
       ) {
         discoveredMap.set(id, {
           id,
@@ -73,36 +72,27 @@ const discoverWorkingModels = async (apiKey) => {
       }
     });
 
-    // Fast known working models set (verified on current Gemini API v1beta)
-    const knownWorkingSet = new Set([
-      'gemini-3.6-flash',
-      'gemini-3.5-flash',
-      'gemini-3-flash-preview',
-      'gemini-3.1-flash-lite-preview',
-      'gemini-flash-lite-latest'
-    ]);
-
     const finalModels = [];
+    // 1. Add priority matches that exist in discovered models
     priorityNames.forEach(pName => {
-      if (discoveredMap.has(pName) && knownWorkingSet.has(pName)) {
+      if (discoveredMap.has(pName)) {
         finalModels.push(discoveredMap.get(pName));
       }
     });
 
-    // If none of the known set matched, take the first 4 discovered general models
-    if (finalModels.length === 0) {
-      discoveredMap.forEach((val, id) => {
-        if (id.startsWith('gemini-') && finalModels.length < 5) {
-          finalModels.push(val);
-        }
-      });
-    }
+    // 2. Add other discovered gemini models
+    discoveredMap.forEach((val, id) => {
+      if (id.startsWith('gemini-') && !finalModels.some(m => m.id === id) && finalModels.length < 6) {
+        finalModels.push(val);
+      }
+    });
 
+    // 3. Robust fallback if listing endpoint returned empty
     if (finalModels.length === 0) {
       finalModels.push(
-        { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', description: 'Next-gen fast code & reasoning model' },
-        { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', description: 'High-speed coding model' },
-        { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Preview intelligence model' }
+        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Recommended)', description: 'Fast, reliable code & reasoning model' },
+        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen high-speed model' },
+        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Deep multi-file reasoning' }
       );
     }
 
@@ -115,9 +105,9 @@ const discoverWorkingModels = async (apiKey) => {
   } catch (error) {
     console.warn('[AI Model Discovery] Error querying models:', error.message);
     return [
-      { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Recommended)', description: 'Fast code intelligence' },
-      { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', description: 'High-speed reasoning' },
-      { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Preview model' }
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Recommended)', description: 'Fast, reliable code & reasoning model' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen high-speed model' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Deep multi-file reasoning' }
     ];
   }
 };
@@ -133,8 +123,9 @@ router.get('/models', async (req, res) => {
         status: 'SUCCESS',
         hasKey: false,
         models: [
-          { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', description: 'Enter API Key to enable' },
-          { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', description: 'Enter API Key to enable' }
+          { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Recommended)', description: 'Fast, reliable code & reasoning model' },
+          { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen high-speed model' },
+          { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Deep multi-file reasoning' }
         ]
       });
     }
@@ -174,17 +165,34 @@ router.post('/validate-key', async (req, res) => {
         });
       }
 
-      // Quick generation test with the primary model
-      const testModel = genAI.getGenerativeModel({ model: workingModels[0].id });
-      const testPing = await testModel.generateContent('Say "OK" in 1 word.');
-      const testText = testPing.response.text();
+      // Quick generation test with the working models
+      let testText = '';
+      let activeModelId = workingModels[0].id;
+      let lastTestErr = null;
+
+      for (const m of workingModels) {
+        try {
+          const testModel = genAI.getGenerativeModel({ model: m.id });
+          const testPing = await testModel.generateContent('Say "OK" in 1 word.');
+          testText = testPing.response.text();
+          activeModelId = m.id;
+          lastTestErr = null;
+          break;
+        } catch (err) {
+          lastTestErr = err;
+        }
+      }
+
+      if (lastTestErr && !testText) {
+        throw lastTestErr;
+      }
 
       res.json({
         valid: true,
         status: 'SUCCESS',
         message: `API Key validated successfully! ${workingModels.length} operable model(s) discovered.`,
-        pingResponse: testText.trim(),
-        primaryModel: workingModels[0].id,
+        pingResponse: (testText || 'OK').trim(),
+        primaryModel: activeModelId,
         workingModels
       });
     } catch (testErr) {
@@ -233,8 +241,8 @@ router.post('/chat', verifyToken, async (req, res) => {
 
     // Resolve working model name
     let chosenModel = selectedModel;
-    if (!chosenModel || chosenModel.includes('gpt-') || chosenModel.includes('claude-')) {
-      chosenModel = 'gemini-3.6-flash';
+    if (!chosenModel || chosenModel.includes('gpt-') || chosenModel.includes('claude-') || chosenModel.includes('gemini-3')) {
+      chosenModel = 'gemini-1.5-flash';
     }
 
     // Build Whole-Project Full Source Code Context
@@ -365,10 +373,13 @@ RESPONSE GUIDELINES:
     let actualModelUsed = chosenModel;
     const fallbackCandidates = [
       chosenModel,
-      'gemini-3.6-flash',
-      'gemini-3.5-flash',
-      'gemini-3-flash-preview',
-      'gemini-flash-lite-latest'
+      'gemini-1.5-flash',
+      'gemini-2.0-flash',
+      'gemini-2.5-flash',
+      'gemini-1.5-pro',
+      'gemini-2.0-flash-lite',
+      'gemini-1.5-flash-8b',
+      'gemini-pro'
     ];
 
     let lastError = null;
