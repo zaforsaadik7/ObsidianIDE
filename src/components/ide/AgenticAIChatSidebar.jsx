@@ -85,11 +85,11 @@ export const AgenticAIChatSidebar = ({
   // ── Dynamic Model Discovery State ──
   const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('obsidian_ai_key') || '');
   const [availableModels, setAvailableModels] = useState([
-    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Recommended)', description: 'Fast, reliable standard model' },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen high-speed model' },
-    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Deep multi-file reasoning' }
+    { id: 'gemini-3.0-flash', name: 'Gemini 3.0 Flash (Recommended)', description: 'Latest ultra-fast model' },
+    { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash Lite', description: 'Next-gen high-efficiency model' },
+    { id: 'gemini-3.0-pro', name: 'Gemini 3.0 Pro', description: 'Deep multi-file reasoning' }
   ]);
-  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
+  const [selectedModel, setSelectedModel] = useState('gemini-3.0-flash');
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [hasValidApiKey, setHasValidApiKey] = useState(Boolean(userApiKey));
 
@@ -294,14 +294,18 @@ export const AgenticAIChatSidebar = ({
     const cleanKey = String(apiKey || '').trim().replace(/^["']|["']$/g, '');
     if (!cleanKey) throw new Error('No API key provided for direct Gemini call.');
 
-    const primaryChoice = (selectedModel || 'gemini-1.5-flash').replace(/^models\//, '');
+    const primaryChoice = (selectedModel || 'gemini-3.0-flash').replace(/^models\//, '');
     const modelsToTry = [
       primaryChoice,
-      'gemini-1.5-flash',
-      'gemini-2.0-flash',
+      'gemini-3.0-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.0-pro',
       'gemini-2.5-flash',
-      'gemini-1.5-pro',
-      'gemini-1.5-flash-latest'
+      'gemini-2.0-flash-001',
+      'gemini-1.5-flash-002',
+      'gemini-1.5-pro-002',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash'
     ].filter((v, i, a) => a.indexOf(v) === i);
 
     let codebaseContextSection = '';

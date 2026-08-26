@@ -40,15 +40,18 @@ const discoverWorkingModels = async (apiKey) => {
       m.supportedGenerationMethods.includes('generateContent')
     );
 
-    // Prioritized official working Gemini models (universal standard models first)
+    // Prioritized official working Gemini models (Universal & Latest Google Models)
     const priorityNames = [
-      'gemini-1.5-flash',
-      'gemini-2.0-flash',
+      'gemini-3.0-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.0-pro',
       'gemini-2.5-flash',
-      'gemini-1.5-pro',
-      'gemini-2.0-flash-lite',
-      'gemini-1.5-flash-8b',
-      'gemini-pro'
+      'gemini-2.0-flash-001',
+      'gemini-1.5-flash-002',
+      'gemini-1.5-pro-002',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro'
     ];
 
     const discoveredMap = new Map();
@@ -82,7 +85,7 @@ const discoverWorkingModels = async (apiKey) => {
 
     // 2. Add other discovered gemini models
     discoveredMap.forEach((val, id) => {
-      if (id.startsWith('gemini-') && !finalModels.some(m => m.id === id) && finalModels.length < 6) {
+      if (id.startsWith('gemini-') && !finalModels.some(m => m.id === id) && finalModels.length < 8) {
         finalModels.push(val);
       }
     });
@@ -90,9 +93,9 @@ const discoverWorkingModels = async (apiKey) => {
     // 3. Robust fallback if listing endpoint returned empty
     if (finalModels.length === 0) {
       finalModels.push(
-        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Recommended)', description: 'Fast, reliable code & reasoning model' },
-        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen high-speed model' },
-        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Deep multi-file reasoning' }
+        { id: 'gemini-3.0-flash', name: 'Gemini 3.0 Flash (Recommended)', description: 'Latest ultra-fast model' },
+        { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash Lite', description: 'Next-gen high-efficiency model' },
+        { id: 'gemini-3.0-pro', name: 'Gemini 3.0 Pro', description: 'Deep multi-file reasoning' }
       );
     }
 
@@ -105,9 +108,9 @@ const discoverWorkingModels = async (apiKey) => {
   } catch (error) {
     console.warn('[AI Model Discovery] Error querying models:', error.message);
     return [
-      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Recommended)', description: 'Fast, reliable code & reasoning model' },
-      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen high-speed model' },
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Deep multi-file reasoning' }
+      { id: 'gemini-3.0-flash', name: 'Gemini 3.0 Flash (Recommended)', description: 'Latest ultra-fast model' },
+      { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash Lite', description: 'Next-gen high-efficiency model' },
+      { id: 'gemini-3.0-pro', name: 'Gemini 3.0 Pro', description: 'Deep multi-file reasoning' }
     ];
   }
 };
@@ -371,23 +374,35 @@ RESPONSE GUIDELINES:
     // Attempt generation with chosen model and auto-fallback to alternate verified models
     let result = null;
     let actualModelUsed = chosenModel;
+    
+    // Dynamically retrieve working models for this specific API key
+    let dynamicWorkingModels = [];
+    try {
+      dynamicWorkingModels = await discoverWorkingModels(effectiveApiKey);
+    } catch (e) {}
+
     const fallbackCandidates = [
       chosenModel,
-      'gemini-1.5-flash',
-      'gemini-2.0-flash',
+      ...dynamicWorkingModels.map(m => m.id),
+      'gemini-3.0-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.0-pro',
       'gemini-2.5-flash',
-      'gemini-1.5-pro',
-      'gemini-2.0-flash-lite',
-      'gemini-1.5-flash-8b',
-      'gemini-pro'
+      'gemini-2.0-flash-001',
+      'gemini-1.5-flash-002',
+      'gemini-1.5-pro-002',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro'
     ];
 
     let lastError = null;
     for (const modelCandidate of [...new Set(fallbackCandidates)]) {
       try {
-        const modelInstance = genAI.getGenerativeModel({ model: modelCandidate });
+        const cleanCandidate = cleanModelId(modelCandidate);
+        const modelInstance = genAI.getGenerativeModel({ model: cleanCandidate });
         result = await modelInstance.generateContent(systemPrompt);
-        actualModelUsed = modelCandidate;
+        actualModelUsed = cleanCandidate;
         break;
       } catch (genErr) {
         lastError = genErr;
