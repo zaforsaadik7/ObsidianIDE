@@ -2016,6 +2016,29 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #148: Round Brand Logo Integration, Browser Tab Favicon & Auth-Aware Redirect Navigation
+* **Symptoms**:
+  - The application used generic gradient rectangular icons across page headers instead of the official website logo (`LOGO/screen.png`).
+  - Browser tabs lacked a brand favicon, showing default blank/globe icons.
+  - Clicking the brand logo from various subpages did not dynamically direct users to their Dashboard when authenticated vs the Landing Page when logged out.
+* **Root Cause**:
+  1. `index.html` lacked `<link rel="icon">` tags referencing the brand asset.
+  2. Headers across `Header.jsx`, `IDEWorkspacePage.jsx`, `AuthPage.jsx`, `OnboardingWizardPage.jsx`, `TermsPage.jsx`, `InvitePortalPage.jsx`, and `ConnectGitHubPage.jsx` used static rectangular SVG/gradient placeholders and fixed routes.
+* **Solutions Implemented**:
+  1. **Brand Asset Distribution**: Copied `LOGO/screen.png` to `public/logo.png`, `public/favicon.png`, and `src/assets/logo.png`.
+  2. **Browser Tab Favicon Configuration**: In `index.html`, added `<link rel="icon" type="image/png" href="/favicon.png" />` and apple-touch-icon links.
+  3. **Round Logo Shape**: Configured all header logo instances with `rounded-full object-cover` and glowing cyan brand borders (`border border-cyan-400/40 shadow-[0_0_10px_rgba(0,220,229,0.3)]`).
+  4. **Universal Auth-Aware Navigation**:
+     - Configured logo links everywhere using `to={currentUser ? "/dashboard" : "/"}`.
+     - Authenticated users clicking the logo anywhere are immediately redirected to `/dashboard`.
+     - Unauthenticated/logged-out visitors clicking the logo are redirected to `/` (landing page).
+* **QA & Automated Verification**:
+  - Verified via `test_logo_and_auth_routing.js`: 19/19 tests passed with 100% success.
+  - Production build compiled in **11.78s with 0 errors**.
+  - Pushed to `origin/main` commit `171093d`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
