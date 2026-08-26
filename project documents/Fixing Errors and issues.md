@@ -1938,6 +1938,27 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #144: Real-Time Master Sync on Owner Commit & Active Tab Persistence Across Browser Reload
+* **Symptoms**:
+  - When the Project Owner modified code and clicked "Save & Sync to Master", the updated lines (e.g. lines 7 and 8) were saved to Master and visible in the Owner's editor, but did not update in real-time in the Editor's open editor canvas until the Editor refreshed their browser.
+  - When the Editor refreshed their browser with a specific file open (e.g. `saadik.py`), the workspace defaulted back to `main.py` instead of remembering the open file and tabs.
+* **Root Cause**:
+  1. **Premature Master Immunity Block**: In `onSnapshot` and `ws.onmessage`, `isUserActivelyEditing` previously blocked content updates if `(Date.now() - localMutationTimestampRef.current) < 30000`, even when `isMasterSynchronized === true` (or `FORK_ACCEPTED`). As a result, the Editor's canvas ignored incoming canonical master updates for 30 seconds after any local click.
+  2. **Active File State Not Persisted**: Initial workspace mount was hardcoded to `working[0]` (`main.py`) whenever `!activeFileRef.current`. `handleSelectFile`, `handleSelectTab`, and `handleCloseTab` did not persist the active file path or open tab array to `localStorage`.
+* **Solutions Implemented**:
+  1. **Instant Master Synchronization**: Updated `onSnapshot` and `ws.onmessage` so that whenever `isMasterSynchronized === true` (or `msg.type === 'FORK_ACCEPTED'`), `isUserActivelyEditing` evaluates to `false` (provided the user is not currently typing dirty changes in the buffer). Canonical master updates to open files are immediately applied to `currentContent` and `savedContent` in real-time without requiring a page refresh.
+  2. **Active File & Open Tabs Persistence (`resolveActiveFileAndTabs`)**:
+     - `handleSelectFile`, `handleSelectTab`, and `handleCloseTab` now persist `obsidian_active_file_${projectId}_${userEmail}` and `obsidian_open_tabs_${projectId}_${userEmail}` to `localStorage`.
+     - Added `resolveActiveFileAndTabs(fileList)` helper on workspace load to automatically restore the exact active file (e.g. `saadik.py`) and all open tabs across browser refreshes.
+* **QA & Automated Verification**:
+  - Validated via `test_tab_persistence_and_realtime_master_sync.js`:
+    - Test 1: `saadik.py` and open tabs are preserved 100% across page reloads.
+    - Test 2: When Owner clicks "Save & Sync to Master", lines 7 and 8 update instantly in the Editor's open canvas without browser refresh.
+  - Production build compiled with **0 errors in 18.27s**.
+  - Pushed to `origin/main` commit `53bba73`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
