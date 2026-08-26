@@ -1,0 +1,171 @@
+\documentclass[12pt,border=12pt]{standalone}
+\usepackage[utf8]{inputenc}
+\usepackage{tikz}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,calc,fit,backgrounds,shadows}
+
+\begin{document}
+\fontsize{12pt}{15pt}\selectfont
+
+\begin{tikzpicture}[
+    font=\fontsize{12pt}{15pt}\selectfont,
+    >=Stealth,
+    entity/.style={
+        rectangle,
+        draw=blue!85!black,
+        fill=blue!5!white,
+        thick,
+        rounded corners=3pt,
+        align=left,
+        inner sep=7pt,
+        drop shadow={opacity=0.15,shadow xshift=1.5pt,shadow yshift=-1.5pt}
+    },
+    relationship/.style={
+        diamond,
+        draw=teal!90!black,
+        fill=teal!8!white,
+        thick,
+        align=center,
+        inner sep=2pt,
+        aspect=1.6,
+        font=\fontsize{11pt}{13pt}\selectfont\bfseries,
+        drop shadow={opacity=0.12,shadow xshift=1pt,shadow yshift=-1pt}
+    },
+    cardinality/.style={
+        font=\fontsize{11pt}{13pt}\selectfont\bfseries,
+        text=black!90
+    },
+    erLine/.style={
+        thick,
+        draw=black!80
+    }
+]
+
+% ==================== ENTITY NODES ====================
+
+% Row 1: Users, Personal Storage, GitHub
+\node[entity] (user) at (0, 10.0) {
+    \textbf{\large USER (users)}\\\hline
+    \textbf{\underline{uid}}: \texttt{VARCHAR(100)} [PK]\\
+    \textbf{email}: \texttt{VARCHAR(255)} [UNIQUE]\\
+    \textbf{username}: \texttt{VARCHAR(80)} [UNIQUE]\\
+    \textbf{fullName}: \texttt{VARCHAR(150)}\\
+    \textbf{profession}: \texttt{VARCHAR(100)}\\
+    \textbf{avatarUrl}: \texttt{TEXT}\\
+    \textbf{personalStorageVerified}: \texttt{BOOLEAN}\\
+    \textbf{createdAt}: \texttt{TIMESTAMP}
+};
+
+\node[entity] (byodb) at (-8.5, 10.0) {
+    \textbf{\large PERSONAL\_STORAGE (BYODB)}\\\hline
+    \textbf{\underline{configId}}: \texttt{VARCHAR(100)} [PK]\\
+    \textbf{userEmail}: \texttt{VARCHAR(255)} [FK]\\
+    \textbf{projectId}: \texttt{VARCHAR(150)}\\
+    \textbf{apiKey}: \texttt{TEXT}\\
+    \textbf{authDomain}: \texttt{VARCHAR(255)}\\
+    \textbf{databaseName}: \texttt{VARCHAR(100)}\\
+    \textbf{verifiedAt}: \texttt{TIMESTAMP}
+};
+
+\node[entity] (github) at (8.5, 10.0) {
+    \textbf{\large GITHUB\_CONNECTION}\\\hline
+    \textbf{\underline{githubId}}: \texttt{VARCHAR(100)} [PK]\\
+    \textbf{userEmail}: \texttt{VARCHAR(255)} [FK]\\
+    \textbf{username}: \texttt{VARCHAR(150)}\\
+    \textbf{accessToken}: \texttt{TEXT}\\
+    \textbf{profileUrl}: \texttt{TEXT}\\
+    \textbf{permissions}: \texttt{ARRAY<VARCHAR>}\\
+    \textbf{connectedAt}: \texttt{TIMESTAMP}
+};
+
+% Row 2: Central Project Entity
+\node[entity] (project) at (0, 1.8) {
+    \textbf{\large PROJECT (projects)}\\\hline
+    \textbf{\underline{projectId}}: \texttt{VARCHAR(100)} [PK]\\
+    \textbf{ownerEmail}: \texttt{VARCHAR(255)} [FK]\\
+    \textbf{title}: \texttt{VARCHAR(200)}\\
+    \textbf{description}: \texttt{VARCHAR(150)}\\
+    \textbf{languageEnv}: \texttt{ENUM(PYTHON, RUST, CPP, TS)}\\
+    \textbf{collaborators}: \texttt{MAP<EMAIL, ROLE>}\\
+    \textbf{working\_files}: \texttt{ARRAY<MANIFEST>}\\
+    \textbf{master\_project\_files}: \texttt{ARRAY<MANIFEST>}\\
+    \textbf{pendingFork}: \texttt{BOOLEAN}\\
+    \textbf{masterLastSyncedAt}: \texttt{TIMESTAMP}\\
+    \textbf{updatedAt}: \texttt{TIMESTAMP}
+};
+
+% Row 3: Child Entities (Project Files, Invitations, Collaboration Sessions)
+\node[entity] (file) at (-8.5, -6.5) {
+    \textbf{\large PROJECT\_FILE (subcollection)}\\\hline
+    \textbf{\underline{fileDocId}}: \texttt{VARCHAR(150)} [PK]\\
+    \textbf{projectId}: \texttt{VARCHAR(100)} [FK]\\
+    \textbf{filePath}: \texttt{VARCHAR(500)}\\
+    \textbf{fileName}: \texttt{VARCHAR(255)}\\
+    \textbf{content}: \texttt{LONGTEXT}\\
+    \textbf{fileType}: \texttt{VARCHAR(50)}\\
+    \textbf{isBinary}: \texttt{BOOLEAN}\\
+    \textbf{lastModifiedBy}: \texttt{VARCHAR(255)}\\
+    \textbf{updatedAt}: \texttt{TIMESTAMP}
+};
+
+\node[entity] (invite) at (0, -6.5) {
+    \textbf{\large INVITATION (mail\_queue)}\\\hline
+    \textbf{\underline{inviteId}}: \texttt{VARCHAR(100)} [PK]\\
+    \textbf{projectId}: \texttt{VARCHAR(100)} [FK]\\
+    \textbf{ownerEmail}: \texttt{VARCHAR(255)} [FK]\\
+    \textbf{recipientEmail}: \texttt{VARCHAR(255)}\\
+    \textbf{role}: \texttt{ENUM(OWNER, EDITOR, REVIEWER)}\\
+    \textbf{inviteUrl}: \texttt{TEXT}\\
+    \textbf{status}: \texttt{ENUM(PENDING, ACCEPTED)}\\
+    \textbf{createdAt}: \texttt{TIMESTAMP}
+};
+
+\node[entity] (collab) at (8.5, -6.5) {
+    \textbf{\large COLLABORATION\_PRESENCE}\\\hline
+    \textbf{\underline{sessionId}}: \texttt{VARCHAR(100)} [PK]\\
+    \textbf{projectId}: \texttt{VARCHAR(100)} [FK]\\
+    \textbf{userEmail}: \texttt{VARCHAR(255)} [FK]\\
+    \textbf{activeFilePath}: \texttt{VARCHAR(500)}\\
+    \textbf{cursorLine}: \texttt{INTEGER}\\
+    \textbf{cursorColumn}: \texttt{INTEGER}\\
+    \textbf{selectionRange}: \texttt{OBJECT}\\
+    \textbf{lastHeartbeat}: \texttt{TIMESTAMP}
+};
+
+% ==================== RELATIONSHIP DIAMONDS ====================
+\node[relationship] (relBYODB) at (-4.2, 10.0) {Configures};
+\node[relationship] (relGH) at (4.2, 10.0) {Authorizes};
+\node[relationship] (relOwns) at (0, 6.2) {Owns \&\\Administers};
+\node[relationship] (relContains) at (-4.2, -2.4) {Contains\\(Files)};
+\node[relationship] (relInvites) at (0, -2.4) {Generates\\(Invites)};
+\node[relationship] (relTracks) at (4.2, -2.4) {Tracks\\(Presence)};
+
+% ==================== CONNECTING LINES & CARDINALITIES ====================
+
+% User <-> BYODB
+\draw[erLine] (user) -- node[above, cardinality, pos=0.2] {1} (relBYODB);
+\draw[erLine] (relBYODB) -- node[above, cardinality, pos=0.8] {1} (byodb);
+
+% User <-> GitHub
+\draw[erLine] (user) -- node[above, cardinality, pos=0.2] {1} (relGH);
+\draw[erLine] (relGH) -- node[above, cardinality, pos=0.8] {1} (github);
+
+% User <-> Project
+\draw[erLine] (user) -- node[right, cardinality, pos=0.2] {1} (relOwns);
+\draw[erLine] (relOwns) -- node[right, cardinality, pos=0.8] {N} (project);
+
+% Project <-> Project File
+\draw[erLine] (project.south west) -- node[above left, cardinality, pos=0.2] {1} (relContains);
+\draw[erLine] (relContains) -- node[above left, cardinality, pos=0.8] {N} (file.north east);
+
+% Project <-> Invitation
+\draw[erLine] (project.south) -- node[right, cardinality, pos=0.2] {1} (relInvites);
+\draw[erLine] (relInvites) -- node[right, cardinality, pos=0.8] {N} (invite.north);
+
+% Project <-> Collaboration
+\draw[erLine] (project.south east) -- node[above right, cardinality, pos=0.2] {1} (relTracks);
+\draw[erLine] (relTracks) -- node[above right, cardinality, pos=0.8] {N} (collab.north west);
+
+\end{tikzpicture}
+\end{document}

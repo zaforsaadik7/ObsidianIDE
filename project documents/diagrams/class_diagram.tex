@@ -1,0 +1,197 @@
+\documentclass[12pt,border=12pt]{standalone}
+\usepackage[utf8]{inputenc}
+\usepackage{tikz}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,calc,fit,backgrounds,shadows}
+
+\begin{document}
+\fontsize{12pt}{15pt}\selectfont
+
+\begin{tikzpicture}[
+    font=\fontsize{12pt}{15pt}\selectfont,
+    >=Stealth,
+    umlClass/.style={
+        rectangle,
+        draw=blue!85!black,
+        fill=white,
+        thick,
+        rounded corners=2pt,
+        align=left,
+        inner sep=6pt,
+        text width=6.2cm,
+        drop shadow={opacity=0.15,shadow xshift=1.5pt,shadow yshift=-1.5pt}
+    },
+    backendClass/.style={
+        rectangle,
+        draw=teal!85!black,
+        fill=white,
+        thick,
+        rounded corners=2pt,
+        align=left,
+        inner sep=6pt,
+        text width=6.2cm,
+        drop shadow={opacity=0.15,shadow xshift=1.5pt,shadow yshift=-1.5pt}
+    },
+    serviceClass/.style={
+        rectangle,
+        draw=orange!85!black,
+        fill=white,
+        thick,
+        rounded corners=2pt,
+        align=left,
+        inner sep=6pt,
+        text width=6.2cm,
+        drop shadow={opacity=0.15,shadow xshift=1.5pt,shadow yshift=-1.5pt}
+    },
+    assoc/.style={
+        thick,
+        draw=black!80
+    },
+    depend/.style={
+        dashed,
+        thick,
+        draw=black!75,
+        ->
+    },
+    comp/.style={
+        thick,
+        draw=black!80,
+        {Diamond[fill=black,scale=1.3]}-
+    },
+    aggr/.style={
+        thick,
+        draw=black!80,
+        {Diamond[open,scale=1.3]}-
+    }
+]
+
+% ==================== FRONTEND LAYER (LEFT / TOP) ====================
+
+\node[umlClass] (authCtx) at (-7.5, 12.0) {
+    \textbf{\large \centering AuthContext}\\\hline
+    + currentUser: FirebaseUser\\
+    + userProfile: UserProfile\\
+    + loading: Boolean\\\hline
+    + login(email, pass): Promise\\
+    + register(email, pass, info): Promise\\
+    + signInWithGoogle(): Promise\\
+    + logout(): Promise
+};
+
+\node[umlClass] (idePage) at (0, 12.0) {
+    \textbf{\large \centering IDEWorkspacePage}\\\hline
+    - projectId: String\\
+    - files: Array$<$ProjectFile$>$\\
+    - masterFiles: Array$<$ProjectFile$>$\\
+    - activeFile: ProjectFile\\
+    - currentContent: String\\
+    - openTabs: Array$<$String$>$\\\hline
+    + handleSelectFile(file): void\\
+    + handleSaveFile(): Promise\\
+    + handleSyncToMaster(): Promise\\
+    + handleExecuteScript(): void
+};
+
+\node[umlClass] (editorPane) at (-7.5, 4.0) {
+    \textbf{\large \centering EditorPane}\\\hline
+    - monacoInstance: Monaco\\
+    - editorInstance: ICodeEditor\\
+    - language: String\\\hline
+    + onMount(editor): void\\
+    + handleContentChange(v): void\\
+    + triggerInlineSuggest(): void
+};
+
+\node[umlClass] (terminalComp) at (0, 4.0) {
+    \textbf{\large \centering IntegratedTerminal}\\\hline
+    - xterm: Terminal\\
+    - fitAddon: FitAddon\\
+    - ws: WebSocket\\\hline
+    + handleInput(data): void\\
+    + clear(): void\\
+    + streamOutput(chunk): void
+};
+
+\node[umlClass] (aiSidebar) at (7.5, 4.0) {
+    \textbf{\large \centering AgenticAIChatSidebar}\\\hline
+    - availableModels: Array\\
+    - selectedModel: String\\
+    - userApiKey: String\\\hline
+    + handleSendPrompt(): Promise\\
+    + callDirectGeminiApi(): Promise\\
+    + handleApplyModifications(): void
+};
+
+% ==================== BACKEND & SERVICE LAYER (BOTTOM) ====================
+
+\node[backendClass] (projCtrl) at (-7.5, -4.5) {
+    \textbf{\large \centering ProjectController}\\\hline
+    - projectStore: Map\\\hline
+    + createProject(req, res): Promise\\
+    + getProjectById(req, res): Promise\\
+    + updateFiles(req, res): Promise\\
+    + inviteTeammate(req, res): Promise
+};
+
+\node[backendClass] (collabWs) at (0, -4.5) {
+    \textbf{\large \centering CollaborationWebSocket}\\\hline
+    - activeRooms: Map$<$Id, Set$>$\\\hline
+    + handleConnection(ws, req): void\\
+    + broadcastToRoom(id, msg): void\\
+    + handleContentChange(d): void\\
+    + handleCursorMove(d): void
+};
+
+\node[backendClass] (termWs) at (7.5, -4.5) {
+    \textbf{\large \centering TerminalSessionService}\\\hline
+    - ptySessions: Map$<$Id, PTY$>$\\\hline
+    + createSession(id, ws): PTY\\
+    + writeInput(id, data): void\\
+    + resizeTerminal(id, c, r): void
+};
+
+\node[serviceClass] (aiCtrl) at (-7.5, -12.5) {
+    \textbf{\large \centering AiAgentController}\\\hline
+    - genAI: GoogleGenerativeAI\\\hline
+    + handleAIChat(req, res): Promise\\
+    + discoverWorkingModels(key): Promise\\
+    + validateKey(req, res): Promise
+};
+
+\node[serviceClass] (byodbSvc) at (0, -12.5) {
+    \textbf{\large \centering PersonalDbSyncService}\\\hline
+    - firestorePool: Map\\\hline
+    + syncToOwnerBYODB(proj, user): Promise\\
+    + verifyConnection(config): Promise
+};
+
+\node[serviceClass] (ghSvc) at (7.5, -12.5) {
+    \textbf{\large \centering GitHubService}\\\hline
+    - octokitClient: Object\\\hline
+    + initiateDeviceFlow(): Promise\\
+    + pollDeviceToken(code): Promise\\
+    + exportProjectToRepo(): Promise
+};
+
+% ==================== RELATIONSHIPS & CONNECTORS ====================
+
+% Frontend Composition (IDE Page has Editor, Terminal, AI Sidebar)
+\draw[comp] (idePage.south west) -- node[above left, font=\small\bfseries] {1} (editorPane.north east);
+\draw[comp] (idePage.south) -- node[right, font=\small\bfseries] {1} (terminalComp.north);
+\draw[comp] (idePage.south east) -- node[above right, font=\small\bfseries] {1} (aiSidebar.north west);
+\draw[depend] (idePage.west) -- node[above, font=\small\bfseries] {uses} (authCtx.east);
+
+% Frontend to Backend Communication Dependencies
+\draw[depend] (editorPane.south) -- node[right, font=\small\bfseries] {REST/Sync} (projCtrl.north);
+\draw[depend] (terminalComp.south) -- node[right, font=\small\bfseries] {WS /ws/terminal} (termWs.north);
+\draw[depend] (idePage.south) -- node[left, font=\small\bfseries] {WS /ws/collab} (collabWs.north);
+\draw[depend] (aiSidebar.south) -- node[right, font=\small\bfseries] {REST /api/ai-agent} (aiCtrl.north east);
+
+% Backend Internal Service Dependencies
+\draw[depend] (projCtrl.south) -- node[right, font=\small\bfseries] {delegates} (byodbSvc.north west);
+\draw[depend] (projCtrl.south) -- node[left, font=\small\bfseries] {AI completion} (aiCtrl.north);
+\draw[depend] (projCtrl.south east) -- node[above, font=\small\bfseries] {export repo} (ghSvc.north west);
+
+\end{tikzpicture}
+\end{document}
