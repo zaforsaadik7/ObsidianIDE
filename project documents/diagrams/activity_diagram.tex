@@ -1,4 +1,4 @@
-\documentclass[12pt,border=15pt]{standalone}
+\documentclass[12pt,border=18pt]{standalone}
 \usepackage[utf8]{inputenc}
 \usepackage{tikz}
 \usepackage{lmodern}
@@ -13,14 +13,14 @@
     >=Stealth,
     activity/.style={
         rectangle,
-        draw=blue!80!black,
+        draw=blue!85!black,
         fill=blue!5!white,
         thick,
         rounded corners=5pt,
         align=center,
         inner sep=6pt,
-        text width=4.6cm,
-        minimum height=1.15cm,
+        text width=4.8cm,
+        minimum height=1.2cm,
         drop shadow={opacity=0.12,shadow xshift=1.5pt,shadow yshift=-1.5pt}
     },
     decision/.style={
@@ -31,7 +31,7 @@
         align=center,
         inner sep=2pt,
         aspect=1.7,
-        text width=2.6cm,
+        text width=2.7cm,
         font=\fontsize{10.5pt}{12pt}\selectfont\bfseries,
         drop shadow={opacity=0.12,shadow xshift=1.5pt,shadow yshift=-1.5pt}
     },
@@ -66,117 +66,128 @@
         rounded corners=4pt,
         align=center,
         inner sep=6pt,
-        text width=5.2cm,
-        minimum height=1.2cm
+        text width=5.4cm,
+        minimum height=1.25cm
     }
 ]
 
-% ==================== SWIMLANE COORDINATES ====================
+% ==================== SWIMLANE HEADERS & DIVIDERS ====================
 % Column Centers:
 % Col 1 (Developer Client): X = 0.0cm
-% Col 2 (Express & WS Server): X = 6.4cm
-% Col 3 (Central & BYODB DB): X = 12.8cm
-% Col 4 (Gemini 3.0 & GitHub): X = 19.2cm
+% Col 2 (Express & WS Server): X = 6.8cm
+% Col 3 (Cloud Databases): X = 13.6cm
+% Col 4 (External Services): X = 20.4cm
 
-% ==================== SWIMLANE HEADERS & DIVIDERS ====================
-\node[headerBox] at (0.0, 1.2) {\textbf{\large Developer Client}\\\scriptsize (UI / Monaco / Terminal)};
-\node[headerBox] at (6.4, 1.2) {\textbf{\large Express \& WS Server}\\\scriptsize (REST API \& Real-Time Hub)};
-\node[headerBox] at (12.8, 1.2) {\textbf{\large Cloud Databases}\\\scriptsize (Central \& BYODB Firestore)};
-\node[headerBox] at (19.2, 1.2) {\textbf{\large External Services}\\\scriptsize (Gemini 3.0 AI \& GitHub API)};
+\node[headerBox] at (0.0, 1.3) {\textbf{\large Developer Client}\\\scriptsize (UI / Monaco / Terminal)};
+\node[headerBox] at (6.8, 1.3) {\textbf{\large Express \& WS Server}\\\scriptsize (REST API \& Real-Time Hub)};
+\node[headerBox] at (13.6, 1.3) {\textbf{\large Cloud Databases}\\\scriptsize (Central \& BYODB Firestore)};
+\node[headerBox] at (20.4, 1.3) {\textbf{\large External Services}\\\scriptsize (Gemini 3.0 AI \& GitHub API)};
 
-% Swimlane Divider Lines
-\draw[gray!35, dashed, thick] (3.2, 1.9) -- (3.2, -37.5);
-\draw[gray!35, dashed, thick] (9.6, 1.9) -- (9.6, -37.5);
-\draw[gray!35, dashed, thick] (16.0, 1.9) -- (16.0, -37.5);
+% Swimlane Vertical Divider Lines
+\draw[gray!35, dashed, thick] (3.4, 2.0) -- (3.4, -39.0);
+\draw[gray!35, dashed, thick] (10.2, 2.0) -- (10.2, -39.0);
+\draw[gray!35, dashed, thick] (17.0, 2.0) -- (17.0, -39.0);
 
 % ==================== STEP 1: AUTH & IDENTITY ====================
 \node[startStop] (startNode) at (0.0, -0.4) {};
 
 \node[activity] (actLogin) at (0.0, -2.0) {Submit Credentials /\\Google OAuth Popup};
 
-\node[decision] (decAuth) at (6.4, -2.0) {Valid Token\\\& Identity?};
+\node[decision] (decAuth) at (6.8, -2.0) {Valid Token\\\& Identity?};
 
 \draw[flowLine] (startNode) -- (actLogin);
 \draw[flowLine] (actLogin) -- (decAuth);
 
-% Rejection Loop
-\draw[flowLine] (decAuth) -- node[above, font=\small\bfseries, pos=0.5] {No} ++(0, 1.3) -| (actLogin);
+% Rejection Loop (routes above without overlapping)
+\draw[flowLine] (decAuth) -- node[above, font=\small\bfseries, pos=0.5] {No} ++(0, 1.4) -| (actLogin);
 
 % ==================== STEP 2: ONBOARDING & BYODB ====================
-\node[decision] (decStorage) at (6.4, -4.5) {Storage\\Configured?};
+\node[decision] (decStorage) at (6.8, -5.2) {Storage\\Configured?};
 
-\node[activity] (actOnboard) at (0.0, -7.0) {Input Firebase BYODB\\Project Credentials};
+\node[activity] (actOnboard) at (0.0, -7.8) {Input Firebase BYODB\\Project Credentials};
 
-\node[activity] (actVerifyBYODB) at (12.8, -7.0) {Execute Connection Test\\to 'ObsidianIDE' DB};
+\node[activity] (actVerifyBYODB) at (13.6, -7.8) {Execute Connection Test\\to 'ObsidianIDE' DB};
 
-\draw[flowLine] (decAuth) -- node[right, font=\small\bfseries, pos=0.4] {Yes} (decStorage);
-\draw[flowLine] (decStorage) -- node[above left, font=\small\bfseries] {No} (actOnboard);
+% Auth -> Storage with clear spacing for 'Yes' label
+\draw[flowLine] (decAuth) -- node[right, font=\small\bfseries, pos=0.45] {Yes} (decStorage);
+
+% Storage -> Onboard (No)
+\draw[flowLine] (decStorage) -| node[above, font=\small\bfseries, pos=0.3] {No} (actOnboard);
 \draw[flowLine] (actOnboard) -- (actVerifyBYODB);
 
 % ==================== STEP 3: WORKSPACE INITIALIZATION ====================
-\node[activity] (actOpenWS) at (0.0, -9.6) {Open Project Workspace\\from Dashboard};
+\node[activity] (actOpenWS) at (0.0, -10.5) {Open Project Workspace\\from Dashboard};
 
-\node[activity] (actLoadManifest) at (12.8, -9.6) {Stream Project Files\\\& Active File Tabs};
+\node[activity] (actLoadManifest) at (13.6, -10.5) {Stream Project Files\\\& Active File Tabs};
 
-\node[activity] (actWSConnect) at (6.4, -11.8) {Establish Real-Time\\Collab WebSocket (/ws)};
+\node[activity] (actWSConnect) at (6.8, -13.0) {Establish Real-Time\\Collab WebSocket (/ws)};
 
-\draw[flowLine] (decStorage) -- node[right, font=\small\bfseries, pos=0.7] {Yes} (actOpenWS);
-\draw[flowLine] (actVerifyBYODB) |- (actOpenWS);
+% Storage -> OpenWS (Yes) routes cleanly via Col 2 without crossing actOnboard
+\draw[flowLine] (decStorage) -- node[right, font=\small\bfseries, pos=0.4] {Yes} ++(0, -3.8) -| (actOpenWS.north);
+
+% Verification successful -> Load Manifest
+\draw[flowLine] (actVerifyBYODB) -- (actLoadManifest);
 \draw[flowLine] (actOpenWS) -- (actLoadManifest);
 \draw[flowLine] (actLoadManifest) |- (actWSConnect);
 
 % ==================== STEP 4: CODE EDITING & AI REASONING ====================
-\node[activity] (actMonacoEdit) at (0.0, -14.0) {Edit Code in Monaco\\or Run Terminal Script};
+\node[activity] (actMonacoEdit) at (0.0, -15.5) {Edit Code in Monaco\\or Run Terminal Script};
 
-\node[decision] (decAI) at (0.0, -16.8) {Request AI\\Assistance?};
+\node[decision] (decAI) at (0.0, -18.5) {Request AI\\Assistance?};
 
-\node[activity] (actPromptAI) at (6.4, -16.8) {Bundle 80-File Manifest\\\& Live Terminal Logs};
+\node[activity] (actPromptAI) at (6.8, -18.5) {Bundle 80-File Manifest\\\& Live Terminal Logs};
 
-\node[activity] (actGeminiInfer) at (19.2, -16.8) {Generate Multi-File Diff\\via Gemini 3.0 Flash};
+\node[activity] (actGeminiInfer) at (20.4, -18.5) {Generate Multi-File Diff\\via Gemini 3.0 Flash};
 
-\node[activity] (actApplyPatch) at (0.0, -19.4) {1-Click Apply AI Patch\\to Monaco Buffer};
+\node[activity] (actApplyPatch) at (13.6, -21.2) {1-Click Apply AI Patch\\to Monaco Buffer};
 
 \draw[flowLine] (actWSConnect) |- (actMonacoEdit);
 \draw[flowLine] (actMonacoEdit) -- (decAI);
-\draw[flowLine] (decAI) -- node[above, font=\small\bfseries] {Yes} (actPromptAI);
+
+% AI Yes Branch (Col 1 -> Col 2 -> Col 4 -> Col 3 -> Col 1)
+\draw[flowLine] (decAI) -- node[above, font=\small\bfseries, pos=0.5] {Yes} (actPromptAI);
 \draw[flowLine] (actPromptAI) -- (actGeminiInfer);
 \draw[flowLine] (actGeminiInfer) |- (actApplyPatch);
-\draw[flowLine] (actApplyPatch) -- (actMonacoEdit);
+\draw[flowLine] (actApplyPatch) -| node[above, font=\small\bfseries, pos=0.2] {Apply} (3.6, -16.5) |- (actMonacoEdit.east);
 
 % ==================== STEP 5: ROLE-BASED FORK & MASTER COMMIT ====================
-\node[decision] (decRole) at (0.0, -22.2) {User Role\\Authority?};
+\node[decision] (decRole) at (0.0, -22.8) {User Role\\Authority?};
 
-\node[activity] (actSaveFork) at (0.0, -24.8) {Editor: Save Working Copy\\(pendingFork = true)};
+\node[activity] (actSaveFork) at (0.0, -26.0) {Editor: Save Working Copy\\(pendingFork = true)};
 
-\node[activity] (actOwnerSync) at (6.4, -24.8) {Owner: Save \& Commit\\to Master Baseline};
+\node[activity] (actOwnerSync) at (6.8, -26.0) {Owner: Save \& Commit\\to Master Baseline};
 
-\node[activity] (actPersistCloud) at (12.8, -24.8) {Write File Chunks to\\Central \& BYODB DB};
+\node[activity] (actPersistCloud) at (13.6, -26.0) {Write File Chunks to\\Central \& BYODB DB};
 
-\node[activity] (actBroadcastWS) at (6.4, -27.2) {Broadcast 'FILES\_UPDATED'\\over WebSocket};
+\node[activity] (actBroadcastWS) at (6.8, -28.8) {Broadcast 'FILES\_UPDATED'\\over WebSocket};
 
-\draw[flowLine] (decAI) -- node[left, font=\small\bfseries, pos=0.4] {No} (decRole);
-\draw[flowLine] (decRole) -- node[left, font=\small\bfseries] {Editor} (actSaveFork);
-\draw[flowLine] (decRole) -- node[above, font=\small\bfseries] {Owner} (actOwnerSync);
+% AI No Branch: completely clean straight vertical line (zero box in between)
+\draw[flowLine] (decAI) -- node[left, font=\small\bfseries, pos=0.5] {No} (decRole);
+
+% Role Branches
+\draw[flowLine] (decRole) -- node[left, font=\small\bfseries, pos=0.4] {Editor} (actSaveFork);
+\draw[flowLine] (decRole) -| node[above, font=\small\bfseries, pos=0.3] {Owner} (actOwnerSync);
+
 \draw[flowLine] (actSaveFork) -- (actOwnerSync);
 \draw[flowLine] (actOwnerSync) -- (actPersistCloud);
 \draw[flowLine] (actPersistCloud) |- (actBroadcastWS);
 
-% Loop back to Monaco for active update
-\draw[flowLine] (actBroadcastWS) -| node[above, font=\small\bfseries, pos=0.2] {Update Peers} ++(-3.6, 1.8) |- (actMonacoEdit);
+% Loopback to update peers cleanly
+\draw[flowLine] (actBroadcastWS) -| node[above, font=\small\bfseries, pos=0.2] {Update Peers} (-3.0, -17.5) |- (actMonacoEdit.west);
 
 % ==================== STEP 6: GITHUB EXPORT & TERMINATION ====================
-\node[decision] (decGH) at (0.0, -30.0) {Export to\\GitHub?};
+\node[decision] (decGH) at (0.0, -31.8) {Export to\\GitHub?};
 
-\node[activity] (actGHExport) at (19.2, -30.0) {Commit Git Tree \& Push\\via GitHub REST API};
+\node[activity] (actGHExport) at (20.4, -31.8) {Commit Git Tree \& Push\\via GitHub REST API};
 
-\node[activity] (actComplete) at (0.0, -33.0) {Workspace Synced,\\Documented \& Ready};
+\node[activity] (actComplete) at (0.0, -35.2) {Workspace Synced,\\Documented \& Ready};
 
-\node[endCircle] (endNode) at (0.0, -35.2) {};
+\node[endCircle] (endNode) at (0.0, -37.4) {};
 
 \draw[flowLine] (actSaveFork) -- (decGH);
-\draw[flowLine] (decGH) -- node[above, font=\small\bfseries] {Yes} (actGHExport);
-\draw[flowLine] (actGHExport) |- (actComplete);
-\draw[flowLine] (decGH) -- node[left, font=\small\bfseries] {No} (actComplete);
+\draw[flowLine] (decGH) -- node[above, font=\small\bfseries, pos=0.5] {Yes} (actGHExport);
+\draw[flowLine] (actGHExport) |- (actComplete.east);
+\draw[flowLine] (decGH) -- node[left, font=\small\bfseries, pos=0.5] {No} (actComplete);
 \draw[flowLine] (actComplete) -- (endNode);
 
 \end{tikzpicture}
