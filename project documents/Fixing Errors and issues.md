@@ -1922,6 +1922,22 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #143: Pre-Merge Visual Diff Inspection & Bidirectional Review Workflow
+* **Symptoms**:
+  - When an Editor submitted a fork request, the Project Owner received the notification banner with a "Merge to Master" button, but had no quick way to inspect side-by-side what code was added, modified, or deleted prior to accepting and merging the fork.
+  - Similarly, when the Project Owner modified files, the Editor had no direct button to inspect the Owner's diffs.
+  - Owner modifications were occasionally causing the Editor's "Request Fork" button to light up due to author attribution fallback ambiguities.
+* **Solutions Implemented**:
+  1. **One-Click Pre-Merge Diff Review for Project Owner**: Added a prominent **"Review Diff & Changes"** button directly to the Owner's "Pending Collaborator Review" banner (`onClick={() => setIsDiffViewActive(prev => !prev)}`). This toggles `GitHubDiffViewer`, showing a side-by-side Monaco diff with line additions/deletions before the Owner chooses to "Merge to Master" or "Reject Fork".
+  2. **Bidirectional Review for Editor**: Added a **"View Diff vs Master"** button to the Editor's "Working Fork Active" banner, and a **"Review Changes"** button to the Editor's "Master Updated by Owner" banner.
+  3. **Strict Author & Local Keystroke Attribution**: Refined `hasEditorForkChanges` to strictly check `lastWorkingAuthor === userEmail` and `isEditorLocalTyping`. If `lastWorkingAuthor === ownerEmail` or `isProjectOwner === true`, the changes are strictly attributed to the Owner, ensuring the Editor's "Request Fork" button remains completely off when the Owner edits files.
+  4. **Live Real-Time WebSocket Propagation**: Added `msg.type === 'CODE_UPDATED'` handling to `ws.onmessage`, allowing live typing broadcasts from the Owner to smoothly update open files across connected collaborators.
+* **QA & Automated Verification**:
+  - Production build compiled with **0 errors in 9.85s**.
+  - Pushed to `origin/main` commit `fb6a5c9` with all documentation updated.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
