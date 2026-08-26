@@ -1885,6 +1885,43 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #141: Fork Request Button Inadvertent Activation on Project Owner Edits
+* **Symptoms**:
+  - When the Project Owner typed or modified files in their workspace, the Editor collaborator's screen showed the "Request Fork" button lighting up unexpectedly as if the Editor had authored pending fork changes.
+* **Root Cause**:
+  1. In `IDEWorkspacePage.jsx`, the `useMemo` calculating `hasEditorForkChanges` and `editorAuthoredChangesCount` computed:
+     `const isLocalActiveMod = Boolean(activeFile && wf.filePath === activeFile.filePath && !isBinary && currentContent !== undefined && currentContent !== (mf?.content ?? ''));`
+  2. It compared `currentContent !== mf.content` against the master baseline rather than the Editor's own dirty state / `savedContent`.
+  3. When the Editor received the Owner's live edits over WebSocket/Firestore, `currentContent` reflected the Owner's unmerged code, making `currentContent !== mf.content` evaluate to `true`.
+  4. The code incorrectly flagged `isLocalActiveMod = true` for the Editor, causing `editorCount` to increment and the "Request Fork" button to light up on the Editor's client.
+* **Solutions Implemented**:
+  1. **Strict Dirty State & Local Buffer Comparison**: Updated `isLocalActiveMod` to check whether the active user actually made local uncommitted modifications:
+     ```javascript
+     const isLocalActiveMod = Boolean(
+       activeFile &&
+       wf.filePath === activeFile.filePath &&
+       !isBinary &&
+       (isLocalDirtyRef.current || (currentContent !== undefined && currentContent !== savedContent))
+     );
+     ```
+  2. **Author Attribution Filter**: For `!isProjectOwner`, changes are only counted toward the Editor's fork changes if `isLocalActiveMod || (author && author === userEmail)`. Owner edits (`author === ownerEmail`) are cleanly classified as `hasOwnerAuthoredChanges: true`, keeping the Fork Request button inactive for Editors.
+* **QA & Automated Verification**:
+  - Validated via `test_fork_button_and_notification_stability.js` (Test 1 & 2): When Owner types, `hasEditorForkChanges = false` and `editorAuthoredChangesCount = 0`; when Editor types, `hasEditorForkChanges = true` and `editorAuthoredChangesCount = 1`.
+
+---
+
+### Issue #142: Toast Notification Timer Collision & Flickering/Premature Dismissal
+* **Symptoms**:
+  - Save/sync toast notifications were glitching, flashing rapidly, or disappearing prematurely within less than a second when actions or file operations occurred consecutively.
+* **Root Cause**:
+  - Raw `setSaveSyncSuccessMsg(...)` calls used independent `setTimeout(() => setSaveSyncSuccessMsg(''), duration)` timers without clearing previous timer handles. A previous action's timer expiring at e.g. 3500ms would clear a newly arrived action's toast after only 200ms.
+* **Solutions Implemented**:
+  - Implemented `toastTimeoutRef` and a unified `showNotificationToast(msg, duration)` helper that clears any pending timer via `clearTimeout(toastTimeoutRef.current)` before scheduling the dismissal of the new message.
+* **QA & Automated Verification**:
+  - Validated via `test_fork_button_and_notification_stability.js` (Test 4): Rapid consecutive toast events maintain smooth, stable display without flickering or premature dismissals.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
