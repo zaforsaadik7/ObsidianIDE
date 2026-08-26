@@ -341,7 +341,18 @@ export const OnboardingWizardPage = () => {
       {/* Top Navbar */}
       <header className="fixed top-0 left-0 w-full z-40 flex justify-between items-center px-6 h-12 bg-surface-container-low/80 dark:bg-surface-dark/80 backdrop-blur-xl border-b border-outline-variant">
         <div className="flex items-center gap-4">
-          <span className="text-xl font-bold text-surface-tint tracking-tighter font-headline">ObsidianIDE</span>
+          <Link 
+            to={currentUser ? "/dashboard" : "/"} 
+            className="flex items-center gap-2.5 text-xl font-bold text-surface-tint tracking-tighter font-headline hover:opacity-90 transition-opacity no-underline"
+            title={currentUser ? "Go to Dashboard" : "Go to Home"}
+          >
+            <img 
+              src="/logo.png" 
+              alt="ObsidianIDE Logo" 
+              className="w-7 h-7 rounded-full object-cover border border-cyan-400/40 shadow-[0_0_10px_rgba(0,220,229,0.3)]" 
+            />
+            <span>ObsidianIDE</span>
+          </Link>
           <span className="text-[10px] font-mono px-2 py-0.5 bg-surface-container-high text-on-surface-variant border border-outline-variant/30">
             Storage Deployment Strategy
           </span>

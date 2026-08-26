@@ -2795,14 +2795,15 @@ export const IDEWorkspacePage = () => {
         <div className="flex items-center gap-6">
           {/* Logo */}
           <Link
-            to="/dashboard"
-            onClick={() => navigate('/dashboard')}
+            to={currentUser ? "/dashboard" : "/"}
             className="flex items-center gap-2 cursor-pointer group no-underline"
-            title="Return to Workspace Central Launcher (Dashboard)"
+            title={currentUser ? "Return to Workspace Central Launcher (Dashboard)" : "Go to Home"}
           >
-            <div className="w-6 h-6 rounded bg-gradient-to-br from-cyan-400 to-purple-600 flex items-center justify-center shadow-[0_0_10px_rgba(0,220,229,0.3)] group-hover:scale-105 transition-transform">
-              <span className="material-symbols-outlined text-black text-sm font-bold">code_blocks</span>
-            </div>
+            <img 
+              src="/logo.png" 
+              alt="ObsidianIDE Logo" 
+              className="w-6 h-6 rounded-full object-cover border border-cyan-400/40 shadow-[0_0_10px_rgba(0,220,229,0.3)] group-hover:scale-105 transition-transform" 
+            />
             <span className="text-sm font-bold text-white font-headline tracking-tight group-hover:text-cyan-300 transition-colors">
               ObsidianIDE
             </span>

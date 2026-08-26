@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { db } from '../firebase';
@@ -212,12 +212,18 @@ export const InvitePortalPage = () => {
     <div className="min-h-screen bg-surface-light dark:bg-[#0A0A0B] text-neutral-900 dark:text-white font-sans flex flex-col justify-between p-4">
       {/* Top Navbar */}
       <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-6 h-12 bg-surface-container-low/80 dark:bg-surface-dark/80 backdrop-blur-xl border-b border-outline-variant font-mono">
-        <span 
-          onClick={() => navigate('/')}
-          className="text-xl font-bold text-surface-tint tracking-tighter font-headline cursor-pointer"
+        <Link 
+          to={currentUser ? "/dashboard" : "/"} 
+          className="flex items-center gap-2.5 text-xl font-bold text-surface-tint tracking-tighter font-headline hover:opacity-90 transition-opacity no-underline cursor-pointer"
+          title={currentUser ? "Go to Dashboard" : "Go to Home"}
         >
-          ObsidianIDE
-        </span>
+          <img 
+            src="/logo.png" 
+            alt="ObsidianIDE Logo" 
+            className="w-7 h-7 rounded-full object-cover border border-cyan-400/40 shadow-[0_0_10px_rgba(0,220,229,0.3)]" 
+          />
+          <span>ObsidianIDE</span>
+        </Link>
       </header>
 
       {/* Centered Invite Card */}

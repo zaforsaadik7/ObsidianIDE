@@ -239,15 +239,21 @@ export const ConnectGitHubPage = () => {
     <div className="min-h-screen bg-[#0A0A0E] text-[#E3E2E6] flex flex-col justify-between select-none">
       {/* Header */}
       <header className="px-6 py-4 border-b border-white/10 flex justify-between items-center bg-[#101015]/80 backdrop-blur-xl">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-            <span className="material-symbols-outlined text-white text-lg">code_blocks</span>
-          </div>
+        <Link 
+          to={currentUser ? "/dashboard" : "/"} 
+          className="flex items-center gap-3 no-underline group"
+          title={currentUser ? "Go to Dashboard" : "Go to Home"}
+        >
+          <img 
+            src="/logo.png" 
+            alt="ObsidianIDE Logo" 
+            className="w-8 h-8 rounded-full object-cover border border-cyan-400/40 shadow-lg shadow-cyan-500/20 group-hover:scale-105 transition-transform" 
+          />
           <div>
-            <div className="font-bold tracking-wider text-sm text-white">OBSIDIAN IDE</div>
+            <div className="font-bold tracking-wider text-sm text-white group-hover:text-cyan-300 transition-colors">OBSIDIAN IDE</div>
             <div className="text-[10px] text-cyan-400 font-mono">STEP 2 OF 2: GITHUB INTEGRATION</div>
           </div>
-        </div>
+        </Link>
 
         <button
           onClick={handleSkip}

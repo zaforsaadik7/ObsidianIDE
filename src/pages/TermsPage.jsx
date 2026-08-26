@@ -1,9 +1,11 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 
 export const TermsPage = () => {
   const { isDark, toggleTheme } = useTheme();
+  const { currentUser } = useAuth();
   const navigate = useNavigate();
 
   return (
@@ -17,8 +19,17 @@ export const TermsPage = () => {
           >
             <span className="material-symbols-outlined text-sm">arrow_back</span> Back
           </button>
-          <Link to="/dashboard" className="text-xl font-bold text-surface-tint tracking-tighter font-headline">
-            ObsidianIDE
+          <Link 
+            to={currentUser ? "/dashboard" : "/"} 
+            className="flex items-center gap-2 text-xl font-bold text-surface-tint tracking-tighter font-headline hover:opacity-90 transition-opacity no-underline"
+            title={currentUser ? "Go to Dashboard" : "Go to Home"}
+          >
+            <img 
+              src="/logo.png" 
+              alt="ObsidianIDE Logo" 
+              className="w-7 h-7 rounded-full object-cover border border-cyan-400/40 shadow-[0_0_10px_rgba(0,220,229,0.3)]" 
+            />
+            <span>ObsidianIDE</span>
           </Link>
           <span className="text-xs font-mono px-2 py-0.5 rounded bg-surface-tint/10 text-surface-tint border border-surface-tint/30">
             Terms of service

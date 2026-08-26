@@ -12,13 +12,15 @@ export const Header = () => {
     <header className="fixed top-0 left-0 w-full z-[200] flex justify-between items-center px-6 h-12 bg-surface-container-low/80 dark:bg-surface-dark/80 backdrop-blur-xl border-b border-outline-variant shadow-sm transition-colors duration-150">
       <div className="flex items-center gap-6">
         <Link 
-          to="/dashboard" 
+          to={currentUser ? "/dashboard" : "/"} 
           className="flex items-center gap-2.5 text-xl font-bold text-surface-tint tracking-tighter hover:opacity-90 transition-opacity font-headline group no-underline"
-          title="Return to Dashboard"
+          title={currentUser ? "Return to Dashboard" : "Go to Home"}
         >
-          <div className="w-7 h-7 rounded bg-gradient-to-br from-cyan-400 to-purple-600 flex items-center justify-center shadow-[0_0_10px_rgba(0,220,229,0.3)] group-hover:scale-105 transition-transform">
-            <span className="material-symbols-outlined text-black text-base font-bold">code_blocks</span>
-          </div>
+          <img 
+            src="/logo.png" 
+            alt="ObsidianIDE Logo" 
+            className="w-7 h-7 rounded-full object-cover border border-cyan-400/40 shadow-[0_0_10px_rgba(0,220,229,0.3)] group-hover:scale-105 transition-transform" 
+          />
           <span>ObsidianIDE</span>
         </Link>
       </div>
