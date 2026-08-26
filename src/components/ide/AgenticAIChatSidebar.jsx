@@ -72,6 +72,16 @@ export const AgenticAIChatSidebar = ({
     }
   }, [sessions, sessionsStorageKey]);
 
+  // ── Dynamic Backend & API Resolution ──
+  const getBackendBaseUrl = () => {
+    const envUrl = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
+    if (envUrl) return envUrl;
+    if (typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || window.location.port === '5173')) {
+      return 'https://obsidianide.onrender.com';
+    }
+    return '';
+  };
+
   // ── Dynamic Model Discovery State ──
   const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('obsidian_ai_key') || '');
   const [availableModels, setAvailableModels] = useState([
@@ -86,16 +96,47 @@ export const AgenticAIChatSidebar = ({
   // Fetch verified workable models dynamically from API
   const fetchAvailableModels = async (keyToUse) => {
     setIsLoadingModels(true);
+    const key = (keyToUse !== undefined ? keyToUse : userApiKey).trim();
+    const backendBase = getBackendBaseUrl();
+
     try {
-      const key = (keyToUse !== undefined ? keyToUse : userApiKey).trim();
-      const res = await fetch(`/api/ai-agent/models?apiKey=${encodeURIComponent(key)}`);
-      const data = await res.json();
-      if (res.ok && Array.isArray(data.models) && data.models.length > 0) {
-        setAvailableModels(data.models);
-        setHasValidApiKey(Boolean(data.hasKey));
-        // Keep selected model if valid, else pick first working model
-        if (!data.models.some(m => m.id === selectedModel)) {
-          setSelectedModel(data.models[0].id);
+      // 1. Try Backend endpoint
+      let res = await fetch(`${backendBase}/api/ai-agent/models?apiKey=${encodeURIComponent(key)}`).catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.models) && data.models.length > 0) {
+          setAvailableModels(data.models);
+          setHasValidApiKey(Boolean(data.hasKey));
+          if (!data.models.some(m => m.id === selectedModel)) {
+            setSelectedModel(data.models[0].id);
+          }
+          setIsLoadingModels(false);
+          return;
+        }
+      }
+
+      // 2. Direct Google Generative Language API fallback if key provided
+      if (key) {
+        const googleRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`).catch(() => null);
+        if (googleRes && googleRes.ok) {
+          const gData = await googleRes.json();
+          const rawModels = gData.models || [];
+          const genModels = rawModels
+            .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+            .map(m => ({
+              id: m.name.replace(/^models\//, ''),
+              name: m.displayName || m.name.replace(/^models\//, ''),
+              description: m.description || 'Google Gemini Language Model'
+            }))
+            .filter(m => m.id.startsWith('gemini-') && !m.id.includes('image') && !m.id.includes('embedding') && !m.id.includes('tts'));
+
+          if (genModels.length > 0) {
+            setAvailableModels(genModels);
+            setHasValidApiKey(true);
+            if (!genModels.some(m => m.id === selectedModel)) {
+              setSelectedModel(genModels[0].id);
+            }
+          }
         }
       }
     } catch (err) {
@@ -248,6 +289,133 @@ export const AgenticAIChatSidebar = ({
     setIsHistoryDrawerOpen(false);
   };
 
+  // ── Direct Client-Side Gemini API Fallback Engine (Dual-Layer Resilience) ──
+  const callDirectGeminiApi = async ({ apiKey, selectedModel, prompt, activeFile, currentContent, fileManifest, mentionedFiles, terminalOutput }) => {
+    const modelsToTry = [
+      selectedModel || 'gemini-1.5-flash',
+      'gemini-1.5-flash',
+      'gemini-2.0-flash',
+      'gemini-2.5-flash',
+      'gemini-1.5-pro'
+    ].filter((v, i, a) => a.indexOf(v) === i);
+
+    let codebaseContextSection = '';
+    if (Array.isArray(fileManifest) && fileManifest.length > 0) {
+      const filesWithContent = fileManifest.map((f, i) => {
+        const path = f.filePath || f.fileName || `file_${i}`;
+        const content = f.content !== undefined ? String(f.content) : '';
+        const isMentioned = Array.isArray(mentionedFiles) && mentionedFiles.includes(path);
+        const tag = isMentioned ? ' [⭐ USER MENTIONED FILE]' : '';
+        return `========================================================\nFILE [${i + 1}/${fileManifest.length}]: ${path}${tag}\n========================================================\n${content}\n`;
+      }).join('\n');
+      codebaseContextSection = `PROJECT CODEBASE (${fileManifest.length} files):\n${filesWithContent}\n`;
+    }
+
+    const terminalContextSection = terminalOutput ? `\nLATEST TERMINAL OUTPUT:\n\`\`\`terminal\n${String(terminalOutput).slice(-10000)}\n\`\`\`\n` : '';
+    const activeBufferSection = activeFile ? `\nACTIVE OPEN BUFFER (${activeFile.filePath || activeFile.fileName}):\n\`\`\`\n${currentContent || ''}\n\`\`\`\n` : '';
+
+    const systemPrompt = `You are Antigravity-AI, the advanced autonomous agentic coding assistant embedded in ObsidianIDE.
+You have complete access to the user's workspace files and terminal output.
+
+${codebaseContextSection}
+${activeBufferSection}
+${terminalContextSection}
+
+USER INSTRUCTION:
+${prompt}
+
+RESPONSE GUIDELINES:
+1. Provide a comprehensive, clear, and professional response explaining the code analysis and solution.
+2. If code modifications are needed across the workspace, you MUST include a clean JSON block at the very end inside a \`\`\`json\`\`\` code fence formatted EXACTLY as:
+\`\`\`json
+{
+  "modifications": [
+    {
+      "filePath": "path/to/file.ext",
+      "newContent": "COMPLETE updated source code for this file"
+    }
+  ],
+  "commands": [
+    "python src/main.py"
+  ]
+}
+\`\`\`
+3. If no file modifications are needed, provide your explanation directly without the JSON block.`;
+
+    let lastError = null;
+    for (const modelName of modelsToTry) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [{ text: systemPrompt }]
+            }],
+            generationConfig: {
+              temperature: 0.2,
+              topP: 0.95,
+              maxOutputTokens: 8192
+            }
+          })
+        });
+
+        if (resp.ok) {
+          const data = await resp.json();
+          const candidate = data.candidates?.[0];
+          const rawText = candidate?.content?.parts?.[0]?.text || '';
+          if (rawText) {
+            let text = rawText;
+            let fileModifications = [];
+            let terminalCommands = [];
+            let runScript = null;
+            let githubAction = null;
+
+            const jsonMatch = rawText.match(/```json\s*([\s\S]*?)\s*```/);
+            if (jsonMatch) {
+              try {
+                const parsed = JSON.parse(jsonMatch[1].trim());
+                text = rawText.replace(/```json\s*[\s\S]*?\s*```/, '').trim();
+                if (Array.isArray(parsed.modifications)) {
+                  fileModifications = parsed.modifications.map((m, idx) => ({
+                    modificationId: `mod_${Date.now()}_${idx}`,
+                    filePath: m.filePath,
+                    newContent: m.newContent,
+                    action: 'MODIFY',
+                    description: `Update ${m.filePath}`
+                  }));
+                }
+                if (Array.isArray(parsed.commands)) {
+                  terminalCommands = parsed.commands;
+                }
+                if (parsed.runScript) runScript = parsed.runScript;
+                if (parsed.githubAction) githubAction = parsed.githubAction;
+              } catch (e) {}
+            }
+
+            return {
+              text,
+              fileModifications,
+              terminalCommands,
+              runScript,
+              githubAction,
+              modelUsed: modelName
+            };
+          }
+        } else {
+          const errData = await resp.json().catch(() => ({}));
+          lastError = new Error(errData.error?.message || `HTTP ${resp.status} on ${modelName}`);
+        }
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error('All Gemini models failed to generate a response.');
+  };
+
   // ── API Key Vault Functions ──
   const handleTestKeyInVault = async () => {
     const key = vaultKeyInput.trim();
@@ -257,28 +425,57 @@ export const AgenticAIChatSidebar = ({
     }
 
     setKeyValidationStatus({ loading: true });
+    const backendBase = getBackendBaseUrl();
     try {
-      const res = await fetch('/api/ai-agent/validate-key', {
+      // 1. Try Backend endpoint first
+      let res = await fetch(`${backendBase}/api/ai-agent/validate-key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: key })
-      });
-      const data = await res.json();
-      if (res.ok && data.valid) {
+      }).catch(() => null);
+
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data.valid) {
+          setUserApiKey(key);
+          localStorage.setItem('obsidian_ai_key', key);
+          setHasValidApiKey(true);
+          fetchAvailableModels(key);
+          setKeyValidationStatus({
+            valid: true,
+            message: `✅ Key is live & working! ${data.workingModels?.length || 0} models ready.`
+          });
+          return;
+        }
+      }
+
+      // 2. Direct Google Generative Language API test fallback
+      const googlePing = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'OK' }] }]
+        })
+      }).catch(() => null);
+
+      if (googlePing && googlePing.ok) {
         setUserApiKey(key);
         localStorage.setItem('obsidian_ai_key', key);
         setHasValidApiKey(true);
         fetchAvailableModels(key);
         setKeyValidationStatus({
           valid: true,
-          message: `✅ Key is live & working! ${data.workingModels?.length || 0} models ready.`
+          message: `✅ Key is live & connected directly to Google Gemini API!`
         });
-      } else {
-        setKeyValidationStatus({
-          valid: false,
-          error: data.error || 'API Key validation rejected by Gemini API.'
-        });
+        return;
       }
+
+      let errMsg = 'API Key rejected by Google Gemini API.';
+      if (googlePing) {
+        const gErr = await googlePing.json().catch(() => ({}));
+        errMsg = gErr.error?.message || errMsg;
+      }
+      setKeyValidationStatus({ valid: false, error: errMsg });
     } catch (err) {
       setKeyValidationStatus({
         valid: false,
@@ -352,41 +549,72 @@ export const AgenticAIChatSidebar = ({
 
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
       const effectiveApiKey = (userApiKey || localStorage.getItem('obsidian_ai_key') || '').trim();
+      const backendBase = getBackendBaseUrl();
+      let aiResponseData = null;
 
-      const res = await fetch('/api/ai-agent/chat', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
-          prompt: userText,
-          activeFilePath: activeFile?.filePath || '',
-          activeFileContent: currentContent || '',
-          fileManifest,
-          mentionedFiles: mentioned,
-          terminalOutput: (includeTerminalLogs && terminalOutput) ? terminalOutput : '',
-          githubInfo,
-          projectInfo: {
-            projectId,
-            title: projectTitle,
-            githubRepoUrl: projectGithubRepoUrl
+      // 1. Attempt Backend AI Endpoint
+      try {
+        const res = await fetch(`${backendBase}/api/ai-agent/chat`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
           },
-          apiKey: effectiveApiKey,
-          selectedModel
-        })
-      });
+          body: JSON.stringify({
+            prompt: userText,
+            activeFilePath: activeFile?.filePath || '',
+            activeFileContent: currentContent || '',
+            fileManifest,
+            mentionedFiles: mentioned,
+            terminalOutput: (includeTerminalLogs && terminalOutput) ? terminalOutput : '',
+            githubInfo,
+            projectInfo: {
+              projectId,
+              title: projectTitle,
+              githubRepoUrl: projectGithubRepoUrl
+            },
+            apiKey: effectiveApiKey,
+            selectedModel
+          })
+        });
 
-      const data = await res.json();
-      if (res.ok && data.response) {
+        if (res.ok) {
+          const data = await res.json();
+          if (data.response) {
+            aiResponseData = data.response;
+          }
+        }
+      } catch (backendErr) {
+        console.warn('Backend AI endpoint unreachable, attempting direct client fallback:', backendErr);
+      }
+
+      // 2. Direct Client-Side Gemini API Fallback (Dual-layer resilience)
+      if (!aiResponseData && effectiveApiKey) {
+        try {
+          aiResponseData = await callDirectGeminiApi({
+            apiKey: effectiveApiKey,
+            selectedModel,
+            prompt: userText,
+            activeFile,
+            currentContent,
+            fileManifest,
+            mentionedFiles: mentioned,
+            terminalOutput: (includeTerminalLogs && terminalOutput) ? terminalOutput : ''
+          });
+        } catch (directErr) {
+          console.warn('Direct Gemini API fallback error:', directErr);
+        }
+      }
+
+      if (aiResponseData) {
         const aiMessage = {
           sender: 'ai',
-          text: data.response.text,
-          modifications: data.response.fileModifications || [],
-          terminalCommands: data.response.terminalCommands || [],
-          runScript: data.response.runScript || null,
-          githubAction: data.response.githubAction || null,
-          modelUsed: data.response.modelUsed || selectedModel
+          text: aiResponseData.text,
+          modifications: aiResponseData.fileModifications || [],
+          terminalCommands: aiResponseData.terminalCommands || [],
+          runScript: aiResponseData.runScript || null,
+          githubAction: aiResponseData.githubAction || null,
+          modelUsed: aiResponseData.modelUsed || selectedModel
         };
 
         setSessions(prev => prev.map(s => {
@@ -400,10 +628,9 @@ export const AgenticAIChatSidebar = ({
           return s;
         }));
       } else {
-        const errDetail = data?.message || data?.error || 'Failed to receive response from Gemini AI.';
         const errMessage = {
           sender: 'ai',
-          text: `⚠️ **Agent Notice**: ${errDetail}\n\n*Tip: Check that your API key is valid in the Key Vault and that you have quota available.*`,
+          text: `⚠️ **Agent Notice**: Unable to generate AI response. Please ensure you have entered a valid Google Gemini API Key in the Key Vault.\n\n*Click the Key icon (🔑) in the top header to enter or test your Gemini API Key.*`,
           modifications: []
         };
         setSessions(prev => prev.map(s => {
@@ -421,7 +648,7 @@ export const AgenticAIChatSidebar = ({
       console.error('Error in agentic AI chat:', err);
       const connErrMessage = {
         sender: 'ai',
-        text: `⚠️ **Connection Error**: ${err.message || 'Unable to connect to backend AI service.'}`,
+        text: `⚠️ **Connection Error**: ${err.message || 'Unable to connect to AI service.'}`,
         modifications: []
       };
       setSessions(prev => prev.map(s => {
