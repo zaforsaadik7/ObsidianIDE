@@ -160,6 +160,19 @@ export const IDEWorkspacePage = () => {
   const activeUserRole = isProjectOwner ? 'OWNER' : (serverUserRole || liveProjectData?.userRole || projectData?.userRole || projectData?.role || 'EDITOR');
 
   const [saveSyncSuccessMsg, setSaveSyncSuccessMsg] = useState('');
+  const toastTimeoutRef = useRef(null);
+
+  const showNotificationToast = useCallback((msg, duration = 4000) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+    setSaveSyncSuccessMsg(msg);
+    if (msg) {
+      toastTimeoutRef.current = setTimeout(() => {
+        setSaveSyncSuccessMsg('');
+      }, duration);
+    }
+  }, []);
 
   // â”€â”€ Helper to detect binary file types (PDF, Images, Archives) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const isBinaryFile = (filePath = '') => {
@@ -638,8 +651,7 @@ export const IDEWorkspacePage = () => {
             }
             if (msg.type === 'FORK_ACCEPTED') {
               setIsDiffViewActive(false);
-              setSaveSyncSuccessMsg('🎉 Changes merged & synchronized to Master Repository!');
-              setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+              showNotificationToast('🎉 Changes merged & synchronized to Master Repository!', 5000);
             }
           } else if (msg.type === 'FORK_REQUESTED') {
             if (msg.working_files && msg.working_files.length > 0) {
@@ -649,8 +661,7 @@ export const IDEWorkspacePage = () => {
             const sender = (msg.requestedBy || '').trim().toLowerCase();
             const current = (userEmail || '').trim().toLowerCase();
             if (isProjectOwner && sender && sender !== current) {
-              setSaveSyncSuccessMsg(`🔔 New fork request submitted by ${msg.requestedBy || 'collaborator'}!`);
-              setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+              showNotificationToast(`🔔 New fork request submitted by ${msg.requestedBy || 'collaborator'}!`, 5000);
             }
           } else if (msg.type === 'FORK_REJECTED') {
             if (msg.master_project_files && msg.master_project_files.length > 0) {
@@ -661,8 +672,7 @@ export const IDEWorkspacePage = () => {
               hasUnsavedForkChangesRef.current = false;
               isLocalDirtyRef.current = false;
             }
-            setSaveSyncSuccessMsg('❌ Notice: Collaborator fork request was rejected by the Project Owner. Workspace restored to Master baseline.');
-            setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+            showNotificationToast('❌ Notice: Collaborator fork request was rejected by the Project Owner. Workspace restored to Master baseline.', 5000);
           }
         } catch (e) {}
       };
@@ -853,7 +863,7 @@ export const IDEWorkspacePage = () => {
     }
 
     const masterPathMap = new Map(masterFiles.map(f => [f.filePath, f]));
-    const hasLocalBufferDirty = Boolean(isLocalDirtyRef.current || hasUnsavedForkChangesRef.current || (activeFile && !isBinaryFile(activeFile?.filePath) && currentContent !== savedContent));
+    const hasPendingFork = Boolean(projectData?.pendingFork || liveProjectData?.pendingFork);
 
     let editorCount = 0;
     let ownerChangesExist = false;
@@ -862,23 +872,29 @@ export const IDEWorkspacePage = () => {
     (files || []).forEach(wf => {
       const mf = masterPathMap.get(wf.filePath);
       const isBinary = isBinaryFile(wf.filePath);
-      const isLocalActiveMod = (activeFile && wf.filePath === activeFile.filePath && !isBinary && currentContent !== undefined && currentContent !== (mf?.content ?? ''));
-      const isWfDifferentFromMaster = !mf || mf.content !== wf.content;
+      const isLocalActiveMod = Boolean(
+        activeFile &&
+        wf.filePath === activeFile.filePath &&
+        !isBinary &&
+        (isLocalDirtyRef.current || (currentContent !== undefined && currentContent !== savedContent))
+      );
+      const isWfDifferentFromMaster = !mf || (mf.content !== undefined && wf.content !== undefined && mf.content !== wf.content);
       const isEffectiveMod = isLocalActiveMod || isWfDifferentFromMaster;
 
       if (isEffectiveMod) {
         const author = (wf.lastModifiedBy || '').toLowerCase().trim();
         if (!isProjectOwner) {
-          // For non-owner editor: any working difference is their pending fork change
-          editorCount++;
-        } else {
-          // For project owner: check if changes were submitted by a collaborator
-          if (author && author !== ownerEmail) {
-            collabCount++;
-          } else if (liveProjectData?.lastWorkingModifiedBy && liveProjectData.lastWorkingModifiedBy.toLowerCase() !== ownerEmail) {
-            collabCount++;
-          } else if (author === ownerEmail) {
+          // For non-owner editor: ONLY count changes authored by THIS editor or active local unsaved buffer
+          if (isLocalActiveMod || (author && author === userEmail)) {
+            editorCount++;
+          } else {
+            // Author is the owner or another collaborator
             ownerChangesExist = true;
+          }
+        } else {
+          // For project owner: check if changes were submitted by a collaborator with pending fork
+          if (hasPendingFork && author && author !== ownerEmail) {
+            collabCount++;
           } else {
             ownerChangesExist = true;
           }
@@ -892,21 +908,22 @@ export const IDEWorkspacePage = () => {
         if (!isProjectOwner) {
           editorCount++;
         } else {
-          collabCount++;
+          if (hasPendingFork) collabCount++;
+          else ownerChangesExist = true;
         }
       }
     });
 
-    // If all working files match master baseline 1:1, fork changes is false
-    const hasForkChanges = !isProjectOwner && (editorCount > 0 || (hasLocalBufferDirty && Object.keys(fileStatusMap).length > 0));
+    // Editor ONLY sees fork button if they personally authored changes or have active dirty buffer
+    const hasForkChanges = !isProjectOwner && editorCount > 0;
 
     return {
       hasEditorForkChanges: hasForkChanges,
-      hasOwnerAuthoredChanges: isProjectOwner ? ownerChangesExist : false,
+      hasOwnerAuthoredChanges: isProjectOwner ? ownerChangesExist : (!hasForkChanges && ownerChangesExist),
       editorAuthoredChangesCount: editorCount,
       collaboratorPendingChangesCount: isProjectOwner ? collabCount : 0
     };
-  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner, fileStatusMap, liveProjectData?.lastWorkingModifiedBy]);
+  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner, fileStatusMap, liveProjectData?.lastWorkingModifiedBy, projectData?.pendingFork, liveProjectData?.pendingFork]);
 
   const activeMasterFile = useMemo(() => {
     if (!activeFile) return null;
@@ -1053,8 +1070,7 @@ export const IDEWorkspacePage = () => {
         }, { merge: true });
       } catch (uErr) { }
 
-      setSaveSyncSuccessMsg(`💾 Saved ${changedFilesCount || updatedFiles.length} file(s) to your Personal Local Storage & Database!`);
-      setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
+      showNotificationToast(`💾 Saved ${changedFilesCount || updatedFiles.length} file(s) to your Personal Local Storage & Database!`, 3500);
     } catch (err) {
       console.error('Error saving to local storage:', err);
       alert(`Failed to save to local storage: ${err.message}`);
@@ -1154,8 +1170,7 @@ export const IDEWorkspacePage = () => {
         })
       }).catch(apiErr => console.warn('Backend update-files notice:', apiErr));
 
-      setSaveSyncSuccessMsg(`🔔 Fork requested! ${Object.keys(fileStatusMap).length || updatedFiles.length} change(s) submitted for Project Owner review.`);
-      setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
+      showNotificationToast(`🔔 Fork requested! ${Object.keys(fileStatusMap).length || updatedFiles.length} change(s) submitted for Project Owner review.`, 4500);
     } catch (err) {
       console.error('Error submitting fork request:', err);
       alert(`Failed to submit fork request: ${err.message}`);
@@ -1307,8 +1322,7 @@ export const IDEWorkspacePage = () => {
       hasUnsavedForkChangesRef.current = false;
       isLocalDirtyRef.current = false;
       setIsDiffViewActive(false);
-      setSaveSyncSuccessMsg('🎉 All working changes merged and synchronized to Master Repository!');
-      setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+      showNotificationToast('🎉 All working changes merged and synchronized to Master Repository!', 5000);
     } catch (err) {
       console.error('Error syncing master repository:', err);
       alert(`Failed to sync master repository: ${err.message}`);
@@ -1425,8 +1439,7 @@ export const IDEWorkspacePage = () => {
       }
 
       setIsDiffViewActive(false);
-      setSaveSyncSuccessMsg('❌ Fork request rejected. Shared workspace restored to Master baseline.');
-      setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+      showNotificationToast('❌ Fork request rejected. Shared workspace restored to Master baseline.', 5000);
     } catch (err) {
       console.error('Error rejecting fork request:', err);
       alert(`Failed to reject fork request: ${err.message}`);
@@ -1607,8 +1620,7 @@ export const IDEWorkspacePage = () => {
         });
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`⚡ Applied AI edits to ${actualFilePath}`);
-      setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
+      showNotificationToast(`⚡ Applied AI edits to ${actualFilePath}`, 3500);
     } catch (err) {
       console.error('Error applying AI modifications:', err);
       alert(`Failed to apply edits: ${err.message}`);
@@ -1702,8 +1714,7 @@ export const IDEWorkspacePage = () => {
         console.warn('Working create file sync notice:', fsErr);
       }
 
-      setSaveSyncSuccessMsg(`[+] Created '${cleanPath}' (${isProjectOwner ? 'Live in Master' : 'In Working Fork'})`);
-      setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
+      showNotificationToast(`[+] Created '${cleanPath}' (${isProjectOwner ? 'Live in Master' : 'In Working Fork'})`, 4500);
     } catch (err) {
       console.error('Error creating new file:', err);
     }
@@ -1776,8 +1787,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[→] Renamed to '${cleanNewPath}'`);
-      setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
+      showNotificationToast(`[→] Renamed to '${cleanNewPath}'`, 3500);
     } catch (err) {
       console.error('Error renaming file:', err);
       alert(`Failed to rename file: ${err.message}`);
@@ -1850,8 +1860,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[-] Deleted '${fileObj.fileName}'`);
-      setTimeout(() => setSaveSyncSuccessMsg(''), 4500);
+      showNotificationToast(`[-] Deleted '${fileObj.fileName}'`, 4500);
     } catch (err) {
       console.error('Error deleting file:', err);
     }
@@ -1938,8 +1947,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[→] Renamed folder /${cleanOld} to /${cleanNew}`);
-      setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
+      showNotificationToast(`[→] Renamed folder /${cleanOld} to /${cleanNew}`, 3500);
     } catch (err) {
       console.error('Error renaming folder:', err);
       alert(`Failed to rename folder: ${err.message}`);
@@ -2000,8 +2008,7 @@ export const IDEWorkspacePage = () => {
         }
       } catch (fsErr) { }
 
-      setSaveSyncSuccessMsg(`[×] Deleted folder /${cleanFolder}`);
-      setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
+      showNotificationToast(`[×] Deleted folder /${cleanFolder}`, 3500);
     } catch (err) {
       console.error('Error deleting folder:', err);
       alert(`Failed to delete folder: ${err.message}`);
@@ -2134,8 +2141,7 @@ export const IDEWorkspacePage = () => {
           }
         } catch (fsErr) { }
 
-        setSaveSyncSuccessMsg(`[→] Moved ${fileName} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'}`);
-        setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
+        showNotificationToast(`[→] Moved ${fileName} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'}`, 3500);
       } catch (err) {
         console.error('Error moving file:', err);
         alert(`Failed to move file: ${err.message}`);
@@ -2208,8 +2214,7 @@ export const IDEWorkspacePage = () => {
           });
         } catch (fsErr) { }
 
-        setSaveSyncSuccessMsg(`[→] Moved folder /${cleanOld} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'} in Working Fork`);
-        setTimeout(() => setSaveSyncSuccessMsg(''), 3500);
+        showNotificationToast(`[→] Moved folder /${cleanOld} to ${cleanTarget ? '/' + cleanTarget : 'Project Root'} in Working Fork`, 3500);
       } catch (err) {
         console.error('Error moving folder:', err);
         alert(`Failed to move folder: ${err.message}`);
@@ -2455,8 +2460,7 @@ export const IDEWorkspacePage = () => {
         }));
       }
 
-      setSaveSyncSuccessMsg(`⚡ Successfully imported ${newFormattedFiles.length} file(s) into ${isProjectOwner ? 'Master Repository' : 'Working Copy'}!`);
-      setTimeout(() => setSaveSyncSuccessMsg(''), 5000);
+      showNotificationToast(`⚡ Successfully imported ${newFormattedFiles.length} file(s) into ${isProjectOwner ? 'Master Repository' : 'Working Copy'}!`, 5000);
     } catch (err) {
       console.error('Error confirming import:', err);
       alert(`Failed to import files: ${err.message}`);
@@ -2625,8 +2629,7 @@ export const IDEWorkspacePage = () => {
       });
 
       if (newlyAddedCount > 0) {
-        setSaveSyncSuccessMsg(`📁 Generated ${newlyAddedCount} new project file(s): ${newlyAddedPaths.slice(0, 3).join(', ')}`);
-        setTimeout(() => setSaveSyncSuccessMsg(''), 4000);
+        showNotificationToast(`📁 Generated ${newlyAddedCount} new project file(s): ${newlyAddedPaths.slice(0, 3).join(', ')}`, 4000);
       }
 
       return updated;
