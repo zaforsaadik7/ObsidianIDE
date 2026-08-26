@@ -611,7 +611,7 @@ export const IDEWorkspacePage = () => {
           if ((msg.type === 'PEER_PRESENCE_UPDATE' || msg.type === 'PEER_DISCONNECTED') && Array.isArray(collabsList)) {
             const filtered = collabsList.filter(c => c.email && c.email.toLowerCase() !== userEmail);
             setRemoteCollaborators(filtered);
-          } else if (msg.type === 'FILES_UPDATED' || msg.type === 'FORK_ACCEPTED') {
+          } else if (msg.type === 'FILES_UPDATED' || msg.type === 'FORK_ACCEPTED' || msg.type === 'CODE_UPDATED') {
             const incomingFiles = msg.files || msg.master_project_files || msg.working_files;
             if (Array.isArray(incomingFiles) && incomingFiles.length > 0) {
               setFiles(incomingFiles);
@@ -864,36 +864,41 @@ export const IDEWorkspacePage = () => {
 
     const masterPathMap = new Map(masterFiles.map(f => [f.filePath, f]));
     const hasPendingFork = Boolean(projectData?.pendingFork || liveProjectData?.pendingFork);
+    const lastWorkingAuthor = (liveProjectData?.lastWorkingModifiedBy || projectData?.lastWorkingModifiedBy || '').toLowerCase().trim();
 
     let editorCount = 0;
     let ownerChangesExist = false;
     let collabCount = 0;
 
+    const isEditorLocalTyping = Boolean(
+      !isProjectOwner &&
+      isLocalDirtyRef.current &&
+      activeFile &&
+      !isBinaryFile(activeFile.filePath) &&
+      currentContent !== undefined &&
+      currentContent !== savedContent
+    );
+
     (files || []).forEach(wf => {
       const mf = masterPathMap.get(wf.filePath);
       const isBinary = isBinaryFile(wf.filePath);
-      const isLocalActiveMod = Boolean(
-        activeFile &&
-        wf.filePath === activeFile.filePath &&
-        !isBinary &&
-        (isLocalDirtyRef.current || (currentContent !== undefined && currentContent !== savedContent))
-      );
       const isWfDifferentFromMaster = !mf || (mf.content !== undefined && wf.content !== undefined && mf.content !== wf.content);
-      const isEffectiveMod = isLocalActiveMod || isWfDifferentFromMaster;
 
-      if (isEffectiveMod) {
-        const author = (wf.lastModifiedBy || '').toLowerCase().trim();
+      if (isWfDifferentFromMaster) {
+        const author = (wf.lastModifiedBy || lastWorkingAuthor || '').toLowerCase().trim();
+        const isAuthorEditor = Boolean(author && author === userEmail);
+        const isAuthorOwner = Boolean(author && (author === ownerEmail || isProjectOwner));
+
         if (!isProjectOwner) {
-          // For non-owner editor: ONLY count changes authored by THIS editor or active local unsaved buffer
-          if (isLocalActiveMod || (author && author === userEmail)) {
+          if (isAuthorEditor) {
             editorCount++;
           } else {
-            // Author is the owner or another collaborator
+            // Author is the owner or someone else -> it is owner/server changes
             ownerChangesExist = true;
           }
         } else {
-          // For project owner: check if changes were submitted by a collaborator with pending fork
-          if (hasPendingFork && author && author !== ownerEmail) {
+          // For project owner
+          if (hasPendingFork && !isAuthorOwner && author) {
             collabCount++;
           } else {
             ownerChangesExist = true;
@@ -906,7 +911,8 @@ export const IDEWorkspacePage = () => {
       const isDeletedInWorking = !files.some(wf => wf.filePath === mf.filePath);
       if (isDeletedInWorking) {
         if (!isProjectOwner) {
-          editorCount++;
+          if (lastWorkingAuthor === userEmail) editorCount++;
+          else ownerChangesExist = true;
         } else {
           if (hasPendingFork) collabCount++;
           else ownerChangesExist = true;
@@ -914,16 +920,20 @@ export const IDEWorkspacePage = () => {
       }
     });
 
-    // Editor ONLY sees fork button if they personally authored changes or have active dirty buffer
+    if (isEditorLocalTyping) {
+      editorCount = Math.max(editorCount, 1);
+    }
+
+    // Editor ONLY sees fork button if they personally authored changes or have active local dirty buffer
     const hasForkChanges = !isProjectOwner && editorCount > 0;
 
     return {
       hasEditorForkChanges: hasForkChanges,
       hasOwnerAuthoredChanges: isProjectOwner ? ownerChangesExist : (!hasForkChanges && ownerChangesExist),
       editorAuthoredChangesCount: editorCount,
-      collaboratorPendingChangesCount: isProjectOwner ? collabCount : 0
+      collaboratorPendingChangesCount: isProjectOwner ? (hasPendingFork ? Math.max(collabCount, 1) : collabCount) : 0
     };
-  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner, fileStatusMap, liveProjectData?.lastWorkingModifiedBy, projectData?.pendingFork, liveProjectData?.pendingFork]);
+  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner, fileStatusMap, liveProjectData?.lastWorkingModifiedBy, projectData?.lastWorkingModifiedBy, projectData?.pendingFork, liveProjectData?.pendingFork]);
 
   const activeMasterFile = useMemo(() => {
     if (!activeFile) return null;
@@ -3495,6 +3505,16 @@ export const IDEWorkspacePage = () => {
                       <span>{editorAuthoredChangesCount || 1} file change(s) staged by you (Pending Project Owner review & merge into Master).</span>
                     </div>
                   </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIsDiffViewActive(prev => !prev)}
+                      className="px-2.5 py-0.5 rounded bg-purple-700 hover:bg-purple-600 text-white text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shadow active:scale-95"
+                      title="Inspect side-by-side diff of your staged changes against Master"
+                    >
+                      <span className="material-symbols-outlined text-xs">difference</span>
+                      <span>{isDiffViewActive ? 'Exit Diff' : 'View Diff vs Master'}</span>
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -3507,6 +3527,16 @@ export const IDEWorkspacePage = () => {
                       <span className="font-bold text-cyan-300">Master Updated by Owner:</span>{' '}
                       <span>The Project Owner updated repository files. Click &apos;Save to Local&apos; to save a copy into your personal storage.</span>
                     </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIsDiffViewActive(prev => !prev)}
+                      className="px-2.5 py-0.5 rounded bg-purple-700 hover:bg-purple-600 text-white text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shadow active:scale-95"
+                      title="Inspect what the Project Owner updated"
+                    >
+                      <span className="material-symbols-outlined text-xs">difference</span>
+                      <span>{isDiffViewActive ? 'Exit Diff' : 'Review Changes'}</span>
+                    </button>
                   </div>
                 </div>
               )}
@@ -3522,6 +3552,14 @@ export const IDEWorkspacePage = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIsDiffViewActive(prev => !prev)}
+                      className="px-3 py-1 rounded bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shadow-md active:scale-95 border border-purple-400/30"
+                      title="Inspect side-by-side visual diff before merging into Master"
+                    >
+                      <span className="material-symbols-outlined text-xs">difference</span>
+                      <span>{isDiffViewActive ? 'Exit Diff View' : 'Review Diff & Changes'}</span>
+                    </button>
                     <button
                       onClick={handleSaveAndSyncMaster}
                       disabled={isSaving}
