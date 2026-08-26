@@ -291,12 +291,17 @@ export const AgenticAIChatSidebar = ({
 
   // ── Direct Client-Side Gemini API Fallback Engine (Dual-Layer Resilience) ──
   const callDirectGeminiApi = async ({ apiKey, selectedModel, prompt, activeFile, currentContent, fileManifest, mentionedFiles, terminalOutput }) => {
+    const cleanKey = String(apiKey || '').trim().replace(/^["']|["']$/g, '');
+    if (!cleanKey) throw new Error('No API key provided for direct Gemini call.');
+
+    const primaryChoice = (selectedModel || 'gemini-1.5-flash').replace(/^models\//, '');
     const modelsToTry = [
-      selectedModel || 'gemini-1.5-flash',
+      primaryChoice,
       'gemini-1.5-flash',
       'gemini-2.0-flash',
       'gemini-2.5-flash',
-      'gemini-1.5-pro'
+      'gemini-1.5-pro',
+      'gemini-1.5-flash-latest'
     ].filter((v, i, a) => a.indexOf(v) === i);
 
     let codebaseContextSection = '';
@@ -315,7 +320,7 @@ export const AgenticAIChatSidebar = ({
     const activeBufferSection = activeFile ? `\nACTIVE OPEN BUFFER (${activeFile.filePath || activeFile.fileName}):\n\`\`\`\n${currentContent || ''}\n\`\`\`\n` : '';
 
     const systemPrompt = `You are Antigravity-AI, the advanced autonomous agentic coding assistant embedded in ObsidianIDE.
-You have complete access to the user's workspace files and terminal output.
+You have complete access to the user's workspace files and live terminal output.
 
 ${codebaseContextSection}
 ${activeBufferSection}
@@ -345,7 +350,8 @@ RESPONSE GUIDELINES:
     let lastError = null;
     for (const modelName of modelsToTry) {
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+        const cleanModel = modelName.replace(/^models\//, '');
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${encodeURIComponent(cleanKey)}`;
         const resp = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -401,12 +407,12 @@ RESPONSE GUIDELINES:
               terminalCommands,
               runScript,
               githubAction,
-              modelUsed: modelName
+              modelUsed: cleanModel
             };
           }
         } else {
           const errData = await resp.json().catch(() => ({}));
-          lastError = new Error(errData.error?.message || `HTTP ${resp.status} on ${modelName}`);
+          lastError = new Error(errData.error?.message || `Google API error (HTTP ${resp.status} on ${cleanModel})`);
         }
       } catch (err) {
         lastError = err;
@@ -418,7 +424,7 @@ RESPONSE GUIDELINES:
 
   // ── API Key Vault Functions ──
   const handleTestKeyInVault = async () => {
-    const key = vaultKeyInput.trim();
+    const key = vaultKeyInput.trim().replace(/^["']|["']$/g, '');
     if (!key) {
       setKeyValidationStatus({ valid: false, error: 'Please paste an API key first.' });
       return;
@@ -450,7 +456,7 @@ RESPONSE GUIDELINES:
       }
 
       // 2. Direct Google Generative Language API test fallback
-      const googlePing = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
+      const googlePing = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(key)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -485,7 +491,7 @@ RESPONSE GUIDELINES:
   };
 
   const handleSaveVaultKey = () => {
-    const key = vaultKeyInput.trim();
+    const key = vaultKeyInput.trim().replace(/^["']|["']$/g, '');
     setUserApiKey(key);
     if (key) {
       localStorage.setItem('obsidian_ai_key', key);
@@ -505,6 +511,25 @@ RESPONSE GUIDELINES:
     if (!inputPrompt.trim() || isSending) return;
 
     const userText = inputPrompt.trim();
+    const cleanUserText = userText.replace(/^["']|["']$/g, '');
+
+    // Automatic API Key Paste Detection: If user pastes AIzaSy... in chat, save it to vault immediately
+    if (/^AIzaSy[A-Za-z0-9_-]{33}$/.test(cleanUserText)) {
+      localStorage.setItem('obsidian_ai_key', cleanUserText);
+      setUserApiKey(cleanUserText);
+      setVaultKeyInput(cleanUserText);
+      setHasValidApiKey(true);
+      setInputPrompt('');
+      fetchAvailableModels(cleanUserText);
+      const keySavedNotice = {
+        sender: 'ai',
+        text: `🔑 **Google Gemini API Key Activated!**\n\nYour API key has been securely saved to the Vault. You can now prompt the AI for full-codebase reasoning, debugging, code modifications, and terminal execution!`,
+        modifications: []
+      };
+      setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, messages: [...s.messages, keySavedNotice] } : s));
+      return;
+    }
+
     const mentioned = extractMentionedFiles(userText);
     setInputPrompt('');
     setMentionQuery(null);
@@ -548,9 +573,10 @@ RESPONSE GUIDELINES:
         }));
 
       const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
-      const effectiveApiKey = (userApiKey || localStorage.getItem('obsidian_ai_key') || '').trim();
+      const effectiveApiKey = (userApiKey || localStorage.getItem('obsidian_ai_key') || '').trim().replace(/^["']|["']$/g, '');
       const backendBase = getBackendBaseUrl();
       let aiResponseData = null;
+      let lastErrorDetails = '';
 
       // 1. Attempt Backend AI Endpoint
       try {
@@ -578,13 +604,14 @@ RESPONSE GUIDELINES:
           })
         });
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.response) {
-            aiResponseData = data.response;
-          }
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.response) {
+          aiResponseData = data.response;
+        } else {
+          lastErrorDetails = data.message || data.error || `HTTP ${res.status}`;
         }
       } catch (backendErr) {
+        lastErrorDetails = backendErr.message;
         console.warn('Backend AI endpoint unreachable, attempting direct client fallback:', backendErr);
       }
 
@@ -602,6 +629,7 @@ RESPONSE GUIDELINES:
             terminalOutput: (includeTerminalLogs && terminalOutput) ? terminalOutput : ''
           });
         } catch (directErr) {
+          lastErrorDetails = directErr.message;
           console.warn('Direct Gemini API fallback error:', directErr);
         }
       }
@@ -630,7 +658,9 @@ RESPONSE GUIDELINES:
       } else {
         const errMessage = {
           sender: 'ai',
-          text: `⚠️ **Agent Notice**: Unable to generate AI response. Please ensure you have entered a valid Google Gemini API Key in the Key Vault.\n\n*Click the Key icon (🔑) in the top header to enter or test your Gemini API Key.*`,
+          text: effectiveApiKey
+            ? `⚠️ **AI Service Notice**: ${lastErrorDetails || 'Failed to generate a response from Gemini AI.'}\n\n*Diagnostic details: ${lastErrorDetails}*\n*Tip: Check that your API key is active in [Google AI Studio](https://aistudio.google.com/app/apikey) and that your account has available quota.*`
+            : `⚠️ **API Key Required**: No Google Gemini API key configured.\n\n*Click the Key icon (🔑) in the top header or paste your key into the chat box to save it.*`,
           modifications: []
         };
         setSessions(prev => prev.map(s => {
@@ -1219,6 +1249,52 @@ RESPONSE GUIDELINES:
           >
             {includeTerminalLogs ? '✓ Attached' : 'Detached'}
           </button>
+        </div>
+      )}
+
+      {/* Quick API Key Setup Strip if Key is missing */}
+      {!hasValidApiKey && (
+        <div className="px-3 py-2 bg-[#121217] border-t border-amber-500/30 flex flex-col gap-1.5 text-xs">
+          <div className="flex items-center justify-between text-amber-400 font-bold text-[10px]">
+            <span className="flex items-center gap-1">
+              <span className="material-symbols-outlined text-xs">vpn_key</span>
+              <span>GOOGLE GEMINI API KEY REQUIRED</span>
+            </span>
+            <a
+              href="https://aistudio.google.com/app/apikey"
+              target="_blank"
+              rel="noreferrer"
+              className="text-cyan-400 hover:underline text-[9px]"
+            >
+              Get Free Key ↗
+            </a>
+          </div>
+          <div className="flex gap-1.5">
+            <input
+              type="text"
+              value={vaultKeyInput}
+              onChange={(e) => {
+                const val = e.target.value;
+                setVaultKeyInput(val);
+                const clean = val.trim().replace(/^["']|["']$/g, '');
+                if (clean) {
+                  localStorage.setItem('obsidian_ai_key', clean);
+                  setUserApiKey(clean);
+                  setHasValidApiKey(true);
+                  fetchAvailableModels(clean);
+                }
+              }}
+              placeholder="Paste AIzaSy... here"
+              className="flex-1 bg-[#0A0A0C] border border-amber-500/30 px-2 py-1 text-[11px] text-white rounded focus:outline-none focus:border-cyan-400 font-mono"
+            />
+            <button
+              type="button"
+              onClick={handleSaveVaultKey}
+              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-[10px] rounded transition-colors cursor-pointer shrink-0 shadow"
+            >
+              Save Key
+            </button>
+          </div>
         </div>
       )}
 

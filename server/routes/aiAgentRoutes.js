@@ -116,7 +116,7 @@ const discoverWorkingModels = async (apiKey) => {
 router.get('/models', async (req, res) => {
   try {
     const { apiKey } = req.query;
-    const effectiveApiKey = (apiKey || process.env.GEMINI_API_KEY || '').trim();
+    const effectiveApiKey = (apiKey || process.env.GEMINI_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 
     if (!effectiveApiKey) {
       return res.json({
@@ -148,7 +148,7 @@ router.get('/models', async (req, res) => {
 router.post('/validate-key', async (req, res) => {
   try {
     const { apiKey } = req.body;
-    const keyToTest = (apiKey || process.env.GEMINI_API_KEY || '').trim();
+    const keyToTest = (apiKey || process.env.GEMINI_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 
     if (!keyToTest) {
       return res.status(400).json({ valid: false, error: 'API key is required.' });
@@ -228,7 +228,7 @@ router.post('/chat', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'User prompt is required.' });
     }
 
-    const effectiveApiKey = (apiKey || process.env.GEMINI_API_KEY || '').trim();
+    const effectiveApiKey = (apiKey || process.env.GEMINI_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 
     if (!effectiveApiKey) {
       return res.status(400).json({
