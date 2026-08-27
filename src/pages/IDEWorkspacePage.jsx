@@ -1512,7 +1512,7 @@ export const IDEWorkspacePage = () => {
     const roleInput = window.prompt("Enter access role (EDITOR, REVIEWER, OWNER):", "REVIEWER");
     const role = (roleInput || 'REVIEWER').toUpperCase().trim();
 
-    const projTitle = projectData?.title || title || projectId;
+    const projTitle = liveProjectData?.title || projectData?.title || projectId;
     const projOwner = projectData?.ownerEmail || currentUser?.email || 'owner@obsidianide.com';
     const inviteUrl = `${window.location.origin}/invite/${projectId}?role=${role}&email=${encodeURIComponent(email.trim())}&title=${encodeURIComponent(projTitle)}&owner=${encodeURIComponent(projOwner)}`;
 
@@ -2576,6 +2576,7 @@ export const IDEWorkspacePage = () => {
       return f;
     });
 
+    const userEmail = (currentUser?.email || userProfile?.info?.email || '').trim().toLowerCase();
     const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
     const pushRes = await fetch('/api/github/push-project', {
       method: 'POST',
@@ -3183,7 +3184,7 @@ export const IDEWorkspacePage = () => {
                   </div>
                   <div className="py-0.5">
                     <button
-                      onClick={() => { setExecutionOutput(null); setActiveMenu(null); }}
+                      onClick={() => { terminalController?.clear?.(); setActiveMenu(null); }}
                       className="w-full text-left px-3 py-1.5 text-zinc-400 hover:bg-white/5 hover:text-zinc-200 cursor-pointer"
                     >
                       Clear Output Console
