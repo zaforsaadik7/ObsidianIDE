@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { auth } from '../../firebase';
 
 export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, userProfile } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [languageEnv, setLanguageEnv] = useState('RUST_1.75');

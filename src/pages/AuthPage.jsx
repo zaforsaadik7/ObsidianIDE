@@ -97,7 +97,7 @@ export const AuthPage = () => {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { login, register, signInWithGoogle } = useAuth();
+  const { currentUser, login, register, signInWithGoogle } = useAuth();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
