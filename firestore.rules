@@ -24,7 +24,10 @@ service cloud.firestore {
       allow create: if request.auth != null
         && request.resource.data.get('info', {}).get('email', '') is string
         && request.resource.data.get('info', {}).get('email', '').lower() == authEmail();
-      allow get, update: if request.auth != null
+      allow get: if request.auth != null
+        && resource.data.get('info', {}).get('email', '') is string
+        && resource.data.get('info', {}).get('email', '').lower() == authEmail();
+      allow update: if request.auth != null
         && resource.data.get('info', {}).get('email', '') is string
         && resource.data.get('info', {}).get('email', '').lower() == authEmail()
         && request.resource.data.get('info', {}).get('email', '').lower()
