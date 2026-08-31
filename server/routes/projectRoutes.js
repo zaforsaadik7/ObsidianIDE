@@ -394,6 +394,63 @@ router.delete('/:projectId', async (req, res) => {
   }
 });
 
+// Keeps only the most recently modified entry per filePath so re-imports
+// cannot create duplicate file rows for the same path.
+const dedupeFilesByPath = (fileArray = []) => {
+  const byPath = new Map();
+  const noPath = [];
+  (fileArray || []).forEach(f => {
+    if (!f) return;
+    const path = f.filePath || f.fileName;
+    if (!path) { noPath.push(f); return; }
+    const existing = byPath.get(path);
+    if (!existing || String(f.updatedAt || '') >= String(existing.updatedAt || '')) {
+      byPath.set(path, f);
+    }
+  });
+  return [...byPath.values(), ...noPath];
+};
+
+// Deletes subcollection file docs that are no longer part of the active file
+// set, so deleted files/folders are not resurrected by later hydration reads.
+const pruneStaleFileDocs = async (projRef, projectId, activeFiles = []) => {
+  if (!adminDb || !projRef) return;
+  try {
+    const activeFileDocIds = new Set();
+    const activeFilePaths = new Set();
+    (activeFiles || []).forEach(f => {
+      if (!f) return;
+      if (f.filePath) {
+        activeFilePaths.add(f.filePath);
+        activeFileDocIds.add(f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`);
+      }
+      if (f.fileId) activeFileDocIds.add(f.fileId);
+    });
+
+    const listSnap = await projRef.collection('files').get();
+    const staleRefs = [];
+    listSnap.forEach(d => {
+      const fd = d.data() || {};
+      const path = fd.filePath || '';
+      if (!activeFileDocIds.has(d.id) && (!path || !activeFilePaths.has(path))) {
+        staleRefs.push(d.ref);
+      }
+    });
+
+    if (staleRefs.length > 0) {
+      console.log(`🗑️ [Prune] Removing ${staleRefs.length} stale file doc(s) for project ${projectId}`);
+      const chunkSize = 400;
+      for (let i = 0; i < staleRefs.length; i += chunkSize) {
+        const batch = adminDb.batch();
+        staleRefs.slice(i, i + chunkSize).forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
+    }
+  } catch (pruneErr) {
+    console.warn('File subcollection pruning notice:', pruneErr.message);
+  }
+};
+
 // POST /api/projects/update-files: Persist working_files or master_project_files
 router.post('/update-files', async (req, res) => {
   try {
@@ -414,10 +471,13 @@ router.post('/update-files', async (req, res) => {
       return res.status(400).json({ error: 'Project ID is required.' });
     }
 
-    const filesToPersist = (working_files && working_files.length > 0) ? working_files : (project_files || []);
+    const filesToPersist = dedupeFilesByPath((working_files && working_files.length > 0) ? working_files : (project_files || []));
     const timestamp = new Date().toISOString();
     const memProj = inMemoryProjectStore.get(projectId) || {};
-    const isPending = pendingFork !== undefined ? Boolean(pendingFork) : (isOwner ? false : Boolean(memProj.pendingFork));
+    // pendingFork may only change via an explicit value in the request. Inferring it
+    // from the in-memory cache overwrote the editor's direct Firestore write with a
+    // stale flag, which made the fork banners twitch on both sides.
+    const explicitPendingFork = pendingFork !== undefined ? Boolean(pendingFork) : null;
 
     const updatedProj = {
       ...memProj,
@@ -426,7 +486,7 @@ router.post('/update-files', async (req, res) => {
       ownerEmail: ownerEmail || memProj.ownerEmail || (isOwner ? userEmail : 'developer@obsidian.io'),
       collaborators: collaborators || memProj.collaborators || {},
       working_files: filesToPersist,
-      pendingFork: isPending,
+      ...(explicitPendingFork !== null ? { pendingFork: explicitPendingFork } : {}),
       ...(isOwner || (!memProj.master_project_files && master_project_files) ? {
         master_project_files: master_project_files || filesToPersist,
         project_files: master_project_files || filesToPersist
@@ -453,7 +513,7 @@ router.post('/update-files', async (req, res) => {
 
         const payload = {
           working_files: payloadWorking,
-          pendingFork: isPending,
+          ...(explicitPendingFork !== null ? { pendingFork: explicitPendingFork } : {}),
           ...(isOwner || (!memProj.master_project_files && master_project_files) ? {
             master_project_files: payloadMaster,
             project_files: payloadMaster
@@ -489,6 +549,10 @@ router.post('/update-files', async (req, res) => {
           }
           await batch.commit();
         }
+
+        // Remove subcollection docs that are no longer in the active working set
+        // (deleted files/folders must stay deleted, not resurrect on next hydration)
+        await pruneStaleFileDocs(projRef, projectId, filesToPersist);
       } catch (dbErr) {
         console.warn('AdminDB update-files notice:', dbErr.message);
       }
@@ -515,7 +579,7 @@ router.post('/sync-master', async (req, res) => {
     }
 
     const timestamp = new Date().toISOString();
-    const files = working_files || [];
+    const files = dedupeFilesByPath(working_files || []);
 
     const memProj = inMemoryProjectStore.get(projectId) || {};
     inMemoryProjectStore.set(projectId, {
@@ -580,6 +644,10 @@ router.post('/sync-master', async (req, res) => {
           }
           await batch.commit();
         }
+
+        // Remove subcollection docs that were deleted in the accepted fork so the
+        // merge is fully applied on the first try (no stale docs to resurrect)
+        await pruneStaleFileDocs(projRef, projectId, files);
       } catch (dbErr) {
         console.warn('AdminDB sync-master notice:', dbErr.message);
       }
@@ -1046,11 +1114,6 @@ router.get('/:projectId', verifyToken, async (req, res) => {
                 projData.working_files = projData.working_files.map(wf => {
                   const sub = subFilesMap.get(wf.filePath || wf.fileName);
                   return sub ? { ...wf, content: sub.content !== undefined ? sub.content : (wf.content || ''), _manifestOnly: undefined } : wf;
-                });
-                subFilesMap.forEach((fd, path) => {
-                  if (!projData.working_files.some(wf => (wf.filePath || wf.fileName) === path)) {
-                    projData.working_files.push(fd);
-                  }
                 });
               } else if (subFilesMap.size > 0) {
                 projData.working_files = Array.from(subFilesMap.values());

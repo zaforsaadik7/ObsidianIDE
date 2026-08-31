@@ -345,12 +345,13 @@ export const IDEWorkspacePage = () => {
                   const sub = contentMap.get(f.filePath);
                   return sub ? { ...f, content: sub.content || '', _manifestOnly: undefined } : f;
                 });
-                // Also add subcollection files not present in manifest
-                contentMap.forEach((fd, path) => {
-                  if (!manifests.some(w => w.filePath === path)) {
+                // Subcollection is only the source of truth when the manifest is empty;
+                // extra subcollection docs are stale/deleted files and must not be re-added
+                if (manifests.length === 0) {
+                  contentMap.forEach((fd) => {
                     hydrated.push(fd);
-                  }
-                });
+                  });
+                }
 
                 if (hydrated.length > 0) {
                   setFiles(hydrated);
@@ -1223,7 +1224,8 @@ export const IDEWorkspacePage = () => {
           working_files: updatedFiles,
           userEmail,
           ownerEmail: projectData?.ownerEmail,
-          collaborators: projectData?.collaborators
+          collaborators: projectData?.collaborators,
+          pendingFork: true
         })
       }).catch(apiErr => console.warn('Backend update-files notice:', apiErr));
 
@@ -2046,6 +2048,14 @@ export const IDEWorkspacePage = () => {
           lastWorkingModifiedBy: userEmail
         };
         await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
+
+        // Delete removed folder entries from the files subcollection so they are
+        // not resurrected by later hydration (mirrors handleDeleteFile)
+        const deletedEntries = files.filter(f => f.filePath === cleanFolder || f.filePath.startsWith(`${cleanFolder}/`));
+        await Promise.allSettled(deletedEntries.map(df => {
+          const fileDocId = df.fileId || `file_${projectId}_${(df.filePath || '').replace(/[^a-zA-Z0-9_]/g, '_')}`;
+          return deleteDoc(doc(db, 'projects', projectId, 'files', fileDocId));
+        }));
 
         await fetch('/api/projects/update-files', {
           method: 'POST',
