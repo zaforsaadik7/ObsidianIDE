@@ -9,7 +9,7 @@ export const InvitePortalPage = () => {
   const { inviteId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const { currentUser, userProfile, logout, refreshProfile } = useAuth();
+  const { currentUser, logout, refreshProfile } = useAuth();
   const { isDark, toggleTheme } = useTheme();
 
   const queryParams = new URLSearchParams(location.search);
@@ -17,8 +17,6 @@ export const InvitePortalPage = () => {
   const paramEmail = (queryParams.get('email') || '').trim().toLowerCase();
   const paramTitle = (queryParams.get('title') || '').trim();
   const paramOwner = (queryParams.get('owner') || '').trim();
-
-  const isStorageConnected = userProfile?.info?.personalStorageConnected === true;
 
   // Access States: 'LOADING' | 'UNAUTHENTICATED' | 'OWNER_VIEW' | 'ACCOUNT_MISMATCH' | 'AUTHORIZED' | 'ERROR'
   const [accessState, setAccessState] = useState('LOADING');

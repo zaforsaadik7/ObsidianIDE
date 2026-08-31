@@ -20,7 +20,6 @@ import {
   processZipArchive,
   analyzeImportConstraints
 } from '../utils/fileImporter';
-import { syncProjectToPersonalFirestore, syncWorkingFilesToPersonalFirestore } from '../services/personalFirebaseStorage';
 import { stageAndDispatchInvitationEmail } from '../utils/emailQueueService';
 
 export const IDEWorkspacePage = () => {
@@ -1076,7 +1075,7 @@ export const IDEWorkspacePage = () => {
     } catch (e) {}
   };
 
-  // â”€â”€ 1. Save to Editor's Local Storage & Personal DB (No Fork Push to Owner) â”€â”€
+  // â”€â”€ 1. Save to Editor's Local Draft & Project Cloud (No Fork Push to Owner) â”€â”€
   const handleSaveToLocalStorage = async () => {
     const targetFile = activeFileRef.current || activeFile;
     setIsSaving(true);
@@ -1118,23 +1117,7 @@ export const IDEWorkspacePage = () => {
         localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(updatedFiles));
       } catch (e) { }
 
-      // 2. Persist to Editor's Own Personal Firebase Database
-      try {
-        await syncProjectToPersonalFirestore({
-          projectId,
-          title: projectData?.title || projectId,
-          description: projectData?.description || '',
-          languageEnv: projectData?.languageEnv || 'PYTHON_3.11',
-          ownerEmail: userEmail,
-          project_files: updatedFiles,
-          working_files: updatedFiles,
-          master_project_files: updatedFiles
-        }, userProfile, userEmail);
-      } catch (pErr) {
-        console.warn('Personal Firestore local save notice:', pErr);
-      }
-
-      // 3. Update User Catalog in website DB
+      // 2. Update User Catalog in website DB
       const userDocUsername = (userEmail.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
       try {
         await setDoc(doc(db, 'users', userDocUsername), {
@@ -1148,7 +1131,7 @@ export const IDEWorkspacePage = () => {
         }, { merge: true });
       } catch (uErr) { }
 
-      showNotificationToast(`💾 Saved ${changedFilesCount || updatedFiles.length} file(s) to your Personal Local Storage & Database!`, 3500);
+      showNotificationToast(`💾 Saved ${changedFilesCount || updatedFiles.length} file(s) to your Local Draft & ObsidianIDE Cloud!`, 3500);
     } catch (err) {
       console.error('Error saving to local storage:', err);
       alert(`Failed to save to local storage: ${err.message}`);
@@ -1362,23 +1345,7 @@ export const IDEWorkspacePage = () => {
         console.warn('Backend sync-master notice:', apiErr);
       }
 
-      // 3. Commit to Personal Firebase Cloud Database (Owner's Database) non-blocking
-      try {
-        syncProjectToPersonalFirestore({
-          projectId,
-          title: projectData?.title || projectId,
-          languageEnv: projectData?.languageEnv || 'PYTHON_3.11',
-          ownerEmail: projectData?.ownerEmail || userEmail,
-          master_project_files: targetWorkingFiles,
-          project_files: targetWorkingFiles,
-          working_files: targetWorkingFiles,
-          collaborators: projectData?.collaborators || { [userEmail]: 'OWNER' }
-        }, userProfile, userEmail).catch(() => {});
-      } catch (pErr) {
-        console.warn('Personal Firestore master sync notice:', pErr);
-      }
-
-      // 4. Broadcast FORK_ACCEPTED over WebSocket so all connected editors update immediately
+      // 3. Broadcast FORK_ACCEPTED over WebSocket so all connected editors update immediately
       if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
         collaborationWsRef.current.send(JSON.stringify({
           type: 'FORK_ACCEPTED',
@@ -2535,21 +2502,7 @@ export const IDEWorkspacePage = () => {
         console.warn('API update-files notice:', apiErr);
       }
 
-      // 4. Persist to Personal Firebase Database if Project Owner
-      if (isProjectOwner) {
-        syncProjectToPersonalFirestore({
-          projectId,
-          title: projectData?.title || projectId,
-          languageEnv: projectData?.languageEnv || 'PYTHON_3.11',
-          ownerEmail: projectData?.ownerEmail || userEmail,
-          master_project_files: mergedFiles,
-          project_files: mergedFiles,
-          working_files: mergedFiles,
-          collaborators: projectData?.collaborators || { [userEmail]: 'OWNER' }
-        }, userProfile, userEmail).catch(() => {});
-      }
-
-      // 5. Broadcast over WebSocket so all connected peers update immediately
+      // 4. Broadcast over WebSocket so all connected peers update immediately
       if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
         collaborationWsRef.current.send(JSON.stringify({
           type: isProjectOwner ? 'FILES_UPDATED' : 'FORK_REQUESTED',
@@ -3516,7 +3469,7 @@ export const IDEWorkspacePage = () => {
                 onClick={handleSaveToLocalStorage}
                 disabled={isSaving}
                 className="flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 text-cyan-300 border border-cyan-500/40 px-3 py-1 text-xs rounded-md font-bold transition-all cursor-pointer font-mono shadow-sm active:scale-95"
-                title="Save modified and new files strictly into your personal local storage & database"
+                title="Save modified and new files to your local draft & the project cloud"
               >
                 <span className="material-symbols-outlined text-sm">{isSaving ? 'sync' : 'save'}</span>
                 <span>Save to Local</span>
@@ -3625,7 +3578,7 @@ export const IDEWorkspacePage = () => {
                     <span className="material-symbols-outlined text-base text-cyan-400">cloud_download</span>
                     <div>
                       <span className="font-bold text-cyan-300">Master Updated by Owner:</span>{' '}
-                      <span>The Project Owner updated repository files. Click &apos;Save to Local&apos; to save a copy into your personal storage.</span>
+                      <span>The Project Owner updated repository files. Click &apos;Save to Local&apos; to save a local copy.</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -3885,21 +3838,10 @@ export const IDEWorkspacePage = () => {
             </span>
           )}
           <span>Firestore Real-Time Synced</span>
-          {userProfile?.info?.personalStorageConnected === false ? (
-            <button
-              onClick={() => navigate('/onboarding')}
-              className="text-amber-400 hover:text-amber-300 flex items-center gap-1 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/40 cursor-pointer"
-              title="Click to connect your personal database"
-            >
-              <span className="material-symbols-outlined text-xs">database</span>
-              <span>Connect Personal Database</span>
-            </button>
-          ) : (
-            <span className="text-emerald-400/80 flex items-center gap-1">
-              <span className="material-symbols-outlined text-xs">database</span>
-              <span>DB Connected</span>
-            </span>
-          )}
+          <span className="text-emerald-400/80 flex items-center gap-1" title="All project data lives in ObsidianIDE's secure cloud database">
+            <span className="material-symbols-outlined text-xs">database</span>
+            <span>Cloud Connected</span>
+          </span>
         </div>
         <div>Â© 2026 Obsidian Systems. Built via agile workspace methodology layers.</div>
       </footer>

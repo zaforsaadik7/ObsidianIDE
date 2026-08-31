@@ -8,7 +8,6 @@ import { InviteTeammateModal } from '../components/dashboard/InviteTeammateModal
 import { ExportToGitHubModal } from '../components/dashboard/ExportToGitHubModal';
 import { db, getFirebaseIdToken } from '../firebase';
 import { doc, getDoc, collection, getDocs, updateDoc, deleteField } from 'firebase/firestore';
-import { removeProjectFromPersonalFirestore } from '../services/personalFirebaseStorage';
 import { getProjectDisplayTitle } from '../utils/projectTitle';
 
 export const DashboardPage = () => {
@@ -215,14 +214,7 @@ export const DashboardPage = () => {
         console.warn('Backend personal-profile removal notice:', apiErr);
       }
 
-      // 3. Remove this account's own personal Firebase copy, if configured.
-      try {
-        await removeProjectFromPersonalFirestore(pid, userProfile, currentUser?.email);
-      } catch (personalDbErr) {
-        console.warn('Personal Firebase project removal notice:', personalDbErr);
-      }
-
-      // 4. Remove from UI and cached profile state for this user.
+      // 3. Remove from UI and cached profile state for this user.
       setProjects(prev => prev.filter(p => p.projectId !== pid));
       setUserProfile((previousProfile) => {
         if (!previousProfile) return previousProfile;
@@ -309,24 +301,6 @@ export const DashboardPage = () => {
           <span className="material-symbols-outlined text-sm">add_box</span> Create New Project
         </button>
       </div>
-
-      {/* Optional Personal Database Connection Prompt */}
-      {userProfile?.info && userProfile.info.personalStorageConnected === false && (
-        <div className="p-3.5 bg-amber-950/40 border border-amber-500/50 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono text-xs text-amber-200 animate-fade-in shadow-lg">
-          <div className="flex items-center gap-2.5">
-            <span className="material-symbols-outlined text-amber-400 text-lg">database</span>
-            <span>
-              <strong>Personal Storage Notice:</strong> Your personal database is not connected yet. Connect your database to ensure your private drafts, file changes, and collaboration proposals are backed up under your account.
-            </span>
-          </div>
-          <button
-            onClick={() => navigate('/onboarding')}
-            className="bg-amber-400 hover:bg-amber-300 text-neutral-950 font-bold px-3.5 py-1.5 rounded text-xs whitespace-nowrap transition-colors cursor-pointer self-end sm:self-auto shadow"
-          >
-            Connect Database
-          </button>
-        </div>
-      )}
 
       {/* Search Filter Bar */}
       <div className="control-card flex flex-col sm:flex-row justify-between sm:items-center gap-3 p-3.5 rounded-xl">

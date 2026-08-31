@@ -4,7 +4,6 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { verifyToken, verifyTokenOptional } from '../middleware/authMiddleware.js';
 import { v4 as uuidv4 } from 'uuid';
 import { sendProjectInvitationEmail } from '../utils/emailService.js';
-import { syncToOwnerPersonalFirestore } from '../utils/personalDbSync.js';
 import { getProjectMembership, requireProjectRole } from '../utils/projectMembership.js';
 
 const router = express.Router();
@@ -729,17 +728,6 @@ router.post('/sync-master', verifyToken, async (req, res) => {
       }
     }
 
-    // Sync canonical master baseline exclusively to Owner's Personal Firebase Database
-    const resolvedOwnerEmailMaster = (ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || 'owner@obsidian.io').trim().toLowerCase();
-    syncToOwnerPersonalFirestore({
-      ownerEmail: resolvedOwnerEmailMaster,
-      projectId,
-      projectTitle: inMemoryProjectStore.get(projectId)?.title || projectId,
-      files,
-      isMasterSync: true,
-      modifiedBy: ownerEmail
-    }).catch(syncErr => console.warn('Notice syncing master files to owner personal Firestore:', syncErr.message));
-
     res.json({
       status: 'SUCCESS',
       message: 'Master repository synced successfully.',
@@ -1154,17 +1142,6 @@ router.post('/reject-fork', verifyToken, async (req, res) => {
       }
     }
 
-    // 3. Sync restored master working copy to Owner Personal Firestore (Non-blocking background)
-    const resolvedOwnerEmailReject = (ownerEmail || inMemoryProjectStore.get(projectId)?.ownerEmail || 'owner@obsidian.io').trim().toLowerCase();
-    syncToOwnerPersonalFirestore({
-      ownerEmail: resolvedOwnerEmailReject,
-      projectId,
-      projectTitle: inMemoryProjectStore.get(projectId)?.title || projectId,
-      files: masterFiles,
-      isMasterSync: false,
-      modifiedBy: ownerEmail
-    }).catch(syncErr => console.warn('Notice syncing rejected fork reset to owner personal Firestore:', syncErr.message));
-
     res.json({
       status: 'SUCCESS',
       message: 'Fork request successfully rejected. Shared working copy restored to Master baseline.',
@@ -1415,11 +1392,6 @@ router.post('/:projectId/accept-invite', verifyToken, async (req, res) => {
 
         const collabDocId = userEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_');
         await adminDb.collection('users').doc(collabDocId).set({
-          info: {
-            personalStorageConnected: true,
-            personalStorageDatabaseName: 'ObsidianIDE',
-            storageStrategy: 'FIREBASE_PERSONAL'
-          },
           projects: {
             [projectId]: {
               projectId,

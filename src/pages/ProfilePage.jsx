@@ -4,7 +4,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { auth, db, getFirebaseIdToken } from '../firebase';
 import { GithubAuthProvider, getAdditionalUserInfo, linkWithPopup, signInWithPopup } from 'firebase/auth';
 import { deleteField, doc, setDoc, updateDoc } from 'firebase/firestore';
-import { removeProjectFromPersonalFirestore } from '../services/personalFirebaseStorage';
 import { getProjectDisplayTitle } from '../utils/projectTitle';
 
 const getAvatarCacheKey = (email) => `obsidian_profile_avatar_${(email || 'user').trim().toLowerCase()}`;
@@ -28,7 +27,7 @@ export const ProfilePage = () => {
     designation: userProfile?.info?.profession || 'Full-Stack Lead Architect',
     avatarUrl: userProfile?.info?.avatarUrl || currentUser?.photoURL || localStorage.getItem(getAvatarCacheKey(currentUser?.email || userProfile?.info?.email)) || '',
     clearanceLevel: 'L5_UNRESTRICTED',
-    storageStrategy: 'FIREBASE_PERSONAL',
+    storageStrategy: 'FIREBASE_CLOUD',
     allocatedStorageMb: 1024,
     usedStorageMb: 0,
     usagePercentage: 0,
@@ -903,12 +902,6 @@ export const ProfilePage = () => {
         console.warn('Portfolio server removal notice:', apiError);
       }
 
-      try {
-        await removeProjectFromPersonalFirestore(projectId, userProfile, activeEmail);
-      } catch (personalStorageError) {
-        console.warn('Portfolio personal storage removal notice:', personalStorageError);
-      }
-
       setProfile((previous) => {
         const projects = (previous.projects || []).filter((item) => (item.projectId || item.id) !== projectId);
         return { ...previous, projects, totalProjectsCount: projects.length };
@@ -1028,16 +1021,10 @@ export const ProfilePage = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-surface-slate border border-surface-tint p-4 flex justify-between items-center rounded">
                 <div className="flex flex-col">
-                  <span className="text-xs text-on-surface font-bold">Personal Firebase</span>
+                  <span className="text-xs text-on-surface font-bold">ObsidianIDE Cloud</span>
+                  <span className="text-[10px] text-on-surface-variant mt-0.5">All projects are stored in ObsidianIDE's secure cloud database</span>
                 </div>
                 <span className="material-symbols-outlined text-neon-green">check_circle</span>
-              </div>
-
-              <div className="bg-surface-container-high/40 border border-outline-variant p-4 flex justify-between items-center opacity-50 rounded">
-                <div className="flex flex-col">
-                  <span className="text-xs text-on-surface">Obsidian Shared Cloud</span>
-                </div>
-                <span className="material-symbols-outlined text-on-surface-variant">radio_button_unchecked</span>
               </div>
             </div>
           </section>

@@ -196,14 +196,6 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  const isProfileDatabaseConnected = (profile, email) => {
-    if (!profile || !profile.info) return false;
-    const info = profile.info;
-    return info.personalStorageVerified === true
-      && info.personalStorageConnected === true
-      && Boolean(info.personalFirebaseConfig?.apiKey && info.personalFirebaseConfig?.projectId);
-  };
-
   const login = async (email, password) => {
     const cleanEmail = email.trim().toLowerCase();
     const docId = getUserDocId(cleanEmail);
@@ -247,7 +239,7 @@ export const AuthProvider = ({ children }) => {
         try { await signOut(auth); } catch (e) {}
       }
       clearSession();
-      const err = new Error('No registered account found with this email. Please sign up first to create your account and connect your personal database.');
+      const err = new Error('No registered account found with this email. Please sign up first to create your account.');
       err.code = 'auth/user-not-registered';
       throw err;
     }
@@ -257,10 +249,7 @@ export const AuthProvider = ({ children }) => {
       throw authError;
     }
 
-    const isDbConnected = isProfileDatabaseConnected(foundProfile, cleanEmail);
     if (foundProfile.info) {
-      foundProfile.info.personalStorageConnected = isDbConnected;
-      foundProfile.info.personalStorageVerified = isDbConnected;
       foundProfile.info.lastLogin = new Date().toISOString();
     }
 
@@ -272,7 +261,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     saveSession(userObj, foundProfile);
-    return { user: userObj, profile: foundProfile, needsOnboarding: !isDbConnected };
+    return { user: userObj, profile: foundProfile };
   };
 
   const register = async (email, password, profileInput) => {
@@ -305,7 +294,7 @@ export const AuthProvider = ({ children }) => {
       } catch (e) {}
     }
 
-    if (existingProfile && isProfileDatabaseConnected(existingProfile, cleanEmail)) {
+    if (existingProfile) {
       const err = new Error('An account with this email already exists. Please switch to Sign In instead.');
       err.code = 'auth/email-already-in-use';
       throw err;
@@ -335,10 +324,6 @@ export const AuthProvider = ({ children }) => {
         uid: res?.user?.uid || `dev-user-${docId}`,
         createdAt: new Date().toISOString(),
         lastLogin: new Date().toISOString(),
-        storageStrategy: 'FIREBASE_PERSONAL',
-        personalStorageConnected: false,
-        personalStorageVerified: false,
-        personalStorageDatabaseName: 'ObsidianIDE',
         consents: {
           termsAccepted: true,
           termsAcceptedTimestamp: new Date().toISOString(),
@@ -391,7 +376,7 @@ export const AuthProvider = ({ children }) => {
     }
 
     saveSession(userObj, newProfile);
-    return { user: userObj, profile: newProfile, needsOnboarding: true };
+    return { user: userObj, profile: newProfile };
   };
 
   const logout = () => {
@@ -455,19 +440,16 @@ export const AuthProvider = ({ children }) => {
         // User has NEVER registered! Do NOT auto-create account!
         try { await signOut(auth); } catch (e) {}
         clearSession();
-        const notFoundErr = new Error('No registered account found with this Google email. Please switch to Sign Up first to create your account and connect your personal database.');
+        const notFoundErr = new Error('No registered account found with this Google email. Please switch to Sign Up first to create your account.');
         notFoundErr.code = 'auth/user-not-registered';
         throw notFoundErr;
       }
 
-      const isDbConnected = isProfileDatabaseConnected(foundProfile, cleanEmail);
       if (foundProfile.info) {
         foundProfile.info.lastLogin = new Date().toISOString();
         if (photoURL && !foundProfile.info.avatarUrl) {
           foundProfile.info.avatarUrl = photoURL;
         }
-        foundProfile.info.personalStorageConnected = isDbConnected;
-        foundProfile.info.personalStorageVerified = isDbConnected;
       }
 
       const userObj = {
@@ -478,31 +460,18 @@ export const AuthProvider = ({ children }) => {
       };
 
       saveSession(userObj, foundProfile);
-      return { user: userObj, profile: foundProfile, isNewUser: false, needsOnboarding: !isDbConnected };
+      return { user: userObj, profile: foundProfile, isNewUser: false };
     }
 
     // SCENARIO 2: SIGN UP MODE (User clicked "Sign Up with Google" on Sign Up tab)
     if (isSignUp) {
       if (foundProfile) {
-        const isDbConnected = isProfileDatabaseConnected(foundProfile, cleanEmail);
-        if (isDbConnected) {
-          // Account already exists and database is already connected
-          try { await signOut(auth); } catch (e) {}
-          clearSession();
-          const existsErr = new Error('An account with this Google email already exists and is configured. Please switch to Sign In instead.');
-          existsErr.code = 'auth/email-already-in-use';
-          throw existsErr;
-        } else {
-          // Account exists but database was never connected -> resume onboarding!
-          const userObj = {
-            uid: firebaseUser.uid,
-            email: cleanEmail,
-            displayName: foundProfile?.info?.fullName || fullName,
-            photoURL: photoURL || foundProfile?.info?.avatarUrl || ''
-          };
-          saveSession(userObj, foundProfile);
-          return { user: userObj, profile: foundProfile, isNewUser: false, needsOnboarding: true };
-        }
+        // Account already exists — no onboarding to resume anymore.
+        try { await signOut(auth); } catch (e) {}
+        clearSession();
+        const existsErr = new Error('An account with this Google email already exists. Please switch to Sign In instead.');
+        existsErr.code = 'auth/email-already-in-use';
+        throw existsErr;
       }
 
       // TRULY NEW USER: Initialize new registration record
@@ -517,10 +486,6 @@ export const AuthProvider = ({ children }) => {
           authProvider: 'google.com',
           createdAt: new Date().toISOString(),
           lastLogin: new Date().toISOString(),
-          storageStrategy: 'FIREBASE_PERSONAL',
-          personalStorageConnected: false,
-          personalStorageVerified: false,
-          personalStorageDatabaseName: 'ObsidianIDE',
           consents: {
             termsAccepted: true,
             termsAcceptedTimestamp: new Date().toISOString(),
@@ -565,7 +530,7 @@ export const AuthProvider = ({ children }) => {
       };
 
       saveSession(userObj, newProfile);
-      return { user: userObj, profile: newProfile, isNewUser: true, needsOnboarding: true };
+      return { user: userObj, profile: newProfile, isNewUser: true };
     }
   };
 
@@ -613,16 +578,13 @@ export const AuthProvider = ({ children }) => {
 
     if (!foundProf) {
       clearSession();
-      const err = new Error('No registered account found with this Google email. Please switch to Sign Up first to create your account and connect your personal database.');
+      const err = new Error('No registered account found with this Google email. Please switch to Sign Up first to create your account.');
       err.code = 'auth/user-not-registered';
       throw err;
     }
 
-    const isDbConnected = isProfileDatabaseConnected(foundProf, cleanEmail);
     if (foundProf.info) {
       foundProf.info.lastLogin = new Date().toISOString();
-      foundProf.info.personalStorageConnected = isDbConnected;
-      foundProf.info.personalStorageVerified = isDbConnected;
     }
 
     const userObj = {
@@ -633,7 +595,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     saveSession(userObj, foundProf);
-    return { user: userObj, profile: foundProf, needsOnboarding: !isDbConnected };
+    return { user: userObj, profile: foundProf };
   };
 
   const registerWithGoogleAccount = async (account, profileInput) => {
@@ -666,7 +628,7 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (e) {}
 
-    if (existingProfile && isProfileDatabaseConnected(existingProfile, cleanEmail)) {
+    if (existingProfile) {
       const err = new Error('An account with this email already exists. Please switch to Sign In instead.');
       err.code = 'auth/email-already-in-use';
       throw err;
@@ -682,10 +644,6 @@ export const AuthProvider = ({ children }) => {
         authProvider: 'google.com',
         createdAt: new Date().toISOString(),
         lastLogin: new Date().toISOString(),
-        storageStrategy: 'FIREBASE_PERSONAL',
-        personalStorageConnected: false,
-        personalStorageVerified: false,
-        personalStorageDatabaseName: 'ObsidianIDE',
         consents: {
           termsAccepted: true,
           termsAcceptedTimestamp: new Date().toISOString(),
@@ -735,10 +693,10 @@ export const AuthProvider = ({ children }) => {
     }
 
     saveSession(mockUser, newProfile);
-    return { user: mockUser, profile: newProfile, needsOnboarding: true };
+    return { user: mockUser, profile: newProfile };
   };
 
-  // Allows external components (e.g. OnboardingWizardPage) to refresh the cached profile
+  // Allows external components to refresh the cached profile
   const refreshProfile = async () => {
     const user = currentUser;
     if (!user) return;

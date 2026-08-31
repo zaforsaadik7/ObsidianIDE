@@ -124,11 +124,6 @@ router.get('/profile', verifyTokenOptional, async (req, res) => {
       email: targetEmail,
       profession: userData.info?.profession || 'Student',
       avatarUrl: userData.info?.avatarUrl || '',
-      storageStrategy: userData.info?.storageStrategy || 'FIREBASE_PERSONAL',
-      personalStorageConnected: userData.info?.personalStorageConnected || false,
-      personalStorageVerified: userData.info?.personalStorageVerified || false,
-      personalStorageProjectId: userData.info?.personalStorageProjectId || '',
-      personalStorageDatabaseName: userData.info?.personalStorageDatabaseName || 'ObsidianIDE',
       allocatedStorageMb,
       usedStorageMb,
       usagePercentage,
@@ -244,10 +239,6 @@ router.post('/register', verifyToken, async (req, res) => {
           uid: req.user?.uid || `uid_${cleanDocId}`,
           createdAt: existingData.info?.createdAt || new Date().toISOString(),
           lastLogin: new Date().toISOString(),
-          storageStrategy: 'FIREBASE_PERSONAL',
-          personalStorageConnected: false,
-          personalStorageVerified: false,
-          personalStorageDatabaseName: 'ObsidianIDE',
           consents: {
             termsAccepted: true,
             termsAcceptedTimestamp: new Date().toISOString(),
@@ -277,11 +268,7 @@ router.post('/register', verifyToken, async (req, res) => {
           email: targetEmail,
           profession: profession || 'Student',
           avatarUrl: avatarUrl || '',
-          uid: req.user?.uid || `uid_${cleanDocId}`,
-          personalStorageConnected: false,
-          personalStorageVerified: false,
-          personalStorageDatabaseName: 'ObsidianIDE',
-          storageStrategy: 'FIREBASE_PERSONAL'
+          uid: req.user?.uid || `uid_${cleanDocId}`
         },
         projects: {}
       };
@@ -297,81 +284,6 @@ router.post('/register', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Error registering user:', error);
     res.status(500).json({ error: 'Failed to register user', details: error.message });
-  }
-});
-
-// POST /api/users/provision-firebase-database: Instantiate ObsidianIDE database partition for target user
-router.post('/provision-firebase-database', verifyToken, async (req, res) => {
-  try {
-    const { userEmail, firebaseProjectId = 'obsidian-workspace', databaseName = 'ObsidianIDE' } = req.body;
-    const targetEmail = (req.user?.email || userEmail || '').trim().toLowerCase();
-    if (!targetEmail) {
-      return res.status(400).json({ error: 'Email is required.' });
-    }
-    const targetUsername = targetEmail.split('@')[0];
-
-    let existingData = inMemoryUserStore.get(targetUsername) || inMemoryUserStore.get(targetEmail) || {};
-
-    try {
-      if (adminDb) {
-        const userDocRef = adminDb.collection('users').doc(targetUsername);
-        const userSnap = await userDocRef.get();
-        if (userSnap.exists) {
-          existingData = userSnap.data();
-        }
-      }
-    } catch (dbErr) {
-      console.warn("Firestore user metadata lookup notice:", dbErr.message);
-    }
-
-    const existingInfo = existingData.info || {};
-
-    const updatedInfo = {
-      ...existingInfo,
-      email: targetEmail,
-      username: targetUsername,
-      storageStrategy: 'FIREBASE_PERSONAL',
-      personalStorageConnected: true,
-      personalStorageVerified: true,
-      personalStorageDatabaseName: databaseName,
-      personalStorageProjectId: firebaseProjectId,
-      personalStorageConsoleUrl: `https://console.firebase.google.com/u/0/project/${firebaseProjectId}/firestore/databases/${databaseName}`,
-      consents: {
-        termsAccepted: true,
-        termsAcceptedTimestamp: new Date().toISOString(),
-        googleOAuthConsent: true,
-        permissionsGranted: ['INSPECT_FIREBASE_PROJECT', 'CREATE_DATABASE_OBSIDIANIDE', 'READ_WRITE_MODIFY_PROJECT_FILES']
-      }
-    };
-
-    const updatedProfile = {
-      info: updatedInfo,
-      projects: existingData.projects || {}
-    };
-
-    inMemoryUserStore.set(targetUsername, updatedProfile);
-    inMemoryUserStore.set(targetEmail, updatedProfile);
-
-    try {
-      if (adminDb) {
-        const userDocRef = adminDb.collection('users').doc(targetUsername);
-        await userDocRef.set(updatedProfile, { merge: true });
-      }
-    } catch (dbErr) {
-      console.warn("Firestore user metadata update notice:", dbErr.message);
-    }
-
-    res.json({
-      status: 'SUCCESS',
-      message: `Database '${databaseName}' successfully provisioned for user ${targetEmail}.`,
-      databaseName,
-      firebaseProjectId,
-      targetEmail,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('Error provisioning Firebase database:', error);
-    res.status(500).json({ error: 'Failed to provision database', details: error.message });
   }
 });
 

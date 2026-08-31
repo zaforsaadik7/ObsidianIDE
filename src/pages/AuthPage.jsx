@@ -38,7 +38,7 @@ export const AuthPage = () => {
     const msg = err?.message || '';
 
     if (code === 'auth/user-not-registered') {
-      return '⚠️ No registered account found with this email. Please switch to "Sign Up" above to create your account and connect your personal database.';
+      return '⚠️ No registered account found with this email. Please switch to "Sign Up" above to create your account.';
     }
     if (code === 'auth/configuration-not-found' || code === 'auth/operation-not-allowed') {
       return '⚠️ Google Sign-In is not enabled yet in your Firebase Project (obsidianide-1606f). Please enable "Google" under Firebase Console > Authentication > Sign-in method.';
@@ -142,14 +142,10 @@ export const AuthPage = () => {
           profession,
           avatarUrl
         });
-        navigate(redirectTarget || '/onboarding');
+        navigate(redirectTarget || '/onboarding/github');
       } else {
-        const loginRes = await login(email, password);
-        if (loginRes?.needsOnboarding) {
-          navigate(redirectTarget || '/onboarding');
-        } else {
-          navigate(redirectTarget || '/dashboard');
-        }
+        await login(email, password);
+        navigate(redirectTarget || '/dashboard');
       }
     } catch (err) {
       console.error('Authentication Error:', err);
@@ -166,8 +162,8 @@ export const AuthPage = () => {
 
     try {
       const result = await signInWithGoogle(isRegister);
-      if (isRegister || result?.isNewUser || result?.needsOnboarding) {
-        navigate(redirectTarget || '/onboarding');
+      if (isRegister || result?.isNewUser) {
+        navigate(redirectTarget || '/onboarding/github');
       } else {
         navigate(redirectTarget || '/dashboard');
       }
