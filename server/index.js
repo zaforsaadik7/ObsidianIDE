@@ -55,7 +55,8 @@ const corsAllowlist = (() => {
     'http://localhost:3000',
     'http://localhost:5173',
     'http://127.0.0.1:3000',
-    'http://127.0.0.1:5173'
+    'http://127.0.0.1:5173',
+    'https://obsidian-ide.vercel.app'
   ]);
   for (const envKey of ['APP_DOMAIN', 'APP_URL', 'CLIENT_DOMAIN']) {
     const value = (process.env[envKey] || '').trim().replace(/\/+$/, '');
