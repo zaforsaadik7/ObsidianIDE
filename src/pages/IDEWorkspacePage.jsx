@@ -293,9 +293,12 @@ export const IDEWorkspacePage = () => {
           }
 
           // 3. Resolve Live Shared Working Files (Created / uploaded by Owner or Collaborator)
+          // NOTE: never fall back to master while a fork is pending — an empty
+          // working set then means the fork proposes deleting everything, and
+          // substituting master would resurrect that deletion.
           let working = (data.working_files && data.working_files.length > 0)
             ? data.working_files
-            : master;
+            : (data.pendingFork === true ? [] : master);
 
           // ── SUBCOLLECTION HYDRATION ──
           // If working files are manifests (no content) or empty, hydrate from subcollection
@@ -345,8 +348,10 @@ export const IDEWorkspacePage = () => {
                   return sub ? { ...f, content: sub.content || '', _manifestOnly: undefined } : f;
                 });
                 // Subcollection is only the source of truth when the manifest is empty;
-                // extra subcollection docs are stale/deleted files and must not be re-added
-                if (manifests.length === 0) {
+                // extra subcollection docs are stale/deleted files and must not be re-added.
+                // Exception guard: while a fork is pending an empty manifest means
+                // "delete everything" — never resurrect from stale subcollection docs.
+                if (manifests.length === 0 && data.pendingFork !== true) {
                   contentMap.forEach((fd) => {
                     hydrated.push(fd);
                   });
@@ -388,11 +393,15 @@ export const IDEWorkspacePage = () => {
           }
 
           // 4. Update working files state with strict mutation protection
-          // Use refs (not stale closure variables) for accurate comparison
+          // Use refs (not stale closure variables) for accurate comparison.
+          // A recent local mutation blocks ALL server convergence — inside the
+          // immunity window the server may not have our change yet (e.g. a
+          // deletion persisted via the backend API), and a "master synchronized"
+          // snapshot would otherwise resurrect deleted files.
           const hasLocalTypingDirty = (currentContentRef.current !== savedContentRef.current);
           const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 30000;
           const hasStagedForkChanges = hasUnsavedForkChangesRef.current;
-          if (isMasterSynchronized || (!isRecentLocalMutation && !hasLocalTypingDirty && !hasStagedForkChanges)) {
+          if (!isRecentLocalMutation && (isMasterSynchronized || (!hasLocalTypingDirty && !hasStagedForkChanges))) {
             if (working && working.length > 0) {
               if (working.length >= localFilesRef.current.length || isMasterSynchronized) {
                 setFiles(working);
@@ -498,10 +507,12 @@ export const IDEWorkspacePage = () => {
                 ? proj.project_files
                 : [];
 
-            // Working files
+            // Working files. Mirror the snapshot listener: never substitute the
+            // master baseline while a fork is pending (empty working set means
+            // the fork proposes deleting everything).
             const serverWorking = (proj.working_files && proj.working_files.length > 0)
               ? proj.working_files
-              : serverMaster;
+              : (proj.pendingFork === true ? [] : serverMaster);
 
             const isServerMasterSynced = proj.pendingFork === false ||
               (serverMaster && serverWorking && serverMaster.length > 0 && serverMaster.length === serverWorking.length && serverMaster.every(mf => {
@@ -517,16 +528,23 @@ export const IDEWorkspacePage = () => {
               localMasterRef.current = serverMaster;
             }
 
-            if (isServerMasterSynced) {
+            // A stale "master synced" report must not clear an editor's staged
+            // fork changes that the server has not received yet (mirrors the
+            // snapshot listener guard).
+            if (isServerMasterSynced && !(hasUnsavedForkChangesRef.current && serverOwnerEmail && serverOwnerEmail !== userEmail)) {
               hasUnsavedForkChangesRef.current = false;
               isLocalDirtyRef.current = false;
               localMutationTimestampRef.current = 0;
             }
 
-            // Use refs instead of stale closure variables for accurate comparison
+            // Use refs instead of stale closure variables for accurate comparison.
+            // Recent local mutations block ALL convergence (server may not have
+            // the change yet); staged fork changes block it even when the server
+            // reports master as synchronized — this is what stopped the 5s poll
+            // from resurrecting locally deleted files.
             const hasStagedModifications = hasUnsavedForkChangesRef.current || (currentContentRef.current !== savedContentRef.current);
             const isRecentLocalMutation = (Date.now() - localMutationTimestampRef.current) < 30000;
-            if (isServerMasterSynced || (!isRecentLocalMutation && !hasStagedModifications)) {
+            if (!isRecentLocalMutation && (isServerMasterSynced || !hasStagedModifications)) {
               if (serverWorking && serverWorking.length > 0) {
                 if (serverWorking.length >= localFilesRef.current.length || isServerMasterSynced) {
                   setFiles(serverWorking);
@@ -1872,7 +1890,12 @@ export const IDEWorkspacePage = () => {
         }
       }
 
-      // Persist to Shared Working Fork & Master
+      // Persist to Shared Working Fork & Master.
+      // The direct project-doc write is best-effort: security rules only allow
+      // the OWNER to update /projects/{pid}, so for editors it is denied and
+      // the backend API call below is the authoritative persistence path. The
+      // API + WebSocket steps live in their own try so a denied write can never
+      // skip them (skipping made deleted files reappear on the next poll).
       try {
         const manifestFiles = toManifest(remainingFiles);
         const payload = {
@@ -1881,12 +1904,14 @@ export const IDEWorkspacePage = () => {
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
         };
-        await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
+        setDoc(doc(db, 'projects', projectId), payload, { merge: true }).catch(() => {});
 
-        // Delete from subcollection
+        // Delete from subcollection (members are allowed to delete file docs)
         const fileDocId = fileObj.fileId || `file_${projectId}_${(fileObj.filePath || '').replace(/[^a-zA-Z0-9_]/g, '_')}`;
         deleteDoc(doc(db, 'projects', projectId, 'files', fileDocId)).catch(() => {});
+      } catch (fsErr) { }
 
+      try {
         await fetch('/api/projects/update-files', {
           method: 'POST',
           headers: {
@@ -1914,7 +1939,7 @@ export const IDEWorkspacePage = () => {
             user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: isProjectOwner ? 'OWNER' : 'EDITOR' }
           }));
         }
-      } catch (fsErr) { }
+      } catch (apiErr) { }
 
       showNotificationToast(`[-] Deleted '${fileObj.fileName}'`, 4500);
     } catch (err) {
@@ -2043,7 +2068,10 @@ export const IDEWorkspacePage = () => {
         }
       }
 
-      // Persist to Shared Working Fork & Master
+      // Persist to Shared Working Fork & Master.
+      // Best-effort direct write + authoritative API call, mirrored from
+      // handleDeleteFile: editors are denied the project-doc write by security
+      // rules, and the API + WebSocket steps must still run.
       try {
         const manifestFiles = toManifest(remaining);
         const payload = {
@@ -2052,7 +2080,7 @@ export const IDEWorkspacePage = () => {
           updatedAt: new Date().toISOString(),
           lastWorkingModifiedBy: userEmail
         };
-        await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
+        setDoc(doc(db, 'projects', projectId), payload, { merge: true }).catch(() => {});
 
         // Delete removed folder entries from the files subcollection so they are
         // not resurrected by later hydration (mirrors handleDeleteFile)
@@ -2061,7 +2089,9 @@ export const IDEWorkspacePage = () => {
           const fileDocId = df.fileId || `file_${projectId}_${(df.filePath || '').replace(/[^a-zA-Z0-9_]/g, '_')}`;
           return deleteDoc(doc(db, 'projects', projectId, 'files', fileDocId));
         }));
+      } catch (fsErr) { }
 
+      try {
         await fetch('/api/projects/update-files', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
@@ -2079,7 +2109,7 @@ export const IDEWorkspacePage = () => {
             user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: isProjectOwner ? 'OWNER' : 'EDITOR' }
           }));
         }
-      } catch (fsErr) { }
+      } catch (apiErr) { }
 
       showNotificationToast(`[×] Deleted folder /${cleanFolder}`, 3500);
     } catch (err) {
