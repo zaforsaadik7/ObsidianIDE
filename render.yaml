@@ -4,6 +4,7 @@ services:
     runtime: node
     plan: free
     region: oregon
+    nodeVersion: '22'
     buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
     envVars:
@@ -11,6 +12,14 @@ services:
         value: production
       - key: PORT
         value: 10000
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      - key: APP_DOMAIN
+        sync: false
+      - key: SERVER_DOMAIN
+        sync: false
+      - key: CLIENT_DOMAIN
+        sync: false
       - key: VITE_FIREBASE_API_KEY
         sync: false
       - key: VITE_FIREBASE_AUTH_DOMAIN

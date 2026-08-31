@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:match*",
-      "destination": "https://obsidianide-backend.onrender.com/api/:match*"
+      "destination": "https://obsidianide.onrender.com/api/:match*"
     },
     {
       "source": "/(.*)",

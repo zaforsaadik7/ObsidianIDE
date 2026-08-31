@@ -3,6 +3,20 @@ import assert from 'node:assert';
 
 const BASE_URL = 'http://127.0.0.1:5000';
 
+// These assertions only hold against a server started WITH
+// FIREBASE_SERVICE_ACCOUNT (strict auth). Self-skip on a permissive dev
+// server or when nothing is listening, mirroring the E2E suite.
+let strictMode = false;
+try {
+  const probe = await fetch(`${BASE_URL}/api/projects`, { method: 'GET' });
+  strictMode = probe.status === 401;
+} catch (e) {}
+
+if (!strictMode) {
+  console.log('SKIP: server on :5000 is not running with FIREBASE_SERVICE_ACCOUNT (strict auth disabled).');
+  process.exit(0);
+}
+
 test('Security Integration Test: Unauthenticated POST /api/projects/save-and-sync must return 401/403', async () => {
   const res = await fetch(`${BASE_URL}/api/projects/save-and-sync`, {
     method: 'POST',

@@ -10,6 +10,11 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
+    env:
+      PORT: 5000
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+
     steps:
       - name: Checkout Repository Code
         uses: actions/checkout@v4
@@ -23,8 +28,16 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Run Security Integration Tests
+      - name: Boot Backend and Wait for Health
+        run: |
+          nohup node server/index.js > server.log 2>&1 &
+          node -e 'const f=async()=>{for(let i=0;i<60;i++){try{const r=await fetch("http://127.0.0.1:5000/api/health");if(r.ok){console.log("Backend healthy");return;}}catch(e){}await new Promise(s=>setTimeout(s,1000));}console.error("Backend never became healthy");process.exit(1);};f();'
+
+      - name: Run Unit Tests
         run: npm test
+
+      - name: Run E2E Security Suite
+        run: node server/tests/e2eFolderForkFlow.test.mjs
 
       - name: Verify Multi-Stage Docker Build
         run: docker build -t obsidian-ide:test .
