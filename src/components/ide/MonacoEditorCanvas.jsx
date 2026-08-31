@@ -438,9 +438,13 @@ export const MonacoEditorCanvas = ({
       const selection = editorRef.current?.getSelection();
       const selectedText = selection ? editorRef.current?.getModel()?.getValueInRange(selection) : '';
 
+      const suggestToken = await getFirebaseIdToken();
       const res = await fetch('/api/ai/suggestive-write', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(suggestToken ? { 'Authorization': `Bearer ${suggestToken}` } : {})
+        },
         body: JSON.stringify({
           instruction: suggestivePromptText.trim(),
           language,

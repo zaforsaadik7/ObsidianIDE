@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'crypto';
 import { adminDb } from '../config/firebaseAdmin.js';
 import { inMemoryProjectStore } from './projectRoutes.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
@@ -69,9 +70,37 @@ let customOAuthAppConfig = {
 
 // Server-side state store for manifest flow (avoids query params in redirect_url)
 const manifestStateStore = new Map(); // key -> { email, returnUrl, createdAt }
+// Server-side OAuth state stores — secrets never travel through the browser (CSRF-safe)
+const oauthStateStore = new Map(); // key -> { email, returnUrl, clientOrigin, ...app fields }
+const installStateStore = new Map(); // key -> { email, returnUrl, username, avatarUrl, profileUrl }
+
+const rememberState = (store, data, ttlMs = 10 * 60 * 1000) => {
+  const key = randomUUID();
+  store.set(key, { ...data, createdAt: Date.now() });
+  setTimeout(() => store.delete(key), ttlMs);
+  return key;
+};
+
+// returnUrl allowlist — only our own app origins may receive post-auth redirects
+const LOCAL_RETURN_HOSTS = ['localhost:3000', 'localhost:5173', '127.0.0.1:3000', '127.0.0.1:5173'];
+const isAllowedReturnUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const envHosts = [process.env.APP_DOMAIN, process.env.APP_URL, process.env.CLIENT_DOMAIN]
+      .filter(Boolean)
+      .map((d) => { try { return new URL(d).host; } catch { return null; } })
+      .filter(Boolean);
+    return envHosts.includes(u.host) || LOCAL_RETURN_HOSTS.includes(u.host);
+  } catch { return false; }
+};
+
+// Safe JS string literal for inline scripts (JSON string, script-tag breakout neutralized)
+const jsString = (value) => JSON.stringify(String(value)).replace(/</g, '\\u003c');
 
 // ── 0.0 GitHub Device Authorization Flow (VS Code Extension Style) ──────────
-router.post('/device/start', async (req, res) => {
+router.post('/device/start', verifyToken, async (req, res) => {
   try {
     const clientId = customOAuthAppConfig.clientId || GITHUB_DEVICE_CLIENT_ID;
     const ghRes = await fetch('https://github.com/login/device/code', {
@@ -106,9 +135,9 @@ router.post('/device/start', async (req, res) => {
   }
 });
 
-router.post('/device/poll', async (req, res) => {
+router.post('/device/poll', verifyToken, async (req, res) => {
   try {
-    const { deviceCode, userEmail } = req.body;
+    const { deviceCode } = req.body;
     if (!deviceCode) {
       return res.status(400).json({ error: 'deviceCode is required' });
     }
@@ -154,7 +183,7 @@ router.post('/device/poll', async (req, res) => {
         permissions: ['repo', 'read:user', 'user:email']
       };
 
-      const targetEmail = (userEmail || '').trim().toLowerCase();
+      const targetEmail = (req.user?.email || '').trim().toLowerCase();
       if (targetEmail) {
         inMemoryGitHubStore.set(targetEmail, githubData);
         if (adminDb) {
@@ -199,7 +228,10 @@ router.get('/oauth/config', (req, res) => {
   });
 });
 
-router.post('/oauth/save-app-credentials', async (req, res) => {
+router.post('/oauth/save-app-credentials', verifyToken, async (req, res) => {
+  if (process.env.ENABLE_ADMIN_TOOLS !== 'true') {
+    return res.status(403).json({ error: 'Administrative tools are disabled.' });
+  }
   try {
     const { clientId, clientSecret } = req.body;
     if (!clientId || !clientId.trim()) {
@@ -226,15 +258,13 @@ router.get('/manifest/start', (req, res) => {
   const clientDomain = resolveClientDomain(req);
   const serverDomain = resolveServerDomain(req);
 
-  // Generate a random key and store state server-side (no query params in redirect_url)
-  const stateKey = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  manifestStateStore.set(stateKey, {
+  // Server-generated state key + allowlist-validated returnUrl (CSRF / open-redirect hardening)
+  const defaultReturnUrl = `${clientDomain}/profile?github_connected=true`;
+  const stateKey = rememberState(manifestStateStore, {
     email: userEmail,
-    returnUrl: returnUrl || `${clientDomain}/profile?github_connected=true`,
-    createdAt: Date.now()
+    returnUrl: isAllowedReturnUrl(returnUrl) ? returnUrl : defaultReturnUrl,
+    clientOrigin: clientDomain
   });
-  // Auto-expire after 10 minutes
-  setTimeout(() => manifestStateStore.delete(stateKey), 10 * 60 * 1000);
 
   const randSuffix = Math.floor(1000 + Math.random() * 9000);
   const manifest = {
@@ -321,7 +351,7 @@ router.get('/manifest/callback/:stateKey', async (req, res) => {
         <style>body{background:#0c0c12;color:#f87171;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}</style>
         </head><body><div><h2>⚠️ GitHub App Setup Failed</h2><p>${appData.message || 'Unknown error'}</p>
         <p style="font-size:12px;color:#94a3b8;">You can try the Personal Access Token method instead.</p>
-        <script>setTimeout(()=>{window.location.href='${returnUrl}';},3000);</script></div></body></html>
+        <script>setTimeout(()=>{window.location.href=${jsString(returnUrl)};},3000);</script></div></body></html>
       `);
     }
 
@@ -349,9 +379,11 @@ router.get('/manifest/callback/:stateKey', async (req, res) => {
 
     // Step 2: Use the newly created app's clientId to do a real OAuth authorization.
     // This gives us an actual access_token the user can use to push code.
-    const oauthStateObj = {
+    // State stays server-side — the browser only sees an opaque UUID (secrets never transit the client).
+    const oauthState = rememberState(oauthStateStore, {
       email: userEmail,
       returnUrl,
+      clientOrigin: resolveClientDomain(req),
       appClientId: appData.client_id,
       appClientSecret: appData.client_secret,
       appSlug: appData.slug || '',
@@ -359,8 +391,7 @@ router.get('/manifest/callback/:stateKey', async (req, res) => {
       avatarUrl,
       profileUrl,
       appId: appData.id
-    };
-    const oauthState = Buffer.from(JSON.stringify(oauthStateObj)).toString('base64');
+    });
     const serverDomain = resolveServerDomain(req);
     const oauthCallbackUrl = `${serverDomain}/api/github/manifest/oauth-callback`;
     const oauthUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(appData.client_id)}&scope=repo,read:user,user:email&state=${encodeURIComponent(oauthState)}&redirect_uri=${encodeURIComponent(oauthCallbackUrl)}`;
@@ -383,8 +414,12 @@ router.get('/manifest/oauth-callback', async (req, res) => {
     }
     if (!code || !state) return res.status(400).send('Missing code or state');
 
-    const stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
-    const { email: userEmail, returnUrl, appClientId, appClientSecret, appSlug, username, avatarUrl, profileUrl, appId } = stateData;
+    const stateData = oauthStateStore.get(state);
+    oauthStateStore.delete(state); // consume immediately
+    if (!stateData) {
+      return res.send(`<html><body style="background:#0c0c12;color:#f87171;font-family:sans-serif;padding:30px;text-align:center;"><h3>Session Expired</h3><p>Your GitHub connection session expired. Please try connecting again.</p><script>setTimeout(()=>window.history.back(),2500);</script></body></html>`);
+    }
+    const { email: userEmail, returnUrl, clientOrigin, appClientId, appClientSecret, appSlug, username, avatarUrl, profileUrl, appId } = stateData;
 
     // Exchange code for user access_token
     const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
@@ -428,8 +463,8 @@ router.get('/manifest/oauth-callback', async (req, res) => {
     // Step 3: Redirect to GitHub App installation page so user installs it on their repos.
     // This is REQUIRED for the token to have write access to repositories.
     if (appSlug) {
-      // Store the install state so we can redirect back after installation
-      const installState = Buffer.from(JSON.stringify({ email: userEmail, returnUrl, username, avatarUrl, profileUrl })).toString('base64');
+      // Store the install state server-side so we can redirect back after installation
+      const installState = rememberState(installStateStore, { email: userEmail, returnUrl, clientOrigin, username, avatarUrl, profileUrl });
       const installUrl = `https://github.com/apps/${appSlug}/installations/new?state=${encodeURIComponent(installState)}`;
       console.log(`[Manifest OAuth] Redirecting to app installation: ${installUrl}`);
 
@@ -481,14 +516,15 @@ router.get('/manifest/installed', async (req, res) => {
     const clientDomain = resolveClientDomain(req);
     let email = '', returnUrl = `${clientDomain}/profile`, username = '', avatarUrl = '', profileUrl = '';
     if (state) {
-      try {
-        const s = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
+      const s = installStateStore.get(state);
+      installStateStore.delete(state); // consume
+      if (s) {
         email = s.email || '';
         returnUrl = s.returnUrl || returnUrl;
         username = s.username || '';
         avatarUrl = s.avatarUrl || '';
         profileUrl = s.profileUrl || '';
-      } catch (e) { /* ignore */ }
+      }
     }
 
     // Save installation_id to the user's GitHub data (allows future installation token use)
@@ -525,8 +561,12 @@ router.get('/oauth/start', (req, res) => {
   const serverDomain = resolveServerDomain(req);
 
   const callbackUrl = `${serverDomain}/api/github/oauth/callback`;
-  const stateObj = { email: userEmail, returnUrl: returnUrl || `${clientDomain}/dashboard` };
-  const state = Buffer.from(JSON.stringify(stateObj)).toString('base64');
+  const defaultReturnUrl = `${clientDomain}/dashboard`;
+  const state = rememberState(oauthStateStore, {
+    email: userEmail,
+    returnUrl: isAllowedReturnUrl(returnUrl) ? returnUrl : defaultReturnUrl,
+    clientOrigin: clientDomain
+  });
 
   if (clientId) {
     const authUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(clientId)}&scope=repo,read:user,user:email&state=${encodeURIComponent(state)}&redirect_uri=${encodeURIComponent(callbackUrl)}`;
@@ -559,11 +599,16 @@ router.get('/oauth/callback', async (req, res) => {
     const clientDomain = resolveClientDomain(req);
     let userEmail = '';
     let returnUrl = `${clientDomain}/profile?github_connected=true`;
+    let clientOrigin = clientDomain;
     try {
       if (state) {
-        const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
-        userEmail = decoded.email || '';
-        if (decoded.returnUrl) returnUrl = decoded.returnUrl;
+        const decoded = oauthStateStore.get(state);
+        oauthStateStore.delete(state); // consume
+        if (decoded) {
+          userEmail = decoded.email || '';
+          if (decoded.returnUrl) returnUrl = decoded.returnUrl;
+          if (decoded.clientOrigin) clientOrigin = decoded.clientOrigin;
+        }
       }
     } catch (e) {}
 
@@ -591,7 +636,7 @@ router.get('/oauth/callback', async (req, res) => {
         <html><body style="background:#0c0c12;color:#f87171;font-family:sans-serif;padding:30px;text-align:center;">
           <h3>⚠️ GitHub Token Exchange Failed</h3>
           <p>${tokenData.error_description || tokenData.error || 'Failed to exchange OAuth token'}</p>
-          <script>setTimeout(() => window.location.href = '${returnUrl}', 3000);</script>
+          <script>setTimeout(() => window.location.href = ${jsString(returnUrl)}, 3000);</script>
         </body></html>
       `);
     }
@@ -657,11 +702,11 @@ router.get('/oauth/callback', async (req, res) => {
           const payload = ${JSON.stringify(githubData)};
           if (window.opener) {
             try {
-              window.opener.postMessage({ type: 'GITHUB_OAUTH_SUCCESS', github: payload }, '*');
+              window.opener.postMessage({ type: 'GITHUB_OAUTH_SUCCESS', github: payload }, ${jsString(clientOrigin)});
             } catch (e) {}
             setTimeout(() => window.close(), 1000);
           } else {
-            setTimeout(() => { window.location.href = '${returnUrl}'; }, 800);
+            setTimeout(() => { window.location.href = ${jsString(returnUrl)}; }, 800);
           }
         </script>
       </body>
@@ -674,7 +719,7 @@ router.get('/oauth/callback', async (req, res) => {
 });
 
 // ── 1. Verify GitHub Access Token / OAuth Credential ────────────────────────
-router.post('/verify-token', async (req, res) => {
+router.post('/verify-token', verifyToken, async (req, res) => {
   try {
     const { accessToken } = req.body;
     if (!accessToken || !accessToken.trim()) {
@@ -724,8 +769,8 @@ router.post('/verify-token', async (req, res) => {
 // ── 2. Connect GitHub Account to User Profile ───────────────────────────────
 router.post('/connect-user', verifyToken, async (req, res) => {
   try {
-    const { userEmail, accessToken, githubUsername, githubAvatarUrl, githubProfileUrl } = req.body;
-    const targetEmail = (userEmail || req.user?.email || '').trim().toLowerCase();
+    const { accessToken, githubUsername, githubAvatarUrl, githubProfileUrl } = req.body;
+    const targetEmail = (req.user?.email || '').trim().toLowerCase();
     if (!targetEmail) {
       return res.status(400).json({ error: 'User email is required' });
     }
@@ -767,10 +812,9 @@ router.post('/connect-user', verifyToken, async (req, res) => {
 // ── 3. Disconnect GitHub Account ────────────────────────────────────────────
 router.post('/disconnect-user', verifyToken, async (req, res) => {
   try {
-    const { userEmail } = req.body;
-    const targetEmail = (userEmail || req.user?.email || '').trim().toLowerCase();
+    const targetEmail = (req.user?.email || '').trim().toLowerCase();
     if (!targetEmail) {
-      return res.status(400).json({ error: 'User email is required' });
+      return res.status(400).json({ error: 'Signed-in identity is required' });
     }
 
     const cleanDocId = getUserDocIdFromEmail(targetEmail);
@@ -806,10 +850,9 @@ router.post('/disconnect-user', verifyToken, async (req, res) => {
 // ── 4. Get User GitHub Connection Status ────────────────────────────────────
 router.get('/connection-status', verifyToken, async (req, res) => {
   try {
-    const { email } = req.query;
-    const targetEmail = (email || req.user?.email || '').trim().toLowerCase();
+    const targetEmail = (req.user?.email || '').trim().toLowerCase();
     if (!targetEmail) {
-      return res.status(400).json({ error: 'Email parameter is required' });
+      return res.status(400).json({ error: 'Signed-in identity is required' });
     }
 
     let githubInfo = inMemoryGitHubStore.get(targetEmail) || null;
@@ -859,7 +902,7 @@ router.post('/push-project', verifyToken, async (req, res) => {
       files: incomingFiles
     } = req.body;
 
-    const targetEmail = (userEmail || req.user?.email || '').trim().toLowerCase();
+    const targetEmail = (req.user?.email || '').trim().toLowerCase();
     
     // Resolve Access Token
     let token = directToken ? directToken.trim() : null;

@@ -1,7 +1,8 @@
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { inMemoryProjectStore } from './projectRoutes.js';
-import { adminDb } from '../config/firebaseAdmin.js';
+import { adminDb, adminAuth } from '../config/firebaseAdmin.js';
+import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
@@ -10,9 +11,12 @@ const projectRoleCache = new Map();
 
 // Helper to resolve authoritative user role from repository baseline.
 // Checks in-memory store first (fast path), then cache, then Firestore Admin (cold path).
+// Returns null when membership cannot be established (authoritative mode); the caller
+// decides whether to reject. Without adminDb (local dev) the client claim is accepted.
 const resolveAuthoritativeRole = async (projectId, email, providedRole) => {
   const cleanEmail = (email || '').trim().toLowerCase();
-  if (!cleanEmail) return (providedRole || 'EDITOR').toUpperCase();
+  const devFallback = () => (providedRole || 'EDITOR').toUpperCase();
+  if (!cleanEmail) return adminDb ? null : devFallback();
 
   // 1. Check in-memory project store (populated by REST /api/projects calls)
   const memProj = inMemoryProjectStore.get(projectId);
@@ -72,7 +76,7 @@ const resolveAuthoritativeRole = async (projectId, email, providedRole) => {
     }
   }
 
-  return (providedRole || 'EDITOR').toUpperCase();
+  return adminDb ? null : devFallback();
 };
 
 // Preset Distinct High-Contrast Collaborator Color Palette
@@ -122,11 +126,10 @@ const cleanupInactiveUsers = (projectId) => {
 // ── REST API Endpoints ───────────────────────────────────────────────────────
 
 // 1. POST /api/collaboration/:projectId/presence (Heartbeat & Cursor Position)
-router.post('/:projectId/presence', async (req, res) => {
+router.post('/:projectId/presence', verifyToken, async (req, res) => {
   try {
     const { projectId } = req.params;
     const { 
-      email, 
       displayName, 
       username, 
       avatarUrl, 
@@ -136,8 +139,14 @@ router.post('/:projectId/presence', async (req, res) => {
       selection = null
     } = req.body;
 
+    const email = (req.user?.email || '').trim().toLowerCase();
     if (!projectId || !email) {
-      return res.status(400).json({ error: 'projectId and email are required.' });
+      return res.status(400).json({ error: 'projectId and a signed-in identity are required.' });
+    }
+
+    const effectiveRole = await resolveAuthoritativeRole(projectId, email, role);
+    if (effectiveRole === null) {
+      return res.status(403).json({ error: 'You do not have access to this project.' });
     }
 
     if (!projectRooms.has(projectId)) {
@@ -146,10 +155,9 @@ router.post('/:projectId/presence', async (req, res) => {
 
     const room = projectRooms.get(projectId);
     const userColor = getColorForEmail(email);
-    const effectiveRole = await resolveAuthoritativeRole(projectId, email, role);
 
     const presenceData = {
-      email: email.trim().toLowerCase(),
+      email,
       displayName: displayName || email.split('@')[0],
       username: username || `@${email.split('@')[0]}`,
       avatarUrl: avatarUrl || '',
@@ -184,7 +192,7 @@ router.post('/:projectId/presence', async (req, res) => {
 });
 
 // 2. GET /api/collaboration/:projectId/presence (List active collaborators)
-router.get('/:projectId/presence', (req, res) => {
+router.get('/:projectId/presence', verifyToken, (req, res) => {
   try {
     const { projectId } = req.params;
     cleanupInactiveUsers(projectId);
@@ -204,12 +212,11 @@ router.get('/:projectId/presence', (req, res) => {
 });
 
 // 3. POST /api/collaboration/:projectId/attribution (Record author of changes)
-router.post('/:projectId/attribution', (req, res) => {
+router.post('/:projectId/attribution', verifyToken, (req, res) => {
   try {
     const { projectId } = req.params;
     const { 
       filePath, 
-      authorEmail, 
       authorName, 
       authorRole = 'EDITOR', 
       authorAvatar = '',
@@ -218,8 +225,9 @@ router.post('/:projectId/attribution', (req, res) => {
       linesModified = 0
     } = req.body;
 
+    const authorEmail = (req.user?.email || '').trim().toLowerCase();
     if (!projectId || !filePath || !authorEmail) {
-      return res.status(400).json({ error: 'projectId, filePath, and authorEmail are required.' });
+      return res.status(400).json({ error: 'projectId, filePath, and a signed-in identity are required.' });
     }
 
     if (!projectChangeAttributions.has(projectId)) {
@@ -277,7 +285,7 @@ router.post('/:projectId/attribution', (req, res) => {
 });
 
 // 4. GET /api/collaboration/:projectId/attribution (Get project attribution map)
-router.get('/:projectId/attribution', (req, res) => {
+router.get('/:projectId/attribution', verifyToken, (req, res) => {
   try {
     const { projectId } = req.params;
     const projectMap = projectChangeAttributions.get(projectId);
@@ -323,22 +331,57 @@ export const createCollaborationWebSocket = () => {
         const msg = JSON.parse(raw.toString());
         const { type, projectId, user, cursor, activeFilePath } = msg;
 
-        if (!projectId || !user?.email) return;
-        const email = user.email.trim().toLowerCase();
-        const userColor = getColorForEmail(email);
+        if (!projectId || !type) return;
 
-        if (!projectRooms.has(projectId)) {
-          projectRooms.set(projectId, new Map());
-        }
-        const room = projectRooms.get(projectId);
+        const meta = clientSockets.get(ws);
+        const isJoin = type === 'JOIN_ROOM' || type === 'JOIN_PROJECT';
+        const isPresence = isJoin || type === 'HEARTBEAT' || type === 'CURSOR_MOVE';
 
-        if (type === 'JOIN_ROOM' || type === 'JOIN_PROJECT' || type === 'HEARTBEAT' || type === 'CURSOR_MOVE') {
-          const effectiveRole = await resolveAuthoritativeRole(projectId, email, user.role);
+        // Identity resolution: JOIN authenticates; all later messages reuse the
+        // verified identity stored on the socket (client claims never trusted).
+        let email = meta?.email || '';
+
+        if (isPresence) {
+          if (!email) {
+            if (!isJoin) return; // presence update before joining — ignore
+            email = (user?.email || '').trim().toLowerCase();
+            if (adminAuth) {
+              if (!msg.token) {
+                ws.close(4401, 'Authentication required');
+                return;
+              }
+              try {
+                const decoded = await adminAuth.verifyIdToken(msg.token);
+                email = (decoded.email || decoded.uid || '').trim().toLowerCase();
+              } catch {
+                ws.close(4401, 'Invalid or expired session');
+                return;
+              }
+            }
+            if (!email) {
+              ws.close(4401, 'Identity required');
+              return;
+            }
+          }
+
+          const effectiveRole = await resolveAuthoritativeRole(projectId, email, user?.role);
+          if (effectiveRole === null) {
+            if (isJoin) {
+              ws.close(4403, 'Not a member of this project');
+            }
+            return;
+          }
+
+          if (!projectRooms.has(projectId)) {
+            projectRooms.set(projectId, new Map());
+          }
+          const room = projectRooms.get(projectId);
+          const userColor = getColorForEmail(email);
           const presenceData = {
             email,
-            displayName: user.displayName || email.split('@')[0],
-            username: user.username || `@${email.split('@')[0]}`,
-            avatarUrl: user.avatarUrl || '',
+            displayName: user?.displayName || email.split('@')[0],
+            username: user?.username || `@${email.split('@')[0]}`,
+            avatarUrl: user?.avatarUrl || '',
             role: effectiveRole,
             color: userColor,
             activeFilePath: activeFilePath || '',
@@ -359,7 +402,14 @@ export const createCollaborationWebSocket = () => {
             activeCollaborators: activeList,
             collaborators: activeList
           });
-        } else if (type === 'FILE_MODIFIED') {
+          return;
+        }
+
+        // Non-presence messages require an established (joined) identity
+        if (!email) return;
+        const userColor = getColorForEmail(email);
+
+        if (type === 'FILE_MODIFIED') {
           // Log attribution
           broadcastToRoom(projectId, {
             type: 'PEER_FILE_MODIFIED',
@@ -367,8 +417,8 @@ export const createCollaborationWebSocket = () => {
             filePath: msg.filePath,
             author: {
               email,
-              name: user.displayName || email.split('@')[0],
-              avatar: user.avatarUrl || '',
+              name: user?.displayName || email.split('@')[0],
+              avatar: user?.avatarUrl || '',
               color: userColor
             },
             timestamp: new Date().toISOString()

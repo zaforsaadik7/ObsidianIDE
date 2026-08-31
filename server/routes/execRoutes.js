@@ -1,9 +1,10 @@
 import express from 'express';
-import { spawnSync, execFileSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import os from 'os';
+import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
@@ -36,8 +37,46 @@ function getNodeCommand() {
 const PYTHON_CMD = getPythonCommand();
 const NODE_CMD = getNodeCommand();
 
+// Only safe system vars reach user code — never service credentials, keys, or tokens
+const SANDBOX_ENV_KEYS = [
+  'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'ComSpec',
+  'TMP', 'TEMP', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA',
+  'LANG', 'LC_ALL', 'OS', 'ProgramFiles', 'ProgramFiles(x86)'
+];
+const buildSandboxEnv = () => {
+  const env = {};
+  for (const key of SANDBOX_ENV_KEYS) {
+    if (process.env[key]) env[key] = process.env[key];
+  }
+  return env;
+};
+
+// Async child-process runner (non-blocking) with hard kill on timeout
+const runProcess = (command, args, { input = '', timeoutMs = 15000, cwd } = {}) =>
+  new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let error = null;
+    let timedOut = false;
+    const proc = spawn(command, args, { cwd, env: buildSandboxEnv() });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { proc.kill(); } catch {}
+    }, timeoutMs);
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('error', (err) => { error = err; });
+    proc.on('close', (status) => {
+      clearTimeout(timer);
+      if (timedOut && !error) error = new Error('Execution timed out or was killed.');
+      resolve({ stdout, stderr, status, error });
+    });
+    if (input) proc.stdin.write(input);
+    proc.stdin.end();
+  });
+
 // POST /api/exec: Execute code in real Python/Node runtime with full STDIN support
-router.post('/', async (req, res) => {
+router.post('/', verifyToken, async (req, res) => {
   const { code = '', filePath = 'src/main.py', stdinInput = '', mode = 'run' } = req.body;
   const startTime = Date.now();
   const ext = (filePath.split('.').pop() || 'py').toLowerCase();
@@ -59,10 +98,7 @@ router.post('/', async (req, res) => {
     if (mode === 'build') {
       // ---- BUILD MODE: syntax check only, no execution ----
       if (ext === 'py') {
-        const r = spawnSync(PYTHON_CMD, ['-m', 'py_compile', tempFilePath], {
-          timeout: 10000,
-          encoding: 'utf-8'
-        });
+        const r = await runProcess(PYTHON_CMD, ['-m', 'py_compile', tempFilePath], { timeoutMs: 10000 });
         exitCode = r.status ?? (r.error ? 1 : 0);
         stderr = r.stderr || '';
         if (exitCode === 0 && !stderr.trim()) {
@@ -71,10 +107,7 @@ router.post('/', async (req, res) => {
           stdout = '';
         }
       } else if (ext === 'js') {
-        const r = spawnSync(NODE_CMD, ['--check', tempFilePath], {
-          timeout: 10000,
-          encoding: 'utf-8'
-        });
+        const r = await runProcess(NODE_CMD, ['--check', tempFilePath], { timeoutMs: 10000 });
         exitCode = r.status ?? (r.error ? 1 : 0);
         stderr = r.stderr || '';
         stdout = exitCode === 0 ? '✓ BUILD SUCCESSFUL: 0 errors, 0 warnings.' : '';
@@ -108,12 +141,10 @@ router.post('/', async (req, res) => {
         ? stdinLines.map(l => l.trim()).join('\n') + '\n'
         : '';
 
-      const proc = spawnSync(command, args, {
+      const proc = await runProcess(command, args, {
         input: inputBuffer,
-        timeout: 15000,
-        encoding: 'utf-8',
-        cwd: TEMP_DIR,
-        env: { ...process.env }
+        timeoutMs: 15000,
+        cwd: TEMP_DIR
       });
 
       // Normalize line endings (Windows uses \r\n)

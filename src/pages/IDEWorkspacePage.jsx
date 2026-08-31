@@ -704,14 +704,26 @@ export const IDEWorkspacePage = () => {
       };
 
       ws.onerror = () => { };
+
+      ws.onclose = (event) => {
+        if (event.code === 4401 || event.code === 4403) {
+          collaborationWsRef.current = null;
+          showNotificationToast(event.code === 4401
+            ? '🔒 Collaboration session expired. Please sign in again to sync with your team.'
+            : '🚫 You do not have access to this project workspace.', 6000);
+        }
+      };
     } catch (e) { }
 
     // 2. HTTP Polling Fallback for Presence & Attribution Heartbeat
     const syncPresenceAndAttribution = async () => {
       try {
+        const heartbeatToken = await getFirebaseIdToken();
+        const authHeaders = heartbeatToken ? { 'Authorization': `Bearer ${heartbeatToken}` } : {};
+
         const presRes = await fetch(`/api/collaboration/${projectId}/presence`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify({
             ...userPayload,
             activeFilePath: activeFileRef.current?.filePath || activeFile?.filePath || '',
@@ -729,10 +741,12 @@ export const IDEWorkspacePage = () => {
         }
 
         // Fetch attribution changelog
-        const attrRes = await fetch(`/api/collaboration/${projectId}/attribution`);
-        const attrData = await attrRes.json();
-        if (attrData?.attributions) {
-          setFileAttributions(attrData.attributions);
+        const attrRes = await fetch(`/api/collaboration/${projectId}/attribution`, { headers: authHeaders });
+        if (attrRes.ok) {
+          const attrData = await attrRes.json();
+          if (attrData?.attributions) {
+            setFileAttributions(attrData.attributions);
+          }
         }
       } catch (e) { }
     };

@@ -19,7 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { v4 as uuidv4 } from 'uuid';
-import admin from 'firebase-admin';
+import { adminAuth } from '../config/firebaseAdmin.js';
 
 // ─── SANDBOX ROOT ───────────────────────────────────────────────────────────
 const SANDBOX_ROOT = path.join(os.tmpdir(), 'obsidian_terminal');
@@ -144,9 +144,14 @@ function populateWorkspaceFilesToSandbox(sandboxDir, workspaceFiles = []) {
   if (!Array.isArray(workspaceFiles) || workspaceFiles.length === 0) return;
   for (const f of workspaceFiles) {
     try {
-      const rel = (f.filePath || f.fileName || '').replace(/^\/+/, '');
+      const rel = String(f.filePath || f.fileName || '').replace(/^\/+/, '').replace(/\\/g, '/');
       if (!rel || rel.startsWith('node_modules') || rel.startsWith('.git')) continue;
-      const destPath = path.join(sandboxDir, rel);
+      // Traversal hardening: reject absolute paths, empty/'.'/'..' segments, drive/ADS markers
+      if (path.isAbsolute(rel)) continue;
+      const segments = rel.split('/');
+      if (segments.some((s) => !s || s === '.' || s === '..' || s.includes(':'))) continue;
+      const destPath = path.resolve(sandboxDir, ...segments);
+      if (!destPath.startsWith(sandboxDir + path.sep)) continue;
       const destDir = path.dirname(destPath);
       if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir, { recursive: true });
@@ -263,12 +268,19 @@ export function createTerminalWebSocket() {
 
     // ── 1. Authenticate ──────────────────────────────────────────────────────
     let authenticatedEmail = 'developer';
-    try {
-      if (token && admin.apps && admin.apps.length > 0) {
-        const decoded = await admin.auth().verifyIdToken(token);
+    if (adminAuth) {
+      try {
+        if (!token) {
+          ws.close(4401, 'Authentication required');
+          return;
+        }
+        const decoded = await adminAuth.verifyIdToken(token);
         authenticatedEmail = decoded.email || decoded.uid;
+      } catch {
+        ws.close(4401, 'Invalid or expired session');
+        return;
       }
-    } catch {}
+    }
 
     // ── 2. Create Isolated Sandbox ───────────────────────────────────────────
     const sessionId = uuidv4().slice(0, 8);

@@ -2,114 +2,32 @@ import express from 'express';
 import { adminDb } from '../config/firebaseAdmin.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
 import { v4 as uuidv4 } from 'uuid';
+import { requireProjectRole } from '../utils/projectMembership.js';
 
 const router = express.Router();
 
-// Multi-file template seeder for rich initial project trees
-const seedMultiFileTemplates = (languageEnv, projectId, userEmail) => {
-  const timestamp = new Date().toISOString();
-  let files = [];
-
-  if (languageEnv && languageEnv.includes('RUST')) {
-    files = [
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'src/main.rs',
-        content: `// ObsidianIDE Rust Workspace Entry\nuse std::io;\n\nfn main() {\n    println!("Initializing Neural Interface...");\n    let mut buffer = String::new();\n    // Awaiting telemetry stream...\n}`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      },
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'src/router.rs',
-        content: `// Message Routing Broker Module\npub struct Router {\n    pub route_id: String,\n}\n\nimpl Router {\n    pub fn new(id: &str) -> Self {\n        Self { route_id: id.to_string() }\n    }\n}`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      },
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'Cargo.toml',
-        content: `[package]\nname = "quantum_router"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\ntokio = { version = "1.0", features = ["full"] }\nserde = "1.0"`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      },
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'README.md',
-        content: `# Quantum Router\nHigh-throughput message routing broker leveraging Firestore flat structural collections.`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      }
-    ];
-  } else if (languageEnv && languageEnv.includes('PYTHON')) {
-    files = [
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'neural_core.py',
-        content: `# Neural Core Engine\nimport sys\nimport time\n\ndef main():\n    print("Starting PyTorch Neural Engine...")\n\nif __name__ == "__main__":\n    main()`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      },
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'requirements.txt',
-        content: `torch>=2.0.0\ntransformers>=4.30.0\nnumpy>=1.24.0`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      },
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'README.md',
-        content: `# Neural Engine\nAutomated task orchestration for distributed GPU clusters.`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      }
-    ];
-  } else {
-    // Default HTML/JS/CSS Web Template for instant Live Sandbox Preview
-    files = [
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'index.html',
-        content: `<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { background: #0A0A0B; color: #00dce5; font-family: monospace; text-align: center; padding-top: 50px; }\n    .glow { text-shadow: 0 0 10px #00f5ff; }\n  </style>\n</head>\n<body>\n  <h1 class="glow">Obsidian Live Sandbox</h1>\n  <p>Status: Neural Stream Synced</p>\n  <script>\n    console.log("Live Sandbox Active");\n  </script>\n</body>\n</html>`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      },
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'src/app.js',
-        content: `// Client-Side App Logic\nconsole.log("Obsidian App Core Initialized");`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      },
-      {
-        fileId: uuidv4(),
-        projectId,
-        filePath: 'README.md',
-        content: `# Web Application\nClient-side compiled web app instance.`,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      }
-    ];
+const requireStorage = (res) => {
+  if (!adminDb) {
+    res.status(503).json({ error: 'File storage backend is unavailable.' });
+    return false;
   }
+  return true;
+};
 
-  return files;
+// Resolves the projectId stored on a flat file document (or via its path convention).
+const getFileProjectId = async (fileId) => {
+  const snap = await adminDb.collection('files').doc(fileId).get();
+  if (!snap.exists) return null;
+  return { data: snap.data() || {}, projectId: (snap.data() || {}).projectId || '' };
 };
 
 // GET /api/files/:projectId: Fetch flat array of files for a project
 router.get('/:projectId', verifyToken, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { userEmail = req.user?.email || 'admin@bubt.edu.bd' } = req.query;
+
+    const membership = await requireProjectRole(req, res, projectId, 'VIEWER');
+    if (!membership) return;
 
     let filesList = [];
 
@@ -132,10 +50,6 @@ router.get('/:projectId', verifyToken, async (req, res) => {
       }
     }
 
-    if (filesList.length === 0) {
-      filesList = seedMultiFileTemplates('PYTHON_3.11', projectId, userEmail);
-    }
-
     res.json({
       status: 'SUCCESS',
       count: filesList.length,
@@ -151,21 +65,27 @@ router.get('/:projectId', verifyToken, async (req, res) => {
 router.put('/:fileId', verifyToken, async (req, res) => {
   try {
     const { fileId } = req.params;
-    const { content, userEmail = req.user?.email || 'admin@bubt.edu.bd' } = req.body;
+    const { content } = req.body;
 
     if (content === undefined) {
       return res.status(400).json({ error: 'File content payload is required.' });
     }
+    if (!requireStorage(res)) return;
+
+    const fileDoc = await getFileProjectId(fileId);
+    if (!fileDoc) {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+
+    const membership = await requireProjectRole(req, res, fileDoc.projectId, 'EDITOR');
+    if (!membership) return;
 
     const timestamp = new Date().toISOString();
-
-    if (adminDb) {
-      await adminDb.collection('files').doc(fileId).update({
-        content,
-        lastModifiedBy: userEmail,
-        updatedAt: timestamp
-      });
-    }
+    await adminDb.collection('files').doc(fileId).update({
+      content,
+      lastModifiedBy: req.user?.email || '',
+      updatedAt: timestamp
+    });
 
     res.json({
       status: 'SUCCESS',
@@ -181,11 +101,15 @@ router.put('/:fileId', verifyToken, async (req, res) => {
 // POST /api/files: Create new flat file record
 router.post('/', verifyToken, async (req, res) => {
   try {
-    const { projectId, filePath, content = '', userEmail = req.user?.email || 'admin@bubt.edu.bd' } = req.body;
+    const { projectId, filePath, content = '' } = req.body;
 
     if (!projectId || !filePath) {
       return res.status(400).json({ error: 'projectId and filePath are required fields.' });
     }
+
+    const membership = await requireProjectRole(req, res, projectId, 'EDITOR');
+    if (!membership) return;
+    if (!requireStorage(res)) return;
 
     const fileId = uuidv4();
     const timestamp = new Date().toISOString();
@@ -195,13 +119,11 @@ router.post('/', verifyToken, async (req, res) => {
       projectId,
       filePath: filePath.trim(),
       content,
-      lastModifiedBy: userEmail,
+      lastModifiedBy: req.user?.email || '',
       updatedAt: timestamp
     };
 
-    if (adminDb) {
-      await adminDb.collection('files').doc(fileId).set(newFile);
-    }
+    await adminDb.collection('files').doc(fileId).set(newFile);
 
     res.status(201).json({
       status: 'SUCCESS',
@@ -218,9 +140,17 @@ router.post('/', verifyToken, async (req, res) => {
 router.delete('/:fileId', verifyToken, async (req, res) => {
   try {
     const { fileId } = req.params;
-    if (adminDb) {
-      await adminDb.collection('files').doc(fileId).delete();
+    if (!requireStorage(res)) return;
+
+    const fileDoc = await getFileProjectId(fileId);
+    if (!fileDoc) {
+      return res.status(404).json({ error: 'File not found.' });
     }
+
+    const membership = await requireProjectRole(req, res, fileDoc.projectId, 'EDITOR');
+    if (!membership) return;
+
+    await adminDb.collection('files').doc(fileId).delete();
 
     res.json({
       status: 'SUCCESS',

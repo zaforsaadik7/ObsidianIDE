@@ -177,15 +177,26 @@ router.get('/profile', verifyTokenOptional, async (req, res) => {
 });
 
 // GET /api/users/all: List all registered user account documents in Firestore
-router.get('/all', async (req, res) => {
+router.get('/all', verifyToken, async (req, res) => {
   try {
     const usersList = [];
     if (adminDb) {
       const snapshot = await adminDb.collection('users').get();
       snapshot.forEach(docSnap => {
+        const data = docSnap.data() || {};
+        // Never expose third-party tokens or personal storage credentials.
+        if (data.info && typeof data.info === 'object') {
+          const info = { ...data.info };
+          if (info.github && typeof info.github === 'object') {
+            info.github = { ...info.github };
+            delete info.github.accessToken;
+          }
+          delete info.personalFirebaseConfig;
+          data.info = info;
+        }
         usersList.push({
           docId: docSnap.id,
-          ...docSnap.data()
+          ...data
         });
       });
     }
@@ -209,7 +220,10 @@ router.post('/register', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'You can only register your own authenticated email' });
     }
 
-    const targetEmail = (email || req.user?.email || 'user@example.com').trim();
+    const targetEmail = (req.user?.email || email || '').trim();
+    if (!targetEmail) {
+      return res.status(400).json({ error: 'Email is required.' });
+    }
     const cleanDocId = getUserDocIdFromEmail(targetEmail);
     const storedUsername = username || cleanDocId;
 
@@ -290,7 +304,10 @@ router.post('/register', verifyToken, async (req, res) => {
 router.post('/provision-firebase-database', verifyToken, async (req, res) => {
   try {
     const { userEmail, firebaseProjectId = 'obsidian-workspace', databaseName = 'ObsidianIDE' } = req.body;
-    const targetEmail = (req.user?.email || userEmail || 'user@example.com').trim().toLowerCase();
+    const targetEmail = (req.user?.email || userEmail || '').trim().toLowerCase();
+    if (!targetEmail) {
+      return res.status(400).json({ error: 'Email is required.' });
+    }
     const targetUsername = targetEmail.split('@')[0];
 
     let existingData = inMemoryUserStore.get(targetUsername) || inMemoryUserStore.get(targetEmail) || {};
@@ -360,6 +377,9 @@ router.post('/provision-firebase-database', verifyToken, async (req, res) => {
 
 // POST /api/users/clean-database: Complete database purge across all collections
 router.post('/clean-database', verifyToken, async (req, res) => {
+  if (process.env.ENABLE_ADMIN_TOOLS !== 'true') {
+    return res.status(403).json({ error: 'Administrative tools are disabled.' });
+  }
   try {
     const collectionsToClean = [
       'files',
@@ -405,8 +425,12 @@ const getUserDocIdFromEmail = (email) =>
 // PUT /api/users/profile: Update user profile fields inside Firestore users/{docId}
 router.put('/profile', verifyToken, async (req, res) => {
   try {
-    const { email, displayName, designation, avatarUrl, username } = req.body;
-    const targetEmail = (email || req.user?.email || 'zafor@bubt.edu.bd').trim().toLowerCase();
+    const { displayName, designation, avatarUrl, username } = req.body;
+    // Profile updates apply only to the authenticated caller's own document.
+    const targetEmail = (req.user?.email || '').trim().toLowerCase();
+    if (!targetEmail) {
+      return res.status(401).json({ error: 'Authentication required. Please sign in again.' });
+    }
     const targetUsername = getUserDocIdFromEmail(targetEmail);
 
     let existingData = inMemoryUserStore.get(targetUsername) || inMemoryUserStore.get(targetEmail) || {};
@@ -477,7 +501,10 @@ router.put('/profile', verifyToken, async (req, res) => {
 });
 
 // POST /api/users/reset-store: Wipe in-memory user store
-router.post('/reset-store', (req, res) => {
+router.post('/reset-store', verifyToken, (req, res) => {
+  if (process.env.ENABLE_ADMIN_TOOLS !== 'true') {
+    return res.status(403).json({ error: 'Administrative tools are disabled.' });
+  }
   inMemoryUserStore.clear();
   res.json({ status: 'SUCCESS', message: 'In-memory user store cleared.' });
 });

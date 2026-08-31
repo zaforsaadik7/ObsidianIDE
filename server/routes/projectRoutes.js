@@ -1,10 +1,11 @@
 import express from 'express';
 import { adminDb } from '../config/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
-import { verifyToken } from '../middleware/authMiddleware.js';
+import { verifyToken, verifyTokenOptional } from '../middleware/authMiddleware.js';
 import { v4 as uuidv4 } from 'uuid';
 import { sendProjectInvitationEmail } from '../utils/emailService.js';
 import { syncToOwnerPersonalFirestore } from '../utils/personalDbSync.js';
+import { getProjectMembership, requireProjectRole } from '../utils/projectMembership.js';
 
 const router = express.Router();
 
@@ -61,7 +62,28 @@ router.post('/', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Title and ownerEmail are required fields.' });
     }
 
+    // The authenticated caller may only create projects under their own account.
+    const callerEmail = (req.user?.email || '').trim().toLowerCase();
+    if ((ownerEmail || '').trim().toLowerCase() !== callerEmail) {
+      return res.status(403).json({ error: 'You can only create projects under your own account.' });
+    }
+
     const projectId = req.body.projectId || uuidv4();
+
+    // A client-chosen ID must never overwrite an existing project document.
+    if (req.body.projectId) {
+      let exists = inMemoryProjectStore.has(projectId);
+      if (!exists && adminDb) {
+        try {
+          const snap = await adminDb.collection('projects').doc(projectId).get();
+          exists = snap.exists;
+        } catch (e) {}
+      }
+      if (exists) {
+        return res.status(409).json({ error: 'A project with this ID already exists.' });
+      }
+    }
+
     const timestamp = new Date().toISOString();
 
     const cleanOwnerEmail = (ownerEmail || req.user?.email || '').trim().toLowerCase();
@@ -196,7 +218,8 @@ router.post('/', verifyToken, async (req, res) => {
 // GET /api/projects: List projects accessible by user email
 router.get('/', verifyToken, async (req, res) => {
   try {
-    const { email } = req.query;
+    // Identity comes from the verified token only; the ?email hint is ignored.
+    const email = req.user?.email || req.query.email || '';
 
     if (!email) {
       return res.status(400).json({ error: 'User email query parameter is required.' });
@@ -274,10 +297,10 @@ router.get('/', verifyToken, async (req, res) => {
 });
 
 // DELETE /api/projects/:projectId: Permanently delete project (for Owner) or unlink (for Collaborator)
-router.delete('/:projectId', async (req, res) => {
+router.delete('/:projectId', verifyToken, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const userEmail = (req.query.userEmail || req.user?.email || '').trim().toLowerCase();
+    const userEmail = (req.user?.email || '').trim().toLowerCase();
 
     if (!projectId) {
       return res.status(400).json({ error: 'Project ID parameter is required.' });
@@ -298,10 +321,29 @@ router.delete('/:projectId', async (req, res) => {
     const ownerEmail = (projectData?.ownerEmail || '').trim().toLowerCase();
     isOwner = Boolean(ownerEmail && userEmail && ownerEmail === userEmail);
 
+    const collabs = projectData?.collaborators || {};
+    const isMember = isOwner || Object.keys(collabs).some(k => k.trim().toLowerCase() === userEmail);
+
+    if (projectData && !isMember) {
+      return res.status(403).json({ error: 'You do not have access to this project.' });
+    }
+
     if (isOwner) {
       // 1. Permanently delete canonical project document from Firestore
       if (adminDb) {
         try {
+          // Clear the project reference from every collaborator's user document
+          for (const email of Object.keys(collabs)) {
+            const userDocId = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
+            try {
+              await adminDb.collection('users').doc(userDocId).set({
+                projects: {
+                  [projectId]: FieldValue.delete()
+                }
+              }, { merge: true });
+            } catch (e) {}
+          }
+
           await adminDb.collection('projects').doc(projectId).delete();
           
           // Delete files subcollection
@@ -453,17 +495,17 @@ const pruneStaleFileDocs = async (projRef, projectId, activeFiles = []) => {
 };
 
 // POST /api/projects/update-files: Persist working_files or master_project_files
-router.post('/update-files', async (req, res) => {
+router.post('/update-files', verifyToken, async (req, res) => {
   try {
     const {
       projectId,
       working_files,
       master_project_files,
       project_files,
-      userEmail,
-      isOwner,
-      ownerEmail,
-      collaborators,
+      userEmail: bodyUserEmail,
+      isOwner: claimedIsOwner,
+      ownerEmail: bodyOwnerEmail,
+      collaborators: bodyCollaborators,
       title,
       pendingFork
     } = req.body;
@@ -471,6 +513,15 @@ router.post('/update-files', async (req, res) => {
     if (!projectId) {
       return res.status(400).json({ error: 'Project ID is required.' });
     }
+
+    const membership = await requireProjectRole(req, res, projectId, 'EDITOR');
+    if (!membership) return;
+
+    // Identity and owner status come from the verified session, not client claims.
+    const userEmail = (req.user?.email || bodyUserEmail || '').trim();
+    const isOwner = membership.devFallback ? Boolean(claimedIsOwner) : membership.role === 'OWNER';
+    const ownerEmail = membership.project?.ownerEmail || bodyOwnerEmail;
+    const collaborators = membership.project?.collaborators || bodyCollaborators;
 
     const filesToPersist = dedupeFilesByPath((working_files && working_files.length > 0) ? working_files : (project_files || []));
     const timestamp = new Date().toISOString();
@@ -572,12 +623,16 @@ router.post('/update-files', async (req, res) => {
 });
 
 // POST /api/projects/sync-master: Save master repository baseline directly
-router.post('/sync-master', async (req, res) => {
+router.post('/sync-master', verifyToken, async (req, res) => {
   try {
-    const { projectId, working_files, ownerEmail } = req.body;
+    const { projectId, working_files, ownerEmail: bodyOwnerEmail } = req.body;
     if (!projectId) {
       return res.status(400).json({ error: 'Project ID is required.' });
     }
+
+    const membership = await requireProjectRole(req, res, projectId, 'OWNER');
+    if (!membership) return;
+    const ownerEmail = req.user?.email || bodyOwnerEmail;
 
     const timestamp = new Date().toISOString();
     const files = dedupeFilesByPath(working_files || []);
@@ -702,7 +757,7 @@ router.post('/save-and-sync', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'projectId is required' });
     }
     const pid = projectId;
-    const author = userEmail || req.user?.email || 'developer@obsidian.io';
+    const author = req.user?.email || userEmail || 'developer@obsidian.io';
     const authorName = userName || author.split('@')[0];
 
     const patchObj = {
@@ -773,6 +828,10 @@ router.post('/resolve-patch', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'projectId is required' });
     }
     const pid = projectId;
+
+    const membership = await requireProjectRole(req, res, pid, 'OWNER');
+    if (!membership) return;
+
     const isApprove = action === 'APPROVE';
 
     let updatedFiles = [];
@@ -892,15 +951,25 @@ router.post('/resolve-patch', verifyToken, async (req, res) => {
 router.post('/:id/invite', verifyToken, async (req, res) => {
   try {
     const { id: projectId } = req.params;
-    const { email, role = 'EDITOR', projectTitle: reqTitle, ownerEmail: reqOwner } = req.body;
+    const { email, role = 'EDITOR', projectTitle: reqTitle } = req.body;
 
     if (!email) {
       return res.status(400).json({ error: 'Collaborator email is required.' });
     }
 
-    let updatedCollaborators = { [email]: role.toUpperCase() };
+    // Only the project owner may issue invitations.
+    const membership = await requireProjectRole(req, res, projectId, 'OWNER');
+    if (!membership) return;
+
+    // Invitations can never grant OWNER or target the owner themselves.
+    const safeRole = String(role || 'EDITOR').toUpperCase() === 'VIEWER' ? 'VIEWER' : 'EDITOR';
+    const ownerEmail = (req.user?.email || '').trim().toLowerCase();
+    if ((email || '').trim().toLowerCase() === ownerEmail) {
+      return res.status(400).json({ error: 'The project owner cannot be invited as a collaborator.' });
+    }
+
+    let updatedCollaborators = { [email]: safeRole };
     let projectTitle = reqTitle || projectId;
-    let ownerEmail = reqOwner || req.user?.email || 'owner@obsidianide.com';
 
     if (adminDb) {
       try {
@@ -910,10 +979,9 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
         if (projectSnap.exists) {
           const projectData = projectSnap.data();
           projectTitle = reqTitle || projectData.title || projectTitle;
-          ownerEmail = reqOwner || projectData.ownerEmail || ownerEmail;
           updatedCollaborators = {
             ...projectData.collaborators,
-            [email]: role.toUpperCase()
+            [email]: safeRole
           };
 
           await projectDocRef.update({
@@ -931,7 +999,7 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
                   projectId,
                   title: projectTitle,
                   languageEnv: projectData.languageEnv || 'PYTHON_3.11',
-                  userRole: role.toUpperCase(),
+                  userRole: safeRole,
                   ownerEmail: projectData.ownerEmail || ownerEmail,
                   updatedAt: new Date().toISOString()
                 }
@@ -949,13 +1017,12 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
     if (inMemoryProjectStore.has(projectId)) {
       const p = inMemoryProjectStore.get(projectId);
       if (!p.collaborators) p.collaborators = {};
-      p.collaborators[email] = role.toUpperCase();
+      p.collaborators[email] = safeRole;
       projectTitle = reqTitle || p.title || projectTitle;
-      ownerEmail = reqOwner || p.ownerEmail || ownerEmail;
     }
 
     const domain = resolveAppDomain(req);
-    const fullInviteUrl = `${domain}/invite/${projectId}?role=${role.toUpperCase()}&email=${encodeURIComponent(email)}&title=${encodeURIComponent(projectTitle)}&owner=${encodeURIComponent(ownerEmail)}`;
+    const fullInviteUrl = `${domain}/invite/${projectId}?role=${safeRole}&email=${encodeURIComponent(email)}&title=${encodeURIComponent(projectTitle)}&owner=${encodeURIComponent(ownerEmail)}`;
 
     // Anti-spam deliverability email dispatch (Guaranteed to execute)
     let emailResult = null;
@@ -965,7 +1032,7 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
         ownerEmail,
         projectTitle,
         projectId,
-        role: role.toUpperCase(),
+        role: safeRole,
         inviteUrl: fullInviteUrl
       });
       console.log(`✉️ Invite endpoint email result for ${email}:`, emailResult);
@@ -975,7 +1042,7 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
 
     res.json({
       status: 'SUCCESS',
-      message: `Collaborator ${email} added as ${role.toUpperCase()}. Invitation email dispatched.`,
+      message: `Collaborator ${email} added as ${safeRole}. Invitation email dispatched.`,
       emailDispatched: emailResult?.success ?? true,
       inviteUrl: fullInviteUrl,
       collaborators: updatedCollaborators
@@ -991,13 +1058,17 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
 
 
 // POST /api/projects/reject-fork: Project Owner declines collaborator working fork changes and restores Master baseline
-router.post('/reject-fork', async (req, res) => {
+router.post('/reject-fork', verifyToken, async (req, res) => {
   try {
-    const { projectId, ownerEmail, reason = 'Fork changes declined by Project Owner' } = req.body;
+    const { projectId, ownerEmail: bodyOwnerEmail, reason = 'Fork changes declined by Project Owner' } = req.body;
 
     if (!projectId) {
       return res.status(400).json({ error: 'projectId is required' });
     }
+
+    const membership = await requireProjectRole(req, res, projectId, 'OWNER');
+    if (!membership) return;
+    const ownerEmail = req.user?.email || bodyOwnerEmail;
 
     const timestamp = new Date().toISOString();
     let masterFiles = [];
@@ -1089,11 +1160,10 @@ router.post('/reject-fork', async (req, res) => {
 });
 
 // GET /api/projects/:projectId: Retrieve project details, project_files, and pending_patches
-router.get('/:projectId', verifyToken, async (req, res) => {
+router.get('/:projectId', verifyTokenOptional, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { userEmail, isInvite } = req.query;
-    const requestingEmail = (userEmail || req.user?.email || '').trim().toLowerCase();
+    const { isInvite } = req.query;
 
     let projData = null;
 
@@ -1179,10 +1249,20 @@ router.get('/:projectId', verifyToken, async (req, res) => {
           description: projData.description || '',
           ownerEmail: projData.ownerEmail || 'Project Owner',
           languageEnv: projData.languageEnv || 'PYTHON_3.11',
-          collaborators: projData.collaborators || {}
+          rosterEmails: Object.keys(projData.collaborators || {}).map(k => String(k).trim().toLowerCase())
         }
       });
     }
+
+    // Full project data requires a verified identity.
+    if (!req.user?.email) {
+      return res.status(401).json({
+        status: 'UNAUTHORIZED',
+        isAuthorized: false,
+        error: 'Authentication required. Please sign in again.'
+      });
+    }
+    const requestingEmail = req.user.email.trim().toLowerCase();
 
     // Strict Authorization Guard: allow owner by ownerEmail OR by OWNER role in collaborators map
     // The collaborators-map OWNER check handles legacy data where ownerEmail may differ from actual owner
@@ -1228,15 +1308,18 @@ router.get('/:projectId', verifyToken, async (req, res) => {
 });
 
 // POST /api/projects/send-invite-email: Direct trigger for invitation email dispatch
-router.post('/send-invite-email', async (req, res) => {
+router.post('/send-invite-email', verifyToken, async (req, res) => {
   try {
-    const { to, ownerEmail, projectTitle, projectId, role = 'REVIEWER' } = req.body;
+    const { to, projectTitle, projectId, role = 'REVIEWER' } = req.body;
     if (!to || !projectId) {
       return res.status(400).json({ error: 'Missing required invitation payload fields.' });
     }
 
+    const membership = await requireProjectRole(req, res, projectId, 'OWNER');
+    if (!membership) return;
+
     const cleanTitle = projectTitle || projectId;
-    const cleanOwner = ownerEmail || req.user?.email || 'owner@obsidianide.com';
+    const cleanOwner = (req.user?.email || '').trim().toLowerCase();
     const domain = resolveAppDomain(req);
     const inviteUrl = `${domain}/invite/${projectId}?role=${role}&email=${encodeURIComponent(to)}&title=${encodeURIComponent(cleanTitle)}&owner=${encodeURIComponent(cleanOwner)}`;
 
@@ -1261,141 +1344,96 @@ router.post('/send-invite-email', async (req, res) => {
   }
 });
 
-// POST /api/projects/:projectId/invite: Add collaborator to project and dispatch invite email
-router.post('/:projectId/invite', verifyToken, async (req, res) => {
+// POST /api/projects/:projectId/accept-invite: Verified invitee finalizes joining a project.
+// Server-side replacement for client Firestore writes during invite acceptance.
+router.post('/:projectId/accept-invite', verifyToken, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { email, role = 'EDITOR', projectTitle, ownerEmail } = req.body;
+    const userEmail = (req.user?.email || '').trim().toLowerCase();
 
-    if (!email || !projectId) {
-      return res.status(400).json({ error: 'Email and projectId are required.' });
+    if (!userEmail) {
+      return res.status(401).json({ error: 'Authentication required. Please sign in again.' });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanRole = (role || 'EDITOR').toUpperCase();
+    let membership = await getProjectMembership(projectId, userEmail);
+
+    if (membership?.role === 'OWNER') {
+      return res.json({ status: 'SUCCESS', message: 'User is the repository owner.', role: 'OWNER' });
+    }
+
+    // Only callers already placed on the roster by the owner may accept.
+    if (!membership) {
+      if (adminDb) {
+        return res.status(403).json({ error: 'You are not on this project\'s invitation roster.' });
+      }
+      // Local dev without Firestore: roster cannot be verified, accept at the
+      // advertised role (never OWNER).
+      const requestedRole = String(req.body?.role || 'EDITOR').toUpperCase();
+      membership = { project: null, role: requestedRole === 'OWNER' ? 'EDITOR' : requestedRole };
+    }
+
+    const role = membership.role || 'EDITOR';
+    const project = membership.project || {};
     const timestamp = new Date().toISOString();
 
-    // 1. Update In-Memory Store
-    let proj = inMemoryProjectStore.get(projectId);
-    const projOwner = (proj?.ownerEmail || ownerEmail || '').trim().toLowerCase();
-
-    // Protect owner: If cleanEmail is the owner, retain OWNER role
-    if (projOwner && cleanEmail === projOwner) {
-      return res.json({
-        status: 'SUCCESS',
-        message: 'User is the repository owner.',
-        role: 'OWNER'
-      });
-    }
-
-    if (proj) {
+    if (inMemoryProjectStore.has(projectId)) {
+      const proj = inMemoryProjectStore.get(projectId);
       proj.collaborators = proj.collaborators || {};
-      proj.collaborators[cleanEmail] = cleanRole;
+      proj.collaborators[userEmail] = role;
       proj.updatedAt = timestamp;
     }
 
-    // 2. Update Admin Firestore
     if (adminDb) {
       try {
         const projRef = adminDb.collection('projects').doc(projectId);
         await projRef.set({
           collaborators: {
-            [cleanEmail]: cleanRole
+            [userEmail]: role
           },
           updatedAt: timestamp
         }, { merge: true });
 
-        // Add to collaborator user doc
-        const collabDocId = cleanEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        const collabDocId = userEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_');
         await adminDb.collection('users').doc(collabDocId).set({
+          info: {
+            personalStorageConnected: true,
+            personalStorageDatabaseName: 'ObsidianIDE',
+            storageStrategy: 'FIREBASE_PERSONAL'
+          },
           projects: {
             [projectId]: {
               projectId,
-              title: projectTitle || proj?.title || projectId,
-              description: proj?.description || '',
-              languageEnv: proj?.languageEnv || 'PYTHON_3.11',
-              userRole: cleanRole,
-              ownerEmail: ownerEmail || proj?.ownerEmail || req.user?.email || 'owner@obsidianide.com',
+              title: project.title || projectId,
+              description: project.description || '',
+              languageEnv: project.languageEnv || 'PYTHON_3.11',
+              userRole: role,
+              ownerEmail: project.ownerEmail || '',
               updatedAt: timestamp
             }
           }
         }, { merge: true });
       } catch (e) {
-        console.warn('AdminDB invite update notice:', e.message);
-      }
-    }
-
-    // 3. Dispatch Email
-    const cleanTitle = projectTitle || proj?.title || projectId;
-    const cleanOwner = ownerEmail || proj?.ownerEmail || req.user?.email || 'owner@obsidianide.com';
-    const domain = resolveAppDomain(req);
-    const inviteUrl = `${domain}/invite/${projectId}?role=${cleanRole}&email=${encodeURIComponent(cleanEmail)}&title=${encodeURIComponent(cleanTitle)}&owner=${encodeURIComponent(cleanOwner)}`;
-
-    const emailResult = await sendProjectInvitationEmail({
-      to: cleanEmail,
-      ownerEmail: cleanOwner,
-      projectTitle: cleanTitle,
-      projectId,
-      role: cleanRole,
-      inviteUrl
-    });
-
-    res.json({
-      status: 'SUCCESS',
-      message: `Collaborator ${cleanEmail} added and invitation email dispatched.`,
-      collaborator: { email: cleanEmail, role: cleanRole },
-      inviteUrl,
-      emailResult
-    });
-  } catch (error) {
-    console.error('Error inviting collaborator:', error);
-    res.status(500).json({ error: 'Failed to invite collaborator', details: error.message });
-  }
-});
-
-// DELETE /api/projects/:projectId: Delete project from owner & collaborator repositories
-router.delete('/:projectId', verifyToken, async (req, res) => {
-  try {
-    const { projectId } = req.params;
-    const { userEmail } = req.query;
-
-    if (inMemoryProjectStore.has(projectId)) {
-      inMemoryProjectStore.delete(projectId);
-    }
-
-    if (adminDb) {
-      const projRef = adminDb.collection('projects').doc(projectId);
-      const projSnap = await projRef.get();
-      if (projSnap.exists) {
-        const data = projSnap.data();
-        const collabs = Object.keys(data.collaborators || {});
-        for (const email of collabs) {
-          const userDocId = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
-          try {
-            const userRef = adminDb.collection('users').doc(userDocId);
-            await userRef.set({
-              projects: {
-                [projectId]: FieldValue.delete()
-              }
-            }, { merge: true });
-          } catch (e) {}
-        }
-        await projRef.delete();
+        console.warn('AdminDB accept-invite notice:', e.message);
       }
     }
 
     res.json({
       status: 'SUCCESS',
-      message: `Project ${projectId} deleted.`
+      message: `Invitation accepted. You now have ${role} access.`,
+      role,
+      projectId
     });
   } catch (error) {
-    console.error('Error deleting project:', error);
-    res.status(500).json({ error: 'Failed to delete project from user database', details: error.message });
+    console.error('Error accepting invitation:', error);
+    res.status(500).json({ error: 'Failed to accept invitation', details: error.message });
   }
 });
 
 // POST /api/projects/reset-store: Wipe in-memory project store
-router.post('/reset-store', (req, res) => {
+router.post('/reset-store', verifyToken, (req, res) => {
+  if (process.env.ENABLE_ADMIN_TOOLS !== 'true') {
+    return res.status(403).json({ error: 'Administrative tools are disabled.' });
+  }
   inMemoryProjectStore.clear();
   res.json({ status: 'SUCCESS', message: 'In-memory project store cleared.' });
 });

@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { db, getFirebaseIdToken } from '../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 
 export const InvitePortalPage = () => {
   const { inviteId } = useParams();
@@ -71,9 +71,14 @@ export const InvitePortalPage = () => {
 
       const projTitle = pData?.title || paramTitle || inviteId;
       const projOwner = pData?.ownerEmail || paramOwner || 'Project Owner';
-      const userCollabRole = pData?.collaborators && currentUser?.email 
+      const loggedEmailLower = (currentUser?.email || '').trim().toLowerCase();
+      const collabRole = pData?.collaborators && currentUser?.email
         ? (pData.collaborators[currentUser.email.toLowerCase()] || pData.collaborators[currentUser.email])
         : null;
+      const onRoster = Array.isArray(pData?.rosterEmails)
+        ? pData.rosterEmails.some(e => String(e).trim().toLowerCase() === loggedEmailLower)
+        : false;
+      const userCollabRole = collabRole || (onRoster ? 'EDITOR' : null);
       const effectiveRole = userCollabRole || paramRole;
 
       setProjectInfo({
@@ -126,71 +131,37 @@ export const InvitePortalPage = () => {
     const targetPid = projectInfo.projectId || inviteId;
 
     try {
-      const userEmail = currentUser.email.toLowerCase();
-      const cleanDocId = userEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_');
-      const assignedRole = (projectInfo.assignedRole || paramRole || 'EDITOR').toUpperCase();
-
-      // 1. Update project document collaborators roster in Client Firestore
-      const projRef = doc(db, 'projects', targetPid);
-      const projSnap = await getDoc(projRef);
-      const title = projSnap.exists() ? (projSnap.data().title || targetPid) : projectInfo.title;
-      const ownerEmail = projSnap.exists() ? (projSnap.data().ownerEmail || projectInfo.ownerEmail) : projectInfo.ownerEmail;
-
-      if (ownerEmail && userEmail === ownerEmail.toLowerCase()) {
-        // User is owner, retain OWNER role
-        navigate(`/ide/${targetPid}`);
-        return;
-      }
-
-      await setDoc(projRef, {
-        collaborators: {
-          [userEmail]: assignedRole
-        }
-      }, { merge: true });
-
-      // 2. Save project reference into collaborator's user document
-      await setDoc(doc(db, 'users', cleanDocId), {
-        info: {
-          personalStorageConnected: true,
-          personalStorageDatabaseName: 'ObsidianIDE',
-          storageStrategy: 'FIREBASE_PERSONAL'
-        },
-        projects: {
-          [targetPid]: {
-            projectId: targetPid,
-            title,
-            languageEnv: projSnap.exists() ? projSnap.data().languageEnv : 'PYTHON_3.11',
-            userRole: assignedRole,
-            ownerEmail,
-            updatedAt: new Date().toISOString()
-          }
-        }
-      }, { merge: true });
-    } catch (fsErr) {
-      console.warn("Client Firestore accept notice:", fsErr);
-    }
-
-    // 3. Call REST API
-    try {
       const token = await getFirebaseIdToken();
-      await fetch(`/api/projects/${targetPid}/invite`, {
+      const res = await fetch(`/api/projects/${targetPid}/accept-invite`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({
-          email: currentUser.email,
-          role: projectInfo.assignedRole || paramRole || 'EDITOR'
-        })
+        body: JSON.stringify({ role: projectInfo.assignedRole || paramRole || 'EDITOR' })
       });
 
+      if (res.status === 401) {
+        setAccessState('UNAUTHENTICATED');
+        setAuthMessage('Your session has expired. Please sign in again to accept this invitation.');
+        return;
+      }
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        setAccessState('ERROR');
+        setAuthMessage(errData?.error || 'This invitation could not be accepted. Please contact the project owner.');
+        return;
+      }
+
       await refreshProfile();
+      navigate(`/ide/${targetPid}`);
     } catch (err) {
-      console.warn("Invite API handshake notice:", err);
+      console.warn('Invite acceptance notice:', err);
+      setAccessState('ERROR');
+      setAuthMessage('Network error while accepting the invitation. Please try again.');
     } finally {
       setLoading(false);
-      navigate(`/ide/${targetPid}`);
     }
   };
 

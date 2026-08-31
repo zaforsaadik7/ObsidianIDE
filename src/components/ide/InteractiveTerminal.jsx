@@ -43,6 +43,7 @@ export const InteractiveTerminal = ({
   const fitAddonRef = useRef(null);
   const wsRef = useRef(null);
   const outputBufferRef = useRef('');
+  const authBlockedRef = useRef(false);
 
   const [sessionStatus, setSessionStatus] = useState('disconnected'); // 'disconnected' | 'connecting' | 'connected' | 'error'
   const [lastRunTimestamp, setLastRunTimestamp] = useState(null);
@@ -152,6 +153,10 @@ export const InteractiveTerminal = ({
 
   // ── 3. Establish WebSocket Connection ──────────────────────────────────────
   const connectWebSocket = useCallback(async () => {
+    if (authBlockedRef.current) {
+      setSessionStatus('error');
+      return;
+    }
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -183,6 +188,7 @@ export const InteractiveTerminal = ({
       const socket = new WebSocket(targetUrl);
 
       socket.onopen = () => {
+        authBlockedRef.current = false;
         setSessionStatus('connected');
         try {
           fitAddonRef.current?.fit();
@@ -219,8 +225,14 @@ export const InteractiveTerminal = ({
       };
 
       socket.onclose = (event) => {
-        setSessionStatus('disconnected');
         wsRef.current = null;
+        if (event.code === 4401 || event.code === 4403) {
+          authBlockedRef.current = true;
+          setSessionStatus('error');
+          term?.writeln(`\r\n\x1b[1;31m[AUTHENTICATION REJECTED] Your session is ${event.code === 4401 ? 'missing or expired' : 'not authorized for this workspace'}. Please sign in again to use the terminal.\x1b[0m`);
+          return;
+        }
+        setSessionStatus('disconnected');
       };
 
       socket.onerror = () => {
@@ -310,6 +322,7 @@ export const InteractiveTerminal = ({
   }, [onOutput]);
 
   const handleReconnect = () => {
+    authBlockedRef.current = false;
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;

@@ -49,8 +49,23 @@ const apiLimiter = rateLimit({
   }
 });
 
+// CORS: only the app's own origins may call the API cross-origin
+const corsAllowlist = (() => {
+  const origins = new Set([
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173'
+  ]);
+  for (const envKey of ['APP_DOMAIN', 'APP_URL', 'CLIENT_DOMAIN']) {
+    const value = (process.env[envKey] || '').trim().replace(/\/+$/, '');
+    if (value) origins.add(value);
+  }
+  return [...origins];
+})();
+
 // Middleware
-app.use(cors());
+app.use(cors({ origin: corsAllowlist }));
 app.use(express.json({ limit: '60mb' }));
 app.use(express.urlencoded({ limit: '60mb', extended: true }));
 app.use('/api/', apiLimiter);
@@ -158,7 +173,7 @@ const generateFallbackInlineCompletion = (prefix, language, currentLine) => {
 };
 
 // 1. Ghost Text / Copilot Inline Autocompletion Provider
-app.post('/api/ai/inline-suggest', async (req, res) => {
+app.post('/api/ai/inline-suggest', verifyToken, async (req, res) => {
   try {
     const { prefix = '', suffix = '', language = 'javascript', currentLine = '' } = req.body;
 
@@ -226,7 +241,7 @@ CRITICAL RULES:
 });
 
 // 2. Interactive Suggestive Writing Endpoint (Ctrl+I / Inline Prompt)
-app.post('/api/ai/suggestive-write', async (req, res) => {
+app.post('/api/ai/suggestive-write', verifyToken, async (req, res) => {
   try {
     const { instruction, contextCode = '', language = 'javascript' } = req.body;
 

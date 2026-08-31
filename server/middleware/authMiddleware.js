@@ -1,39 +1,31 @@
 import { adminAuth } from '../config/firebaseAdmin.js';
 
+const extractDevEmail = (req) =>
+  req.headers['x-user-email'] || req.body?.userEmail || req.body?.ownerEmail ||
+  req.query?.userEmail || req.query?.email || req.body?.email || '';
+
 export const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  const targetEmail = req.headers['x-user-email'] || req.body?.userEmail || req.body?.ownerEmail || req.query?.userEmail || req.query?.email || req.body?.email || 'dev@bubt.edu.bd';
+  const token = authHeader && authHeader.startsWith('Bearer ')
+    ? authHeader.split('Bearer ')[1]?.trim()
+    : '';
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    req.user = { email: targetEmail, uid: `uid_${targetEmail.split('@')[0]}` };
+  // No service account configured (local dev): derive identity from email hints.
+  if (!adminAuth) {
+    const email = extractDevEmail(req) || 'dev@bubt.edu.bd';
+    req.user = { email, uid: `uid_${email.split('@')[0]}` };
     return next();
   }
 
-  const token = authHeader.split('Bearer ')[1]?.trim();
-
   if (!token || token === 'undefined' || token === 'null' || token.startsWith('dev-')) {
-    req.user = { email: targetEmail, uid: `uid_${targetEmail.split('@')[0]}` };
-    return next();
+    return res.status(401).json({ error: 'Authentication required. Please sign in again.' });
   }
 
   try {
-    if (adminAuth) {
-      try {
-        const decodedToken = await adminAuth.verifyIdToken(token);
-        req.user = decodedToken;
-        return next();
-      } catch (verifyErr) {
-        console.warn('Token verifyIdToken warning (using dev fallback):', verifyErr.message);
-        req.user = { email: targetEmail, uid: `uid_${targetEmail.split('@')[0]}` };
-        return next();
-      }
-    } else {
-      req.user = { email: targetEmail, uid: `uid_${targetEmail.split('@')[0]}` };
-      return next();
-    }
-  } catch (error) {
-    req.user = { email: targetEmail, uid: `uid_${targetEmail.split('@')[0]}` };
+    req.user = await adminAuth.verifyIdToken(token);
     return next();
+  } catch (verifyErr) {
+    return res.status(401).json({ error: 'Invalid or expired session. Please sign in again.' });
   }
 };
 
@@ -49,6 +41,14 @@ export const verifyTokenOptional = async (req, res, next) => {
       } catch {
         req.user = null;
       }
+    }
+  }
+  // No service account (local dev): fall back to email hints when supplied,
+  // but leave genuinely anonymous callers (e.g. invite previews) anonymous.
+  if (!req.user && !adminAuth) {
+    const email = extractDevEmail(req);
+    if (email) {
+      req.user = { email, uid: `uid_${String(email).split('@')[0]}` };
     }
   }
   next();

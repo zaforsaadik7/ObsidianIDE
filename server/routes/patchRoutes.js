@@ -2,48 +2,18 @@ import express from 'express';
 import { adminDb } from '../config/firebaseAdmin.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
 import { v4 as uuidv4 } from 'uuid';
+import { requireProjectRole } from '../utils/projectMembership.js';
 
 const router = express.Router();
-
-// Mock initial patch seeds for demonstration if no pending patches exist
-const seedDemoPatches = (projectId, fileId) => {
-  const timestamp = new Date().toISOString();
-  return [
-    {
-      patchId: 'patch-402',
-      projectId,
-      fileId,
-      authorName: 'Felix Vance',
-      authorEmail: 'felix@bubt.edu.bd',
-      diffPayload: {
-        removed: '"neural-7b-v2"',
-        added: '"neural-8b-ultra-stable"'
-      },
-      comment: 'Updating to the latest stable release for better inference.',
-      status: 'PENDING',
-      submittedAt: timestamp
-    },
-    {
-      patchId: 'patch-399',
-      projectId,
-      fileId,
-      authorName: 'Sarah Chen',
-      authorEmail: 'sarah@bubt.edu.bd',
-      diffPayload: {
-        removed: 'process_stream = torch.tensor(input_data)',
-        added: 'process_stream = torch.as_tensor(input_data).to(device)'
-      },
-      comment: 'Optimizing tensor allocation to hardware accelerator device.',
-      status: 'PENDING',
-      submittedAt: timestamp
-    }
-  ];
-};
 
 // GET /api/patches/:projectId: Fetch pending patches for a project
 router.get('/:projectId', verifyToken, async (req, res) => {
   try {
     const { projectId } = req.params;
+
+    const membership = await requireProjectRole(req, res, projectId, 'VIEWER');
+    if (!membership) return;
+
     let patchesList = [];
 
     if (adminDb) {
@@ -51,10 +21,6 @@ router.get('/:projectId', verifyToken, async (req, res) => {
       querySnapshot.forEach((docSnap) => {
         patchesList.push(docSnap.data());
       });
-    }
-
-    if (patchesList.length === 0) {
-      patchesList = seedDemoPatches(projectId, 'default-file-01');
     }
 
     res.json({
@@ -71,11 +37,14 @@ router.get('/:projectId', verifyToken, async (req, res) => {
 // POST /api/patches: Submit a new reviewer patch
 router.post('/', verifyToken, async (req, res) => {
   try {
-    const { projectId, fileId, authorName, authorEmail, diffPayload, comment } = req.body;
+    const { projectId, fileId, authorName, diffPayload, comment } = req.body;
 
     if (!projectId || !fileId || !diffPayload) {
       return res.status(400).json({ error: 'projectId, fileId, and diffPayload are required.' });
     }
+
+    const membership = await requireProjectRole(req, res, projectId, 'EDITOR');
+    if (!membership) return;
 
     const patchId = uuidv4();
     const timestamp = new Date().toISOString();
@@ -84,8 +53,8 @@ router.post('/', verifyToken, async (req, res) => {
       patchId,
       projectId,
       fileId,
-      authorName: authorName || 'Collaborator Reviewer',
-      authorEmail: authorEmail || req.user?.email || 'reviewer@bubt.edu.bd',
+      authorName: authorName || req.user?.email?.split('@')[0] || 'Collaborator Reviewer',
+      authorEmail: req.user?.email || '',
       diffPayload,
       comment: comment || 'Reviewer code patch submitted.',
       status: 'PENDING',
@@ -107,7 +76,7 @@ router.post('/', verifyToken, async (req, res) => {
   }
 });
 
-// POST /api/patches/:patchId/resolve: Approve or Reject a patch
+// POST /api/patches/:patchId/resolve: Approve or Reject a patch (project Owner only)
 router.post('/:patchId/resolve', verifyToken, async (req, res) => {
   try {
     const { patchId } = req.params;
@@ -120,7 +89,22 @@ router.post('/:patchId/resolve', verifyToken, async (req, res) => {
     const isApproved = action.toUpperCase() === 'APPROVE';
 
     if (adminDb) {
+      const patchSnap = await adminDb.collection('pending_patches').doc(patchId).get();
+      if (!patchSnap.exists) {
+        return res.status(404).json({ error: 'Patch not found.' });
+      }
+      const patchData = patchSnap.data() || {};
+
+      // Only the owner of the patch's project may resolve it.
+      const membership = await requireProjectRole(req, res, patchData.projectId, 'OWNER');
+      if (!membership) return;
+
       if (isApproved && fileId && newContent !== undefined) {
+        // The target file must belong to the same project as the patch.
+        const fileSnap = await adminDb.collection('files').doc(fileId).get();
+        if (!fileSnap.exists || (fileSnap.data() || {}).projectId !== patchData.projectId) {
+          return res.status(400).json({ error: 'Target file does not belong to this project.' });
+        }
         await adminDb.collection('files').doc(fileId).update({
           content: newContent,
           updatedAt: new Date().toISOString()
