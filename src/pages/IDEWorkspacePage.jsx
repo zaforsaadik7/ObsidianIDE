@@ -380,7 +380,9 @@ export const IDEWorkspacePage = () => {
               return wf && wf.content === mf.content;
             }));
 
-          if (isMasterSynchronized) {
+          // A stale "master synced" snapshot must not wipe an editor's staged
+          // fork changes that the server has not yet received.
+          if (isMasterSynchronized && !(hasUnsavedForkChangesRef.current && docOwnerEmail && docOwnerEmail !== userEmail)) {
             hasUnsavedForkChangesRef.current = false;
             isLocalDirtyRef.current = false;
             localMutationTimestampRef.current = 0;
@@ -951,7 +953,7 @@ export const IDEWorkspacePage = () => {
       const isDeletedInWorking = !files.some(wf => wf.filePath === mf.filePath);
       if (isDeletedInWorking) {
         if (!isProjectOwner) {
-          if (lastWorkingAuthor === userEmail) editorCount++;
+          if (lastWorkingAuthor === userEmail || hasUnsavedForkChangesRef.current) editorCount++;
           else ownerChangesExist = true;
         } else {
           if (hasPendingFork) collabCount++;
@@ -1888,6 +1890,9 @@ export const IDEWorkspacePage = () => {
       if (isProjectOwner) {
         setMasterFiles(remainingFiles);
         localMasterRef.current = remainingFiles;
+        hasUnsavedForkChangesRef.current = false;
+      } else {
+        hasUnsavedForkChangesRef.current = true;
       }
       handleCloseTab(fileObj);
       if (activeFile?.fileId === fileObj.fileId || activeFile?.filePath === fileObj.filePath) {
@@ -1926,18 +1931,20 @@ export const IDEWorkspacePage = () => {
             working_files: remainingFiles,
             master_project_files: isProjectOwner ? remainingFiles : masterFiles,
             userEmail,
-            isOwner: isProjectOwner
+            isOwner: isProjectOwner,
+            pendingFork: !isProjectOwner
           })
         });
 
-        if (isProjectOwner && collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+        if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
           collaborationWsRef.current.send(JSON.stringify({
-            type: 'FILES_UPDATED',
+            type: isProjectOwner ? 'FILES_UPDATED' : 'FORK_REQUESTED',
             projectId,
             files: remainingFiles,
-            master_project_files: remainingFiles,
+            master_project_files: isProjectOwner ? remainingFiles : masterFiles,
             working_files: remainingFiles,
-            user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: 'OWNER' }
+            requestedBy: userEmail,
+            user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: isProjectOwner ? 'OWNER' : 'EDITOR' }
           }));
         }
       } catch (fsErr) { }
@@ -2054,6 +2061,9 @@ export const IDEWorkspacePage = () => {
       if (isProjectOwner) {
         setMasterFiles(remaining);
         localMasterRef.current = remaining;
+        hasUnsavedForkChangesRef.current = false;
+      } else {
+        hasUnsavedForkChangesRef.current = true;
       }
 
       if (activeFile && (activeFile.filePath === cleanFolder || activeFile.filePath.startsWith(`${cleanFolder}/`))) {
@@ -2088,17 +2098,18 @@ export const IDEWorkspacePage = () => {
         await fetch('/api/projects/update-files', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ projectId, working_files: remaining, master_project_files: isProjectOwner ? remaining : masterFiles, userEmail, isOwner: isProjectOwner })
+          body: JSON.stringify({ projectId, working_files: remaining, master_project_files: isProjectOwner ? remaining : masterFiles, userEmail, isOwner: isProjectOwner, pendingFork: !isProjectOwner })
         });
 
-        if (isProjectOwner && collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
+        if (collaborationWsRef.current && collaborationWsRef.current.readyState === WebSocket.OPEN) {
           collaborationWsRef.current.send(JSON.stringify({
-            type: 'FILES_UPDATED',
+            type: isProjectOwner ? 'FILES_UPDATED' : 'FORK_REQUESTED',
             projectId,
             files: remaining,
-            master_project_files: remaining,
+            master_project_files: isProjectOwner ? remaining : masterFiles,
             working_files: remaining,
-            user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: 'OWNER' }
+            requestedBy: userEmail,
+            user: { email: userEmail, displayName: currentUser?.displayName || 'Project Owner', role: isProjectOwner ? 'OWNER' : 'EDITOR' }
           }));
         }
       } catch (fsErr) { }
