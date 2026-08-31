@@ -29,8 +29,14 @@ export default defineConfig({
             if (id.includes('@monaco-editor') || id.includes('monaco-editor')) {
               return 'monaco-vendor';
             }
+            if (id.includes('@babel/standalone')) {
+              return 'babel-vendor';
+            }
             if (id.includes('firebase')) {
               return 'firebase-vendor';
+            }
+            if (id.includes('react-router') || id.includes('scheduler') || id.includes('cookie') || id.includes('set-cookie-parser')) {
+              return 'react-vendor';
             }
             if (id.includes('react')) {
               return 'react-vendor';

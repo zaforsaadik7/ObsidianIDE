@@ -174,7 +174,7 @@ export const MonacoEditorCanvas = ({
 
           try {
             setCopilotStatus('Thinking...');
-            const res = await fetch('/api/ai/inline-completion', {
+            const res = await fetch('/api/ai/inline-suggest', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({

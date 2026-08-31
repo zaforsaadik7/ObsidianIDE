@@ -1,5 +1,6 @@
 import express from 'express';
 import { adminDb } from '../config/firebaseAdmin.js';
+import { FieldValue } from 'firebase-admin/firestore';
 import { verifyToken } from '../middleware/authMiddleware.js';
 import { v4 as uuidv4 } from 'uuid';
 import { sendProjectInvitationEmail } from '../utils/emailService.js';
@@ -697,7 +698,10 @@ router.post('/save-and-sync', verifyToken, async (req, res) => {
       importedFiles = []
     } = req.body;
 
-    const pid = projectId || 'quantum-router-01';
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+    const pid = projectId;
     const author = userEmail || req.user?.email || 'developer@obsidian.io';
     const authorName = userName || author.split('@')[0];
 
@@ -765,7 +769,10 @@ router.post('/save-and-sync', verifyToken, async (req, res) => {
 router.post('/resolve-patch', verifyToken, async (req, res) => {
   try {
     const { projectId, patchId, action } = req.body;
-    const pid = projectId || 'quantum-router-01';
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+    const pid = projectId;
     const isApprove = action === 'APPROVE';
 
     let updatedFiles = [];
@@ -1368,7 +1375,7 @@ router.delete('/:projectId', verifyToken, async (req, res) => {
             const userRef = adminDb.collection('users').doc(userDocId);
             await userRef.set({
               projects: {
-                [projectId]: adminDb.FieldValue ? adminDb.FieldValue.delete() : null
+                [projectId]: FieldValue.delete()
               }
             }, { merge: true });
           } catch (e) {}

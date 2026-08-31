@@ -15,6 +15,13 @@ export const ProfilePage = () => {
   const location = useLocation();
   const [githubRefresh, setGithubRefresh] = useState(0);
 
+  const devicePollTimerRef = useRef(null);
+  const devicePollTimeoutRef = useRef(null);
+  useEffect(() => () => {
+    if (devicePollTimerRef.current) clearInterval(devicePollTimerRef.current);
+    if (devicePollTimeoutRef.current) clearTimeout(devicePollTimeoutRef.current);
+  }, []);
+
   const [profile, setProfile] = useState({
     displayName: userProfile?.info?.fullName || currentUser?.displayName || 'Md. Emam Zafor Saadik',
     email: userProfile?.info?.email || currentUser?.email || 'zafor@bubt.edu.bd',
@@ -545,7 +552,8 @@ export const ProfilePage = () => {
         }
       }, pollInterval);
 
-      setTimeout(() => clearInterval(pollTimer), 15 * 60 * 1000);
+      devicePollTimerRef.current = pollTimer;
+      devicePollTimeoutRef.current = setTimeout(() => clearInterval(pollTimer), 15 * 60 * 1000);
     } catch (err) {
       console.error("Device flow error:", err);
       setGhError(err.message || 'Failed to start GitHub login. Please try again.');

@@ -38,7 +38,7 @@ ENV PORT=5000
 
 # Install production dependencies only
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Copy compiled frontend assets from builder stage
 COPY --from=builder /app/dist ./dist

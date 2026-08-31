@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { auth, db } from '../firebase';
@@ -18,6 +18,13 @@ export const ConnectGitHubPage = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [connectedUser, setConnectedUser] = useState(null);
   const [successNotice, setSuccessNotice] = useState('');
+
+  const devicePollTimerRef = useRef(null);
+  const devicePollTimeoutRef = useRef(null);
+  useEffect(() => () => {
+    if (devicePollTimerRef.current) clearInterval(devicePollTimerRef.current);
+    if (devicePollTimeoutRef.current) clearTimeout(devicePollTimeoutRef.current);
+  }, []);
 
   const userAccountEmail = currentUser?.email || 'user@example.com';
   const cleanDocId = (userAccountEmail.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
@@ -133,7 +140,8 @@ export const ConnectGitHubPage = () => {
         }
       }, pollInterval);
 
-      setTimeout(() => clearInterval(pollTimer), 15 * 60 * 1000);
+      devicePollTimerRef.current = pollTimer;
+      devicePollTimeoutRef.current = setTimeout(() => clearInterval(pollTimer), 15 * 60 * 1000);
     } catch (err) {
       console.error("Device flow error:", err);
       setErrorMessage(err.message || 'Failed to start GitHub login. Please try again.');

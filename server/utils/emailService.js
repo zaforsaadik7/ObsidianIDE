@@ -8,16 +8,10 @@ import dns from 'dns';
  * and clean deliverability rules.
  */
 
-// Helper to resolve validated SMTP credentials with automatic fallback
+// Helper to resolve validated SMTP credentials from environment configuration
 const getSmtpCredentials = () => {
-  let user = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
-  let pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').replace(/\s+/g, '');
-
-  // If credentials are empty, missing, or contain placeholder text on cloud, fallback to verified system credentials
-  if (!user || user.includes('your_') || !pass || pass.includes('your_') || pass.length < 8) {
-    user = 'bubt768@gmail.com';
-    pass = 'ovpwysjacgsmgqkq';
-  }
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').replace(/\s+/g, '');
 
   return { user, pass };
 };
@@ -45,7 +39,7 @@ const createTransporterForPort = async (authUser, authPass, port = 465, secure =
     auth: { user: authUser, pass: authPass },
     tls: {
       servername: baseHost,
-      rejectUnauthorized: false
+      rejectUnauthorized: true
     },
     connectionTimeout: 15000,
     greetingTimeout: 10000,
@@ -156,9 +150,9 @@ ${domain}
 
   // Attempt 1: Direct HTTPS Email API via Brevo (Port 443 HTTPS - Free, zero port blocking on Render)
   const brevoKey = (process.env.BREVO_API_KEY || '').trim();
-  if (brevoKey) {
+  const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_FROM || authUser || '').trim();
+  if (brevoKey && senderEmail) {
     try {
-      const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_FROM || authUser || 'bubt768@gmail.com').trim();
       const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: {
@@ -188,9 +182,14 @@ ${domain}
     }
   }
 
+  if (!authUser || !authPass) {
+    console.warn(`⚠️ [EMAIL DISPATCH SKIPPED] SMTP not configured for invitation to ${to} (project "${cleanTitle}")`);
+    return { success: false, reason: 'SMTP not configured', messageId };
+  }
+
   // Prepare SMTP Mail Options
   const mailOptions = {
-    from: `"ObsidianIDE" <${authUser || 'bubt768@gmail.com'}>`,
+    from: `"ObsidianIDE" <${authUser}>`,
     to: to.trim(),
     replyTo: ownerEmail.trim(),
     subject: `Invitation to collaborate on project: ${cleanTitle}`,

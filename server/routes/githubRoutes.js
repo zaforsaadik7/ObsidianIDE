@@ -129,7 +129,6 @@ router.post('/device/poll', async (req, res) => {
     });
 
     const tokenData = await tokenRes.json();
-    console.log('[DEBUG Device Poll]', JSON.stringify(tokenData));
     if (tokenData.access_token) {
       const accessToken = tokenData.access_token;
       // Fetch GitHub User Profile

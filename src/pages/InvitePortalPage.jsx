@@ -138,7 +138,7 @@ export const InvitePortalPage = () => {
 
       if (ownerEmail && userEmail === ownerEmail.toLowerCase()) {
         // User is owner, retain OWNER role
-        navigate(`/workspace/${targetPid}`);
+        navigate(`/ide/${targetPid}`);
         return;
       }
 

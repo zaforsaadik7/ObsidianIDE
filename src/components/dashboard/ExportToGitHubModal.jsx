@@ -98,11 +98,12 @@ export const ExportToGitHubModal = ({
       setPushProgress(75);
       setStatusStepText('Building Git tree blobs and committing files to main branch...');
 
-      const pushData = await pushRes.json();
-
       if (!pushRes.ok) {
-        throw new Error(pushData.message || pushData.error || 'Failed to push files to GitHub');
+        const pushErr = await pushRes.json().catch(() => ({}));
+        throw new Error(pushErr.message || pushErr.error || 'Failed to push files to GitHub');
       }
+
+      const pushData = await pushRes.json();
 
       setPushProgress(100);
       setStatusStepText('Push complete!');

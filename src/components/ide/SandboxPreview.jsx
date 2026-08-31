@@ -1,5 +1,4 @@
-import React, { useMemo } from 'react';
-import * as Babel from '@babel/standalone';
+import React, { useEffect, useMemo, useState } from 'react';
 
 /**
  * SandboxPreview — Live Web & React (.jsx, .tsx, .html, .svg) Preview Engine for ObsidianIDE.
@@ -23,6 +22,16 @@ export const SandboxPreview = ({
   const isReact = lowerPath.endsWith('.jsx') || lowerPath.endsWith('.tsx');
   const isWebFile = isHtml || isSvg || isReact || isPhp;
 
+  const [babelModule, setBabelModule] = useState(null);
+
+  useEffect(() => {
+    if (isReact && !babelModule) {
+      import('@babel/standalone')
+        .then(mod => setBabelModule(mod?.default || mod))
+        .catch(err => console.warn('Failed to load Babel transpiler:', err));
+    }
+  }, [isReact, babelModule]);
+
   const generatedSrcDoc = useMemo(() => {
     if (!content) return '';
 
@@ -43,6 +52,9 @@ export const SandboxPreview = ({
     }
 
     if (isReact) {
+      if (!babelModule) {
+        return `<!DOCTYPE html><html><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#07080B;color:#38BDF8;font-family:monospace;font-size:12px;">Loading React transpiler…</body></html>`;
+      }
       try {
         // 1. Clean import / export statements for browser standalone execution
         let cleaned = content
@@ -59,7 +71,7 @@ export const SandboxPreview = ({
         cleaned += '\nelse if (typeof Main !== "undefined") { window.__MainComponent = Main; }';
 
         // 2. Transpile JSX -> pure React.createElement JS instantly on client
-        const transpiled = Babel.transform(cleaned, {
+        const transpiled = babelModule.transform(cleaned, {
           presets: [['react', { runtime: 'classic' }]],
           filename: 'sandbox.jsx'
         }).code;
@@ -139,7 +151,7 @@ export const SandboxPreview = ({
     }
 
     return '';
-  }, [content, isHtml, isSvg, isReact]);
+  }, [content, isHtml, isSvg, isReact, babelModule]);
 
   return (
     <section 
