@@ -132,7 +132,10 @@ router.post('/', verifyToken, async (req, res) => {
     inMemoryProjectStore.set(projectId, newProject);
 
     // Automatic Anti-Spam Invitation Email Dispatch (Requirement 1 Fix)
+    // Brevo HTTPS API is the primary provider (Render blocks outbound SMTP);
+    // dispatches are awaited with a bound so the client sees the true status.
     const emailDispatchLogs = [];
+    const emailDispatchPromises = [];
     const domain = resolveAppDomain(req);
     Object.entries(normalizedCollabs).forEach(([email, role]) => {
       if (role.toUpperCase() !== 'OWNER' || (email !== ownerEmail && Object.keys(normalizedCollabs).length > 1)) {
@@ -147,17 +150,25 @@ router.post('/', verifyToken, async (req, res) => {
           dispatchedAt: timestamp
         });
 
-        // Anti-spam deliverability email dispatch
-        sendProjectInvitationEmail({
-          to: email,
-          ownerEmail,
-          projectTitle: title,
-          projectId,
-          role,
-          inviteUrl: fullInviteUrl
-        }).then(res => {
-          console.log(`✉️ Project creation email dispatch result for ${email}:`, res);
-        }).catch(err => console.warn("Background email dispatch notice:", err));
+        const boundedDispatch = Promise.race([
+          sendProjectInvitationEmail({
+            to: email,
+            ownerEmail,
+            projectTitle: title,
+            projectId,
+            role,
+            inviteUrl: fullInviteUrl
+          }),
+          new Promise((_, reject) => {
+            const t = setTimeout(() => reject(new Error('email dispatch timed out')), 12000);
+            if (t.unref) t.unref();
+          })
+        ]);
+        emailDispatchPromises.push(
+          boundedDispatch
+            .then(result => ({ to: email, success: Boolean(result && result.success), reason: result?.reason || result?.error }))
+            .catch(err => ({ to: email, success: false, reason: err.message }))
+        );
       }
     });
 
@@ -201,12 +212,21 @@ router.post('/', verifyToken, async (req, res) => {
       console.warn("Notice during Admin Firestore project save:", dbError.message);
     }
 
+    const emailResults = await Promise.all(emailDispatchPromises);
+    const emailFailures = emailResults.filter(r => !r.success);
+    const emailsDispatched = emailResults.length > 0 && emailFailures.length === 0;
+    emailResults.forEach(r => {
+      console.log(`✉️ Project creation email dispatch result for ${r.to}:`, r);
+    });
+
     res.status(201).json({
       status: 'SUCCESS',
       message: 'Project repository initialized successfully. Invitation emails dispatched.',
       project: newProject,
       inviteLinks: emailDispatchLogs.reduce((acc, l) => { acc[l.to] = l.inviteUrl; return acc; }, {}),
-      emailsDispatched: true,
+      emailsDispatched,
+      invitationsQueued: false,
+      emailFailures: emailFailures.map(f => ({ to: f.to, reason: f.reason })),
       emailDispatchLogs
     });
   } catch (error) {

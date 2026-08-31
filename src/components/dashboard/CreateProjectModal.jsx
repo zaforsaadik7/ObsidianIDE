@@ -176,7 +176,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
               <div className="font-bold text-surface-tint flex items-center gap-1.5">
                 <span className="material-symbols-outlined text-sm text-neon-green">mark_email_read</span>
                 {createdData.emailsDispatched
-                  ? '✓ Repository Deployed & Invitations Accepted by SMTP'
+                  ? '✓ Repository Deployed & Invitations Delivered'
                   : createdData.invitationsQueued
                     ? '✓ Repository Deployed — Invitation Delivery Queued'
                     : '⚠ Repository Deployed — Invitation Delivery Needs Attention'}
@@ -186,7 +186,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
                   ? 'Your mail server accepted the invitations for delivery. Use the links below as a fallback if a recipient cannot find the email.'
                   : createdData.invitationsQueued
                     ? 'The project is ready now. Invitation delivery continues in the background; use the links below if a recipient does not receive an email.'
-                    : `No delivery claim was made. Failed recipients: ${createdData.emailFailures.map((failure) => failure.to).join(', ') || 'unknown'}. Use the invite links below while SMTP is corrected.`}
+                    : `No delivery claim was made. Failed recipients: ${createdData.emailFailures.map((failure) => failure.to).join(', ') || 'unknown'}. Use the invite links below while email delivery is corrected.`}
               </div>
             </div>
 
