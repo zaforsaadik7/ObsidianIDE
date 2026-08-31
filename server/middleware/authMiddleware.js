@@ -36,3 +36,20 @@ export const verifyToken = async (req, res, next) => {
     return next();
   }
 };
+
+// Verifies the Bearer token when present but never rejects the request.
+// Handlers inspect req.user and decide what unverified callers may see.
+export const verifyTokenOptional = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split('Bearer ')[1]?.trim();
+    if (token && token !== 'undefined' && token !== 'null' && !token.startsWith('dev-') && adminAuth) {
+      try {
+        req.user = await adminAuth.verifyIdToken(token);
+      } catch {
+        req.user = null;
+      }
+    }
+  }
+  next();
+};

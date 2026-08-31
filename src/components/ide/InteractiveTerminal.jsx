@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
+import { getFirebaseIdToken } from '../../firebase';
 
 /**
  * Helper to strip ANSI color and formatting escape sequences for AI consumption
@@ -160,9 +161,7 @@ export const InteractiveTerminal = ({
 
     let token = '';
     try {
-      if (currentUser?.getIdToken) {
-        token = await currentUser.getIdToken(false);
-      }
+      token = await getFirebaseIdToken();
     } catch {}
 
     const rawBackendUrl = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || '').trim();

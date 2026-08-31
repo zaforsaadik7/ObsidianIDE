@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../../firebase';
+import { db, getFirebaseIdToken } from '../../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export const ExportToGitHubModal = ({
@@ -77,7 +77,7 @@ export const ExportToGitHubModal = ({
       setStatusStepText('Authenticating with GitHub & verifying repository access...');
 
       // 2. Call Backend Push Endpoint
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const pushRes = await fetch('/api/github/push-project', {
         method: 'POST',
         headers: {

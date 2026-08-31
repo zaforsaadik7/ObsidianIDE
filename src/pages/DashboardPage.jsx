@@ -6,7 +6,7 @@ import { CreateProjectModal } from '../components/dashboard/CreateProjectModal';
 import { ProjectDetailsModal } from '../components/dashboard/ProjectDetailsModal';
 import { InviteTeammateModal } from '../components/dashboard/InviteTeammateModal';
 import { ExportToGitHubModal } from '../components/dashboard/ExportToGitHubModal';
-import { db } from '../firebase';
+import { db, getFirebaseIdToken } from '../firebase';
 import { doc, getDoc, collection, getDocs, updateDoc, deleteField } from 'firebase/firestore';
 import { removeProjectFromPersonalFirestore } from '../services/personalFirebaseStorage';
 import { getProjectDisplayTitle } from '../utils/projectTitle';
@@ -135,7 +135,7 @@ export const DashboardPage = () => {
 
     // 4. Fetch from Backend REST API
     try {
-      const token = currentUser.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const res = await fetch(`/api/projects?email=${encodeURIComponent(currentUser.email)}`, {
         headers: {
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
@@ -203,7 +203,7 @@ export const DashboardPage = () => {
       // 2. Ask the server to remove only this user's profile reference. It is
       // intentionally not the shared-project DELETE route.
       try {
-        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const token = await getFirebaseIdToken();
         await fetch(`/api/projects/${pid}/remove-from-profile`, {
           method: 'DELETE',
           headers: {

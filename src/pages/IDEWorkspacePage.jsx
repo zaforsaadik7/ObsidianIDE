@@ -10,7 +10,7 @@ import { BinaryAssetViewer } from '../components/ide/BinaryAssetViewer';
 import { AgenticAIChatSidebar } from '../components/ide/AgenticAIChatSidebar';
 import { InteractiveTerminal } from '../components/ide/InteractiveTerminal';
 import { KeyboardShortcutsModal } from '../components/ide/KeyboardShortcutsModal';
-import { db } from '../firebase';
+import { db, getFirebaseIdToken } from '../firebase';
 import { doc, getDoc, setDoc, deleteDoc, updateDoc, collection, getDocs, onSnapshot } from 'firebase/firestore';
 import { exportSingleFile, exportProjectZip } from '../utils/fileExporter';
 import { ImportAnalysisModal } from '../components/ide/ImportAnalysisModal';
@@ -462,7 +462,7 @@ export const IDEWorkspacePage = () => {
 
       try {
         const userEmail = (currentUser?.email || '').trim().toLowerCase();
-        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const token = await getFirebaseIdToken();
         const res = await fetch(`/api/projects/${projectId}?userEmail=${encodeURIComponent(userEmail)}`, {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         });
@@ -618,11 +618,13 @@ export const IDEWorkspacePage = () => {
       const ws = new WebSocket(wsUrl);
       collaborationWsRef.current = ws;
 
-      ws.onopen = () => {
+      ws.onopen = async () => {
+        const token = await getFirebaseIdToken();
         ws.send(JSON.stringify({
           type: 'JOIN_ROOM',
           projectId,
           user: userPayload,
+          token,
           activeFilePath: activeFileRef.current?.filePath || activeFile?.filePath || '',
           cursor: localCursorRef.current || { lineNumber: 1, column: 1 }
         }));
@@ -1145,7 +1147,7 @@ export const IDEWorkspacePage = () => {
     setIsSaving(true);
     setSaveSyncSuccessMsg('');
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const userEmail = (currentUser?.email || 'developer@obsidian.io').trim().toLowerCase();
       const timestamp = new Date().toISOString();
 
@@ -1259,7 +1261,7 @@ export const IDEWorkspacePage = () => {
     setIsSaving(true);
     setSaveSyncSuccessMsg('');
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const userEmail = (currentUser?.email || 'owner@obsidian.io').trim().toLowerCase();
       const timestamp = new Date().toISOString();
 
@@ -1407,7 +1409,7 @@ export const IDEWorkspacePage = () => {
     setIsSaving(true);
     setSaveSyncSuccessMsg('');
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const userEmail = (currentUser?.email || 'owner@obsidian.io').trim().toLowerCase();
       const timestamp = new Date().toISOString();
 
@@ -1533,7 +1535,7 @@ export const IDEWorkspacePage = () => {
       });
 
       // 2. Register collaborator on backend API
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const res = await fetch(`/api/projects/${projectId}/invite`, {
         method: 'POST',
         headers: {
@@ -1563,7 +1565,7 @@ export const IDEWorkspacePage = () => {
   const handleApplyAIModifications = async (targetFilePath, newContent) => {
     if (!targetFilePath) return;
     const userEmail = currentUser?.email || 'developer@obsidian.io';
-    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const token = await getFirebaseIdToken();
 
     try {
       const clean = (p = '') => p.replace(/^\/+|\/+$/g, '').trim().toLowerCase();
@@ -1693,7 +1695,7 @@ export const IDEWorkspacePage = () => {
     if (!cleanPath) return;
 
     const defaultContent = initialContent !== null ? initialContent : `// Created: ${cleanPath}\n`;
-    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const token = await getFirebaseIdToken();
     const userEmail = currentUser?.email || 'developer@obsidian.io';
 
     try {
@@ -1791,7 +1793,7 @@ export const IDEWorkspacePage = () => {
     const cleanNewPath = newPath.trim().replace(/^\/+/, '');
     if (!cleanNewPath || cleanNewPath === fileObj.filePath) return;
     const userEmail = currentUser?.email || 'developer@obsidian.io';
-    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const token = await getFirebaseIdToken();
 
     try {
       const updatedFiles = files.map(f => f.fileId === fileObj.fileId ? { ...f, filePath: cleanNewPath, fileName: cleanNewPath.split('/').pop() } : f);
@@ -1857,7 +1859,7 @@ export const IDEWorkspacePage = () => {
 
   const handleDeleteFile = async (fileObj) => {
     const userEmail = currentUser?.email || 'developer@obsidian.io';
-    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const token = await getFirebaseIdToken();
 
     try {
       const remainingFiles = files.filter(f => f.fileId !== fileObj.fileId && f.filePath !== fileObj.filePath);
@@ -1938,7 +1940,7 @@ export const IDEWorkspacePage = () => {
     if (!cleanOld || !cleanNew || cleanOld === cleanNew) return;
 
     const userEmail = currentUser?.email || 'developer@obsidian.io';
-    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const token = await getFirebaseIdToken();
 
     try {
       const updatedFiles = files.map(f => {
@@ -2023,7 +2025,7 @@ export const IDEWorkspacePage = () => {
   const handleDeleteFolder = async (folderPath) => {
     const cleanFolder = folderPath.replace(/^\/+|\/+$/g, '');
     const userEmail = currentUser?.email || 'developer@obsidian.io';
-    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const token = await getFirebaseIdToken();
 
     try {
       const remaining = files.filter(f => !(f.filePath === cleanFolder || f.filePath.startsWith(`${cleanFolder}/`)));
@@ -2144,7 +2146,7 @@ export const IDEWorkspacePage = () => {
     const cleanTarget = targetFolderPath.replace(/^\/+|\/+$/g, '');
     const prefix = cleanTarget ? `${cleanTarget}/` : '';
     const userEmail = currentUser?.email || 'developer@obsidian.io';
-    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const token = await getFirebaseIdToken();
 
     if (sourceType === 'file') {
       const fileName = sourcePath.split('/').pop();
@@ -2373,7 +2375,7 @@ export const IDEWorkspacePage = () => {
     isImportingRef.current = true;
 
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const userEmail = (currentUser?.email || 'developer@obsidian.io').trim().toLowerCase();
       const userName = String(currentUser?.displayName || userProfile?.info?.fullName || userEmail.split('@')[0] || 'User');
       const timestamp = new Date().toISOString();
@@ -2599,7 +2601,7 @@ export const IDEWorkspacePage = () => {
     });
 
     const userEmail = (currentUser?.email || userProfile?.info?.email || '').trim().toLowerCase();
-    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const token = await getFirebaseIdToken();
     const pushRes = await fetch('/api/github/push-project', {
       method: 'POST',
       headers: {
@@ -2691,7 +2693,7 @@ export const IDEWorkspacePage = () => {
 
       // Persist to backend and Firestore
       const userEmail = (currentUser?.email || '').trim().toLowerCase();
-      const tokenPromise = currentUser?.getIdToken ? currentUser.getIdToken() : Promise.resolve('');
+      const tokenPromise = getFirebaseIdToken();
 
       tokenPromise.then(authHeader => {
         fetch('/api/projects/update-files', {

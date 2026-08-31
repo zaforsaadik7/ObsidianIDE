@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { db } from '../firebase';
+import { db, getFirebaseIdToken } from '../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export const InvitePortalPage = () => {
@@ -56,7 +56,7 @@ export const InvitePortalPage = () => {
       // 2. Fallback to REST API (with isInvite=true preview bypass)
       if (!pData) {
         try {
-          const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+          const token = await getFirebaseIdToken();
           const res = await fetch(`/api/projects/${inviteId}?userEmail=${encodeURIComponent(currentUser?.email || paramEmail || '')}&isInvite=true`, {
             headers: token ? { 'Authorization': `Bearer ${token}` } : {}
           });
@@ -172,7 +172,7 @@ export const InvitePortalPage = () => {
 
     // 3. Call REST API
     try {
-      const token = currentUser.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       await fetch(`/api/projects/${targetPid}/invite`, {
         method: 'POST',
         headers: { 

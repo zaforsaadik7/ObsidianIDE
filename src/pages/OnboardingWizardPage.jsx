@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, updateDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, getFirebaseIdToken } from '../firebase';
 
 export const OnboardingWizardPage = () => {
   const [provisioning, setProvisioning] = useState(false);
@@ -274,7 +274,7 @@ export const OnboardingWizardPage = () => {
 
       // 4. Notify backend REST endpoint
       try {
-        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const token = await getFirebaseIdToken();
         await fetch('/api/users/provision-firebase-database', {
           method: 'POST',
           headers: { 

@@ -1,5 +1,5 @@
 import { doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, getFirebaseIdToken } from '../firebase';
 
 /**
  * ObsidianIDE Central Website Firebase Outbox Mail Queue
@@ -120,7 +120,7 @@ export const stageAndDispatchInvitationEmail = async ({
 
   // Step 3: Trigger server endpoint fallback
   try {
-    const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+    const token = await getFirebaseIdToken();
     fetch('/api/projects/send-invite-email', {
       method: 'POST',
       headers: {

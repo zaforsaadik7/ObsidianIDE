@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { getFirebaseIdToken } from '../../firebase';
 
 export const AgenticAIChatSidebar = ({ 
   isOpen, 
@@ -576,7 +577,7 @@ RESPONSE GUIDELINES:
           fileType: f.fileType || (f.filePath ? f.filePath.split('.').pop() : 'txt')
         }));
 
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const effectiveApiKey = (userApiKey || localStorage.getItem('obsidian_ai_key') || '').trim().replace(/^["']|["']$/g, '');
       const backendBase = getBackendBaseUrl();
       let aiResponseData = null;

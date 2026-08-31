@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { auth, db } from '../firebase';
+import { auth, db, getFirebaseIdToken } from '../firebase';
 import { GithubAuthProvider, linkWithPopup, signInWithPopup } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 
@@ -56,7 +56,7 @@ export const ConnectGitHubPage = () => {
 
     // 3. Save to Backend REST API
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       await fetch('/api/github/connect-user', {
         method: 'POST',
         headers: {

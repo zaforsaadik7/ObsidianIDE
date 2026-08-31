@@ -1,6 +1,6 @@
 import express from 'express';
 import { adminDb } from '../config/firebaseAdmin.js';
-import { verifyToken } from '../middleware/authMiddleware.js';
+import { verifyToken, verifyTokenOptional } from '../middleware/authMiddleware.js';
 import { inMemoryProjectStore } from './projectRoutes.js';
 
 const router = express.Router();
@@ -42,10 +42,20 @@ router.get('/count', async (req, res) => {
 });
 
 // GET /api/users/profile: Retrieve user info & projects schema
-router.get('/profile', verifyToken, async (req, res) => {
+router.get('/profile', verifyTokenOptional, async (req, res) => {
   try {
     const { email, username } = req.query;
-    const targetEmail = (email || req.user?.email || 'zafor@bubt.edu.bd').trim().toLowerCase();
+    const targetEmail = (email || req.user?.email || '').trim().toLowerCase();
+
+    if (!targetEmail) {
+      return res.status(400).json({ status: 'ERROR', error: 'email query parameter is required', notFound: false });
+    }
+
+    // Verified callers may only inspect their own profile document
+    if (req.user && (req.user.email || '').trim().toLowerCase() !== targetEmail) {
+      return res.status(403).json({ status: 'FORBIDDEN', error: 'You can only fetch your own profile' });
+    }
+
     const cleanDocId = (username || targetEmail.split('@')[0]).toLowerCase().replace(/[^a-z0-9_]/g, '_');
 
     let userData = inMemoryUserStore.get(cleanDocId) || inMemoryUserStore.get(targetEmail) || null;
@@ -136,6 +146,23 @@ router.get('/profile', verifyToken, async (req, res) => {
     info.usagePercentage = usagePercentage;
     info.totalStorageBytes = totalStorageBytes;
 
+    // Unverified callers get only the public subset needed for
+    // login/register existence checks — never tokens or storage config.
+    if (!req.user) {
+      return res.json({
+        status: 'SUCCESS',
+        profile: {
+          info: {
+            fullName: info.fullName,
+            username: info.username,
+            email: info.email,
+            avatarUrl: info.avatarUrl,
+            profession: info.profession
+          }
+        }
+      });
+    }
+
     res.json({
       status: 'SUCCESS',
       profile: {
@@ -176,6 +203,12 @@ router.get('/all', async (req, res) => {
 router.post('/register', verifyToken, async (req, res) => {
   try {
     const { email, displayName, username, profession, avatarUrl } = req.body;
+
+    // Verified callers can only register their own authenticated email
+    if (req.user?.email && email && (email || '').trim().toLowerCase() !== (req.user.email || '').trim().toLowerCase()) {
+      return res.status(403).json({ error: 'You can only register your own authenticated email' });
+    }
+
     const targetEmail = (email || req.user?.email || 'user@example.com').trim();
     const cleanDocId = getUserDocIdFromEmail(targetEmail);
     const storedUsername = username || cleanDocId;

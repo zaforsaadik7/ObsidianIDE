@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getFirebaseIdToken } from '../../firebase';
 
 export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) => {
   const [email, setEmail] = useState('');
@@ -30,7 +31,7 @@ export const InviteTeammateModal = ({ isOpen, onClose, project, currentUser }) =
     setSuccessMsg('');
 
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const res = await fetch(`/api/projects/${project.projectId}/invite`, {
         method: 'POST',
         headers: {

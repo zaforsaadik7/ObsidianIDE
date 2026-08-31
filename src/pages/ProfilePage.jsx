@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { auth, db } from '../firebase';
+import { auth, db, getFirebaseIdToken } from '../firebase';
 import { GithubAuthProvider, getAdditionalUserInfo, linkWithPopup, signInWithPopup } from 'firebase/auth';
 import { deleteField, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { removeProjectFromPersonalFirestore } from '../services/personalFirebaseStorage';
@@ -105,7 +105,7 @@ export const ProfilePage = () => {
             // If we have a token, fetch the full data from backend (includes accessToken in memory)
             if (hasToken) {
               try {
-                const idToken = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+                const idToken = await getFirebaseIdToken();
                 const fullRes = await fetch(
                   `/api/github/connection-status?email=${encodeURIComponent(activeEmail)}&_t=${Date.now()}`,
                   { headers: { ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {}), 'Cache-Control': 'no-cache' } }
@@ -308,7 +308,7 @@ export const ProfilePage = () => {
 
       // 4. Fetch from Backend /api/projects REST API
       try {
-        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const token = await getFirebaseIdToken();
         const pRes = await fetch(`/api/projects?email=${encodeURIComponent(activeEmail)}`, {
           headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) }
         });
@@ -322,7 +322,7 @@ export const ProfilePage = () => {
 
       // 5. Fetch from Backend /api/users/profile REST API
       try {
-        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const token = await getFirebaseIdToken();
         const res = await fetch(`/api/users/profile?email=${encodeURIComponent(activeEmail)}`, {
           headers: {
             ...(token ? { 'Authorization': `Bearer ${token}` } : {})
@@ -375,7 +375,7 @@ export const ProfilePage = () => {
 
       // Check GitHub Connection Status — cache-busted to avoid stale 304 responses
       try {
-        const ghToken = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const ghToken = await getFirebaseIdToken();
         const cacheBust = `&_t=${Date.now()}`;
         const ghRes = await fetch(
           `/api/github/connection-status?email=${encodeURIComponent(activeEmail)}${cacheBust}`,
@@ -428,7 +428,7 @@ export const ProfilePage = () => {
 
     // 3. Save to Backend REST API
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       await fetch('/api/github/connect-user', {
         method: 'POST',
         headers: {
@@ -681,7 +681,7 @@ export const ProfilePage = () => {
 
     // 3. Backend
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       await fetch('/api/github/disconnect-user', {
         method: 'POST',
         headers: {
@@ -770,7 +770,7 @@ export const ProfilePage = () => {
 
       // 4. Save to backend API
       try {
-        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const token = await getFirebaseIdToken();
         const profileResponse = await fetch('/api/users/profile', {
           method: 'PUT',
           headers: { 
@@ -849,7 +849,7 @@ export const ProfilePage = () => {
 
     // 4. Update Backend API
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       await fetch('/api/users/profile', {
         method: 'PUT',
         headers: { 
@@ -891,7 +891,7 @@ export const ProfilePage = () => {
       }
 
       try {
-        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const token = await getFirebaseIdToken();
         await fetch(`/api/projects/${projectId}/remove-from-profile`, {
           method: 'DELETE',
           headers: {

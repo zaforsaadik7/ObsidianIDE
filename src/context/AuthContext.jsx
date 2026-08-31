@@ -8,7 +8,7 @@ import {
   signInWithPopup,
   GoogleAuthProvider
 } from 'firebase/auth';
-import { auth, db, googleProvider } from '../firebase';
+import { auth, db, googleProvider, getFirebaseIdToken } from '../firebase';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { syncPublicUserCount } from '../services/publicUserStats';
 
@@ -118,7 +118,7 @@ export const AuthProvider = ({ children }) => {
             saveSession(activeUser, docSnap.data());
           } else {
             // 2. Fallback to API profile fetch
-            const token = activeUser.getIdToken ? await activeUser.getIdToken() : '';
+            const token = await getFirebaseIdToken();
             const res = await fetch(`/api/users/profile?email=${encodeURIComponent(activeUser.email)}`, {
               headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) }
             });
@@ -184,6 +184,8 @@ export const AuthProvider = ({ children }) => {
           syncPublicUserCount().catch((countErr) => {
             console.warn('Public user count sync notice:', countErr);
           });
+        } else {
+          clearSession();
         }
         setLoading(false);
       });
@@ -226,7 +228,10 @@ export const AuthProvider = ({ children }) => {
 
     if (!foundProfile) {
       try {
-        const res = await fetch(`/api/users/profile?email=${encodeURIComponent(cleanEmail)}`);
+        const profToken = firebaseUser ? await firebaseUser.getIdToken() : '';
+        const res = await fetch(`/api/users/profile?email=${encodeURIComponent(cleanEmail)}`, {
+          headers: { ...(profToken ? { 'Authorization': `Bearer ${profToken}` } : {}) }
+        });
         if (res.ok) {
           const data = await res.json();
           if (data && data.profile && !data.notFound) {
@@ -315,10 +320,9 @@ export const AuthProvider = ({ children }) => {
         } catch (e) {}
       }
     } catch (e) {
-      if (e.code === 'auth/email-already-in-use') {
-        throw e;
-      }
-      console.warn("Firebase Auth register notice:", e.message);
+      // Surface every Firebase failure (email in use, weak password, network…)
+      // instead of continuing with a token-less local-only session.
+      throw e;
     }
 
     const newProfile = {
@@ -432,7 +436,10 @@ export const AuthProvider = ({ children }) => {
 
     if (!foundProfile) {
       try {
-        const res = await fetch(`/api/users/profile?email=${encodeURIComponent(cleanEmail)}`);
+        const profToken = firebaseUser ? await firebaseUser.getIdToken() : '';
+        const res = await fetch(`/api/users/profile?email=${encodeURIComponent(cleanEmail)}`, {
+          headers: { ...(profToken ? { 'Authorization': `Bearer ${profToken}` } : {}) }
+        });
         if (res.ok) {
           const data = await res.json();
           if (data && data.profile && !data.notFound) {
@@ -566,6 +573,20 @@ export const AuthProvider = ({ children }) => {
     const cleanEmail = (account.email || '').trim().toLowerCase();
     const fullName = account.name || cleanEmail.split('@')[0] || 'Developer';
     const docId = getUserDocId(cleanEmail, fullName);
+
+    // Real Firebase sign-in so the session can mint ID tokens; abort if the
+    // user picks a different Google account in the popup.
+    const provider = googleProvider || new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const popupResult = await signInWithPopup(auth, provider);
+    const firebaseUser = popupResult.user;
+    if (!firebaseUser?.email || firebaseUser.email.trim().toLowerCase() !== cleanEmail) {
+      try { await signOut(auth); } catch (e) {}
+      const err = new Error('The Google account chosen in the popup does not match. Please select the registered account.');
+      err.code = 'auth/account-mismatch';
+      throw err;
+    }
+
     let foundProf = null;
 
     try {
@@ -577,7 +598,7 @@ export const AuthProvider = ({ children }) => {
 
     if (!foundProf) {
       try {
-        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const token = await getFirebaseIdToken();
         const res = await fetch(`/api/users/profile?email=${encodeURIComponent(cleanEmail)}`, {
           headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) }
         });
@@ -605,7 +626,7 @@ export const AuthProvider = ({ children }) => {
     }
 
     const userObj = {
-      uid: foundProf?.info?.uid || `google-${docId}`,
+      uid: firebaseUser.uid,
       email: cleanEmail,
       displayName: foundProf?.info?.fullName || fullName,
       photoURL: foundProf?.info?.avatarUrl || account.avatarUrl || ''
@@ -621,7 +642,20 @@ export const AuthProvider = ({ children }) => {
     const docId = getUserDocId(cleanEmail, fullName);
     const profession = profileInput?.profession || 'Student';
     const username = profileInput?.username || docId;
-    const uid = account.id || `google-user-${Date.now()}`;
+
+    // Real Firebase sign-in creates the Firebase account so the session can
+    // mint ID tokens; abort if a different Google account is chosen.
+    const provider = googleProvider || new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const popupResult = await signInWithPopup(auth, provider);
+    const firebaseUser = popupResult.user;
+    if (!firebaseUser?.email || firebaseUser.email.trim().toLowerCase() !== cleanEmail) {
+      try { await signOut(auth); } catch (e) {}
+      const err = new Error('The Google account chosen in the popup does not match. Please select the account you want to register.');
+      err.code = 'auth/account-mismatch';
+      throw err;
+    }
+    const uid = firebaseUser.uid;
 
     // Check if account already exists
     let existingProfile = null;
@@ -678,7 +712,7 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
-      const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const regRes = await fetch('/api/users/register', {
         method: 'POST',
         headers: { 
@@ -709,7 +743,7 @@ export const AuthProvider = ({ children }) => {
     const user = currentUser;
     if (!user) return;
     try {
-      const token = user.getIdToken ? await user.getIdToken() : '';
+      const token = await getFirebaseIdToken();
       const res = await fetch(`/api/users/profile?email=${encodeURIComponent(user.email)}`, {
         headers: {
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})

@@ -34,4 +34,16 @@ googleProvider.setCustomParameters({
 });
 
 export const db = getFirestore(app);
+
+// Mints a fresh ID token from the live Firebase auth session.
+// The app-wide currentUser snapshot is a plain object without getIdToken,
+// so every API call must obtain tokens through this helper.
+export const getFirebaseIdToken = async () => {
+  try {
+    return auth.currentUser ? await auth.currentUser.getIdToken() : '';
+  } catch {
+    return '';
+  }
+};
+
 export default app;

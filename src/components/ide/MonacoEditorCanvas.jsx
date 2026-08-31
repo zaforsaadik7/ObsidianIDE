@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
+import { getFirebaseIdToken } from '../../firebase';
 
 let inlineProviderRegistered = false;
 let lastRequestTime = 0;
@@ -174,9 +175,13 @@ export const MonacoEditorCanvas = ({
 
           try {
             setCopilotStatus('Thinking...');
+            const idToken = await getFirebaseIdToken();
             const res = await fetch('/api/ai/inline-suggest', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
+              },
               body: JSON.stringify({
                 prefix: textBeforeCursor,
                 suffix: textAfterCursor,
