@@ -77,6 +77,7 @@ export const stageAndDispatchInvitationEmail = async ({
     await setDoc(mailDocRef, {
       to: [to.trim()],
       replyTo: cleanOwner,
+      createdBy: (currentUser?.email || cleanOwner).trim(),
       message: {
         subject: `[ObsidianIDE] Invitation to collaborate on project: ${cleanTitle}`,
         text: textContent,

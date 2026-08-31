@@ -1,9 +1,78 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Authenticated users have read and write access to workspaces and collections
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+
+    function authEmail() {
+      return request.auth != null ? request.auth.token.email.lower() : '';
+    }
+
+    function ownsProject(pdata) {
+      return pdata.get('ownerEmail', '') is string
+        && pdata.get('ownerEmail', '').lower() == authEmail();
+    }
+
+    function isProjectMember(pdata) {
+      return ownsProject(pdata)
+        || (pdata.get('collaborators', {}) is map
+            && authEmail() in pdata.get('collaborators', {}));
+    }
+
+    // Personal profile documents. The doc id is derived lossily from the email
+    // local part, so the trusted identity anchor is the email stored in the doc
+    // itself. Delete is denied: account removal goes through the backend API.
+    match /users/{docId} {
+      allow create: if request.auth != null
+        && request.resource.data.get('info', {}).get('email', '') is string
+        && request.resource.data.get('info', {}).get('email', '').lower() == authEmail();
+      allow get, update: if request.auth != null
+        && resource.data.get('info', {}).get('email', '') is string
+        && resource.data.get('info', {}).get('email', '').lower() == authEmail()
+        && request.resource.data.get('info', {}).get('email', '').lower()
+          == resource.data.get('info', {}).get('email', '').lower();
+    }
+
+    // Project documents. Members read; only the owner writes from the client.
+    // Editor mutations are persisted by the service-account backend API, so
+    // editors need no direct write access to the shared project document.
+    match /projects/{pid} {
+      allow get: if request.auth != null && isProjectMember(resource.data);
+      allow create: if request.auth != null
+        && request.resource.data.get('ownerEmail', '') is string
+        && request.resource.data.get('ownerEmail', '').lower() == authEmail();
+      allow update, delete: if request.auth != null && ownsProject(resource.data);
+
+      // Per-file documents are read/written directly by members' editors.
+      match /files/{fileId} {
+        allow read: if request.auth != null
+          && isProjectMember(get(/databases/$(database)/documents/projects/$(pid)).data);
+        allow delete: if request.auth != null
+          && isProjectMember(get(/databases/$(database)/documents/projects/$(pid)).data);
+        allow create, update: if request.auth != null
+          && isProjectMember(get(/databases/$(database)/documents/projects/$(pid)).data)
+          && request.resource.data.get('projectId', '') == pid;
+      }
+    }
+
+    // Invitation-email outbox consumed by the "Trigger Email from Firestore"
+    // extension (the extension uses the Admin SDK and bypasses rules). Only the
+    // user who staged a message may observe or clean it up.
+    match /mail/{mailId} {
+      allow create: if request.auth != null
+        && request.resource.data.get('createdBy', '') == request.auth.token.email
+        && request.resource.data.get('to', []) is list
+        && request.resource.data.get('to', []).size() > 0
+        && request.resource.data.get('to', []).size() <= 5;
+      allow get, delete: if request.auth != null
+        && resource.data.get('createdBy', '') == request.auth.token.email;
+    }
+
+    // Public aggregate counter shown on the landing page.
+    match /public_stats/user_metrics {
+      allow get: if true;
+      allow create, update: if request.auth != null
+        && request.resource.data.keys().hasOnly(['totalUsers'])
+        && request.resource.data.totalUsers is int
+        && request.resource.data.totalUsers >= 0;
     }
   }
 }
