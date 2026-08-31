@@ -75,6 +75,10 @@ function buildSafeEnvironment(sandboxDir) {
   safeEnv.COLORTERM = 'truecolor';
   safeEnv.PYTHONUNBUFFERED = '1';
   safeEnv.PYTHONIOENCODING = 'utf-8';
+  // Package installs must stay inside the sandbox: user-site is writable by
+  // non-root users and allowed on PEP 668 "externally managed" Pythons.
+  safeEnv.PIP_USER = '1';
+  safeEnv.PIP_BREAK_SYSTEM_PACKAGES = '1';
 
   return safeEnv;
 }
@@ -362,6 +366,7 @@ export function createTerminalWebSocket() {
         ws.send(`  - \x1b[33mC#\x1b[0m           : csc file.cs && ./file.exe\r\n`);
         ws.send(`  - \x1b[33mBash\x1b[0m         : bash file.sh | bash\r\n`);
         ws.send(`  - \x1b[33mPython\x1b[0m       : python file.py\r\n`);
+        ws.send(`  - \x1b[33mPip\x1b[0m          : pip install <package> (installs into the sandbox user site)\r\n`);
         ws.send(`  - \x1b[33mJavaScript\x1b[0m   : node file.js\r\n`);
         ws.send(`  - \x1b[33mls / dir\x1b[0m     : List sandbox directory\r\n`);
         ws.send(`  - \x1b[33mclear / cls\x1b[0m  : Clear terminal screen\r\n`);
@@ -428,6 +433,11 @@ export function createTerminalWebSocket() {
         // Direct executable invocation in sandbox
         execCmd = path.join(sandboxDir, rootCommand);
         execArgs = rawArgs;
+      } else if (rootCommand === 'pip' || rootCommand === 'pip3') {
+        // Route through the detected interpreter so installs work even when no
+        // pip launcher executable is on PATH
+        execCmd = PYTHON_CMD;
+        execArgs = ['-m', 'pip', ...rawArgs];
       } else {
         // General command shell
         if (isWindows) {

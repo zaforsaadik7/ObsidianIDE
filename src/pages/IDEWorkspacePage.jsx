@@ -30,17 +30,9 @@ export const IDEWorkspacePage = () => {
   const { isDark, toggleTheme } = useTheme();
 
   // Dual Repository State: Master Canonical Repository vs Shared Working Fork
-  const [masterFiles, setMasterFiles] = useState(() => {
-    try {
-      const userEmail = (currentUser?.email || '').trim().toLowerCase();
-      const saved = localStorage.getItem(`obsidian_draft_${projectId}_${userEmail}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return [];
-  });
+  // Master baseline must only ever come from the server (snapshot/REST polling);
+  // seeding it from the personal draft produced phantom diffs after refresh.
+  const [masterFiles, setMasterFiles] = useState([]);
   const [files, setFiles] = useState(() => {
     try {
       const userEmail = (currentUser?.email || '').trim().toLowerCase();
@@ -317,13 +309,21 @@ export const IDEWorkspacePage = () => {
               if (draftStr) {
                 const draftFiles = JSON.parse(draftStr);
                 if (Array.isArray(draftFiles) && draftFiles.length > 0) {
-                  // Use draft files immediately while subcollection loads
-                  if (draftFiles.length >= working.length) {
-                    setFiles(draftFiles);
-                    localFilesRef.current = draftFiles;
-                    if (!activeFileRef.current && draftFiles.length > 0) {
-                      resolveActiveFileAndTabs(draftFiles);
-                    }
+                  // The working manifest is the canonical path set; a stale draft may
+                  // only supply content for manifest entries, never resurrect deleted
+                  // paths. The draft is a full fallback only when the manifest is empty.
+                  let draftState = draftFiles;
+                  if (working.length > 0) {
+                    const draftMap = new Map(draftFiles.map(df => [df.filePath || df.fileName, df]));
+                    draftState = working.map(wf => {
+                      const d = draftMap.get(wf.filePath || wf.fileName);
+                      return d && wf.content === undefined ? { ...wf, content: typeof d.content === 'string' ? d.content : '' } : wf;
+                    });
+                  }
+                  setFiles(draftState);
+                  localFilesRef.current = draftState;
+                  if (!activeFileRef.current && draftState.length > 0) {
+                    resolveActiveFileAndTabs(draftState);
                   }
                 }
               }
@@ -497,12 +497,6 @@ export const IDEWorkspacePage = () => {
                 ? proj.project_files
                 : [];
 
-            // Protect master baseline from being downgraded by stale server polling
-            if (serverMaster && serverMaster.length >= localMasterRef.current.length) {
-              setMasterFiles(serverMaster);
-              localMasterRef.current = serverMaster;
-            }
-
             // Working files
             const serverWorking = (proj.working_files && proj.working_files.length > 0)
               ? proj.working_files
@@ -513,6 +507,14 @@ export const IDEWorkspacePage = () => {
                 const wf = serverWorking.find(w => w.filePath === mf.filePath);
                 return wf && wf.content === mf.content;
               }));
+
+            // Protect master baseline from being downgraded by stale server polling —
+            // unless the server authoritatively reports master as synced, which must
+            // win even when an accepted merge shrank the baseline (deleted files).
+            if (serverMaster && (serverMaster.length >= localMasterRef.current.length || isServerMasterSynced)) {
+              setMasterFiles(serverMaster);
+              localMasterRef.current = serverMaster;
+            }
 
             if (isServerMasterSynced) {
               hasUnsavedForkChangesRef.current = false;
@@ -1862,6 +1864,11 @@ export const IDEWorkspacePage = () => {
       localMutationTimestampRef.current = Date.now();
       localFilesRef.current = remainingFiles;
       setFiles(remainingFiles);
+      // Keep the personal draft in sync so a refresh cannot resurrect the
+      // deleted file from the localStorage cache
+      try {
+        localStorage.setItem(`obsidian_draft_${projectId}_${userEmail.trim().toLowerCase()}`, JSON.stringify(remainingFiles));
+      } catch (e) {}
       if (isProjectOwner) {
         setMasterFiles(remainingFiles);
         localMasterRef.current = remainingFiles;
@@ -2023,6 +2030,11 @@ export const IDEWorkspacePage = () => {
       localMutationTimestampRef.current = Date.now();
       localFilesRef.current = remaining;
       setFiles(remaining);
+      // Keep the personal draft in sync so a refresh cannot resurrect the
+      // deleted folder from the localStorage cache
+      try {
+        localStorage.setItem(`obsidian_draft_${projectId}_${userEmail.trim().toLowerCase()}`, JSON.stringify(remaining));
+      } catch (e) {}
       if (isProjectOwner) {
         setMasterFiles(remaining);
         localMasterRef.current = remaining;
@@ -2605,10 +2617,12 @@ export const IDEWorkspacePage = () => {
       })
     });
 
-    const pushData = await pushRes.json();
     if (!pushRes.ok) {
-      throw new Error(pushData.message || pushData.error || 'Failed to push project to GitHub');
+      const pushErr = await pushRes.json().catch(() => ({}));
+      throw new Error(pushErr.message || pushErr.error || 'Failed to push project to GitHub');
     }
+
+    const pushData = await pushRes.json();
 
     setLiveProjectData(prev => ({
       ...(prev || {}),
