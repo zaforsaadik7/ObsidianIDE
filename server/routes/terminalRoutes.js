@@ -77,7 +77,7 @@ function buildSafeEnvironment(sandboxDir) {
   safeEnv.PATH = mergedPath;
   safeEnv.Path = mergedPath;
 
-  // Sandbox directories
+  // Sandbox directories & persistent environment
   safeEnv.HOME = sandboxDir;
   safeEnv.USERPROFILE = sandboxDir;
   safeEnv.TMPDIR = sandboxDir;
@@ -87,10 +87,27 @@ function buildSafeEnvironment(sandboxDir) {
   safeEnv.COLORTERM = 'truecolor';
   safeEnv.PYTHONUNBUFFERED = '1';
   safeEnv.PYTHONIOENCODING = 'utf-8';
-  // Package installs must stay inside the sandbox: user-site is writable by
-  // non-root users and allowed on PEP 668 "externally managed" Pythons.
+  safeEnv.PYTHONUSERBASE = sandboxDir;
+
+  // Inject all existing site-packages paths inside sandboxDir into PYTHONPATH so installed libraries are always found
+  const sitePackagePaths = [
+    path.join(sandboxDir, '.local', 'lib', 'python3.14', 'site-packages'),
+    path.join(sandboxDir, '.local', 'lib', 'python3.13', 'site-packages'),
+    path.join(sandboxDir, '.local', 'lib', 'python3.12', 'site-packages'),
+    path.join(sandboxDir, '.local', 'lib', 'python3.11', 'site-packages'),
+    path.join(sandboxDir, '.local', 'lib', 'python3.10', 'site-packages'),
+    path.join(sandboxDir, '.local', 'lib', 'python3.9', 'site-packages'),
+    path.join(sandboxDir, 'lib', 'site-packages'),
+    path.join(sandboxDir, 'site-packages'),
+    sandboxDir
+  ];
+  const existingPythonPath = safeEnv.PYTHONPATH || '';
+  safeEnv.PYTHONPATH = [...sitePackagePaths, existingPythonPath].filter(Boolean).join(PATH_DELIMITER);
+
+  // Package installs stay persistent inside the project sandbox user site
   safeEnv.PIP_USER = '1';
   safeEnv.PIP_BREAK_SYSTEM_PACKAGES = '1';
+  safeEnv.PIP_CACHE_DIR = path.join(sandboxDir, '.cache', 'pip');
 
   return safeEnv;
 }
@@ -338,9 +355,10 @@ export function createTerminalWebSocket() {
       }
     }
 
-    // ── 2. Create Isolated Sandbox ───────────────────────────────────────────
-    const sessionId = uuidv4().slice(0, 8);
-    const sandboxDir = path.join(SANDBOX_ROOT, `session_${sessionId}`);
+    // ── 2. Create / Reattach Persistent Project Sandbox ──────────────────────
+    const safeProjectId = (projectId || 'workspace').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeUserEmail = (authenticatedEmail || 'developer').split('@')[0].replace(/[^a-zA-Z0-9_-]/g, '_');
+    const sandboxDir = path.join(SANDBOX_ROOT, `project_${safeProjectId}_${safeUserEmail}`);
     try {
       if (!fs.existsSync(sandboxDir)) {
         fs.mkdirSync(sandboxDir, { recursive: true });
@@ -868,10 +886,8 @@ function cleanupSession(sessionId) {
       }
     } catch {}
   }
-  try {
-    if (fs.existsSync(session.sandboxDir)) {
-      fs.rmSync(session.sandboxDir, { recursive: true, force: true });
-    }
-  } catch {}
+  // NOTE: DO NOT delete session.sandboxDir on socket close/error!
+  // Preserving session.sandboxDir keeps installed Python packages (numpy, pandas, etc.)
+  // and local build artifacts available across reconnects, tab switching, and browser navigation.
   activeSessions.delete(sessionId);
 }

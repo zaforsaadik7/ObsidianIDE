@@ -242,8 +242,8 @@ export const InteractiveTerminal = ({
         setSessionStatus('disconnected');
 
         // Auto-reconnect with exponential backoff if not closed due to auth rejection
-        if (!authBlockedRef.current && retryCountRef.current < 6) {
-          const delay = Math.min(1500 * Math.pow(1.4, retryCountRef.current), 8000);
+        if (!authBlockedRef.current && retryCountRef.current < 8) {
+          const delay = Math.min(1500 * Math.pow(1.3, retryCountRef.current), 8000);
           retryCountRef.current += 1;
           if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = setTimeout(() => {
@@ -259,15 +259,15 @@ export const InteractiveTerminal = ({
           setSessionStatus('error');
           wsRef.current = null;
 
-          if (!authBlockedRef.current && retryCountRef.current < 6) {
-            const delay = Math.min(2000 * Math.pow(1.4, retryCountRef.current), 8000);
+          if (!authBlockedRef.current && retryCountRef.current < 8) {
+            const delay = Math.min(2000 * Math.pow(1.3, retryCountRef.current), 8000);
             retryCountRef.current += 1;
             if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
             reconnectTimerRef.current = setTimeout(() => {
               connectWebSocket();
             }, delay);
           } else {
-            term?.writeln(`\r\n\x1b[31m[Terminal connection failed at ${targetUrl}. Click Refresh or re-open project to reconnect.]\x1b[0m`);
+            term?.writeln(`\r\n\x1b[31m[Terminal connection failed at ${targetUrl}. Click Refresh or return to tab to reconnect.]\x1b[0m`);
           }
         }
       };
@@ -278,12 +278,31 @@ export const InteractiveTerminal = ({
     createSocket(primaryWsUrl);
   }, [currentUser, projectId, onOutput, onFilesGenerated]);
 
-  // ── Auto-Connect on Mount ──────────────────────────────────────────────────
+  // ── Auto-Connect on Mount & Auto-Wakeup on Browser Tab Return ───────────────
   useEffect(() => {
     const timer = setTimeout(() => {
       connectWebSocket();
     }, 150);
-    return () => clearTimeout(timer);
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED || wsRef.current.readyState === WebSocket.CLOSING) {
+          authBlockedRef.current = false;
+          retryCountRef.current = 0;
+          if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+          connectWebSocket();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
   }, [connectWebSocket]);
 
   // ── 4. Terminal Commands & Controller ──────────────────────────────────────
@@ -296,6 +315,8 @@ export const InteractiveTerminal = ({
     };
 
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      authBlockedRef.current = false;
+      retryCountRef.current = 0;
       connectWebSocket().then(() => {
         setTimeout(() => {
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -321,6 +342,8 @@ export const InteractiveTerminal = ({
     };
 
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      authBlockedRef.current = false;
+      retryCountRef.current = 0;
       connectWebSocket().then(() => {
         setTimeout(() => {
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
