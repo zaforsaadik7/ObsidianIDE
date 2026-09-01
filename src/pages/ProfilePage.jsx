@@ -3,8 +3,9 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { auth, db, getFirebaseIdToken } from '../firebase';
 import { GithubAuthProvider, getAdditionalUserInfo, linkWithPopup, signInWithPopup } from 'firebase/auth';
+import { getProjectDisplayTitle, resolveProjectUserRoleAndMembership } from '../utils/projectTitle';
+import { getUserDocId } from '../context/AuthContext';
 import { deleteField, doc, setDoc, updateDoc } from 'firebase/firestore';
-import { getProjectDisplayTitle } from '../utils/projectTitle';
 
 const getAvatarCacheKey = (email) => `obsidian_profile_avatar_${(email || 'user').trim().toLowerCase()}`;
 
@@ -190,21 +191,8 @@ export const ProfilePage = () => {
         if (!pid) return;
         if (hiddenProjectIds.has(pid)) return;
 
-        // Filter out legacy template mocks unless genuinely associated with user
-        if (pid === 'quantum-router-01' || pid === 'nexus-graph-db-02') {
-          const ownerNorm = (p.ownerEmail || '').trim().toLowerCase();
-          const hasCollab = p.collaborators && (p.collaborators[userEmailNorm] || p.collaborators[activeEmail]);
-          if (ownerNorm !== userEmailNorm && !hasCollab) return;
-        }
-
-        const ownerEmailNorm = (p.ownerEmail || '').trim().toLowerCase();
-        const isOwner = ownerEmailNorm === userEmailNorm;
-        const collabRole = p.collaborators ? (p.collaborators[userEmailNorm] || p.collaborators[activeEmail]) : null;
-        const resolvedRole = isOwner ? 'OWNER' : (collabRole || p.userRole || p.role || 'EDITOR');
-
-        if (!isOwner && !collabRole && !p.userRole && !p.role) {
-          if (!p.ownerEmail) return;
-        }
+        const membership = resolveProjectUserRoleAndMembership(p, userEmailNorm, currentUser?.uid, currentUser?.displayName);
+        if (!membership.isMember) return;
 
         const canonicalKey = getCanonicalProjectKey(p, pid);
         const existing = projectMap[canonicalKey] || {};
@@ -238,7 +226,7 @@ export const ProfilePage = () => {
           projectId: chosenPid,
           title: resolvedTitle,
           languageEnv: p.languageEnv || existing.languageEnv || 'PYTHON_3.11',
-          userRole: resolvedRole,
+          userRole: membership.role,
           ownerEmail: p.ownerEmail || existing.ownerEmail,
           collaborators: p.collaborators || existing.collaborators || {},
           working_files: files,
@@ -253,34 +241,45 @@ export const ProfilePage = () => {
         Object.entries(userProfile.projects).forEach(([key, p]) => upsertProject(p, key));
       }
 
-      // 2. Read directly from Client Firestore user document
+      // 2. Read directly from Client Firestore user documents (candidate doc IDs)
       try {
         const { getDoc: fsGetDoc, doc: fsDoc } = await import('firebase/firestore');
-        const docSnap = await fsGetDoc(fsDoc(db, 'users', cleanDocId));
-        if (docSnap.exists()) {
-          const fsData = docSnap.data();
-          const fsInfo = fsData?.info || {};
-          Object.keys(fsData?.hiddenProjects || {}).forEach((projectId) => hiddenProjectIds.add(projectId));
-          if (fsInfo.avatarUrl || fsInfo.fullName || fsInfo.profession) {
-            setProfile(prev => ({
-              ...prev,
-              displayName: fsInfo.fullName || prev.displayName,
-              email: fsInfo.email || prev.email,
-              designation: fsInfo.profession || prev.designation,
-              avatarUrl: fsInfo.avatarUrl || prev.avatarUrl,
-              github: fsInfo.github || prev.github
-            }));
-            if (setUserProfile) {
-              setUserProfile(prev => ({
-                ...prev,
-                ...fsData,
-                info: { ...(prev?.info || {}), ...fsInfo }
-              }));
+        const candidateDocIds = new Set([
+          cleanDocId,
+          getUserDocId(currentUser?.email, currentUser?.displayName),
+          currentUser?.uid
+        ]);
+
+        for (const candidateId of candidateDocIds) {
+          if (!candidateId) continue;
+          try {
+            const docSnap = await fsGetDoc(fsDoc(db, 'users', candidateId));
+            if (docSnap.exists()) {
+              const fsData = docSnap.data();
+              const fsInfo = fsData?.info || {};
+              Object.keys(fsData?.hiddenProjects || {}).forEach((projectId) => hiddenProjectIds.add(projectId));
+              if (fsInfo.avatarUrl || fsInfo.fullName || fsInfo.profession) {
+                setProfile(prev => ({
+                  ...prev,
+                  displayName: fsInfo.fullName || prev.displayName,
+                  email: fsInfo.email || prev.email,
+                  designation: fsInfo.profession || prev.designation,
+                  avatarUrl: fsInfo.avatarUrl || prev.avatarUrl,
+                  github: fsInfo.github || prev.github
+                }));
+                if (setUserProfile) {
+                  setUserProfile(prev => ({
+                    ...prev,
+                    ...fsData,
+                    info: { ...(prev?.info || {}), ...fsInfo }
+                  }));
+                }
+              }
+              if (fsData.projects) {
+                Object.entries(fsData.projects).forEach(([key, p]) => upsertProject(p, key));
+              }
             }
-          }
-          if (fsData.projects) {
-            Object.entries(fsData.projects).forEach(([key, p]) => upsertProject(p, key));
-          }
+          } catch (innerErr) {}
         }
       } catch (fsErr) {
         console.warn('Client Firestore profile fetch notice:', fsErr);
@@ -293,30 +292,37 @@ export const ProfilePage = () => {
         projectsSnap.forEach(docSnap => {
           const p = docSnap.data();
           if (p) {
-            const ownerNorm = (p.ownerEmail || '').trim().toLowerCase();
-            const isOwner = ownerNorm === userEmailNorm;
-            const isCollab = p.collaborators && Boolean(p.collaborators[userEmailNorm] || p.collaborators[activeEmail]);
-            if (isOwner || isCollab) {
-              upsertProject(p, docSnap.id);
-            }
+            upsertProject(p, docSnap.id);
           }
         });
       } catch (colErr) {
         console.warn("Client Firestore projects collection lookup notice:", colErr);
       }
 
-      // 4. Fetch from Backend /api/projects REST API
+      // 4. Fetch from Backend /api/projects REST API (with direct Render fallback)
       try {
-        const token = await getFirebaseIdToken();
-        const pRes = await fetch(`/api/projects?email=${encodeURIComponent(activeEmail)}`, {
-          headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) }
-        });
-        const pData = await pRes.json();
-        if (pRes.ok && pData.projects && Array.isArray(pData.projects)) {
-          pData.projects.forEach(p => upsertProject(p, p.projectId));
+        const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
+        const apiUrls = [
+          `/api/projects?email=${encodeURIComponent(activeEmail)}`,
+          `https://obsidianide.onrender.com/api/projects?email=${encodeURIComponent(activeEmail)}`
+        ];
+
+        for (const url of apiUrls) {
+          try {
+            const pRes = await fetch(url, {
+              headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) }
+            });
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              if (pData.projects && Array.isArray(pData.projects)) {
+                pData.projects.forEach(p => upsertProject(p, p.projectId));
+                break;
+              }
+            }
+          } catch (apiErr) {}
         }
-      } catch (pErr) {
-        console.warn("Backend /api/projects lookup notice:", pErr);
+      } catch (err) {
+        console.warn("Backend /api/projects fetch notice:", err);
       }
 
       // 5. Fetch from Backend /api/users/profile REST API

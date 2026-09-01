@@ -8,7 +8,8 @@ import { InviteTeammateModal } from '../components/dashboard/InviteTeammateModal
 import { ExportToGitHubModal } from '../components/dashboard/ExportToGitHubModal';
 import { db, getFirebaseIdToken } from '../firebase';
 import { doc, getDoc, collection, getDocs, updateDoc, deleteField } from 'firebase/firestore';
-import { getProjectDisplayTitle } from '../utils/projectTitle';
+import { getProjectDisplayTitle, resolveProjectUserRoleAndMembership } from '../utils/projectTitle';
+import { getUserDocId } from '../context/AuthContext';
 
 export const DashboardPage = () => {
   const { currentUser, userProfile, setUserProfile } = useAuth();
@@ -50,17 +51,8 @@ export const DashboardPage = () => {
       const pid = p.projectId || p.id || fallbackId;
       if (!pid) return;
 
-      // Filter out legacy template mocks unless genuinely associated with user
-      if (pid === 'quantum-router-01' || pid === 'nexus-graph-db-02') {
-        const ownerNorm = (p.ownerEmail || '').trim().toLowerCase();
-        const hasCollab = p.collaborators && (p.collaborators[userEmailNorm] || p.collaborators[currentUser.email]);
-        if (ownerNorm !== userEmailNorm && !hasCollab) return;
-      }
-
-      const ownerEmailNorm = (p.ownerEmail || '').trim().toLowerCase();
-      const isOwner = ownerEmailNorm === userEmailNorm;
-      const collabRole = p.collaborators ? (p.collaborators[userEmailNorm] || p.collaborators[currentUser.email]) : null;
-      const resolvedRole = isOwner ? 'OWNER' : (collabRole || p.userRole || p.role || 'EDITOR');
+      const membership = resolveProjectUserRoleAndMembership(p, userEmailNorm, currentUser.uid, currentUser.displayName);
+      if (!membership.isMember) return;
 
       const canonicalKey = getCanonicalProjectKey(p, pid);
       const existing = projectMap[canonicalKey] || {};
@@ -86,7 +78,7 @@ export const DashboardPage = () => {
         title: resolvedTitle,
         description: p.description !== undefined ? p.description : (existing.description || ''),
         languageEnv: p.languageEnv || existing.languageEnv || 'PYTHON_3.11',
-        userRole: resolvedRole,
+        userRole: membership.role,
         ownerEmail: p.ownerEmail || existing.ownerEmail,
         collaborators: p.collaborators || existing.collaborators || {},
         createdAt: p.createdAt || existing.createdAt || new Date().toISOString(),
@@ -99,16 +91,29 @@ export const DashboardPage = () => {
       Object.entries(userProfile.projects).forEach(([key, p]) => upsertProject(p, key));
     }
 
-    // 2. Fetch directly from Client Firestore User Document
+    // 2. Fetch directly from Client Firestore User Documents (checking multiple candidate doc IDs)
     try {
-      const cleanDocId = userEmailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_');
-      const userDocRef = doc(db, 'users', cleanDocId);
-      const userDocSnap = await getDoc(userDocRef);
-      if (userDocSnap.exists() && userDocSnap.data().projects) {
-        Object.entries(userDocSnap.data().projects).forEach(([key, p]) => upsertProject(p, key));
-      }
-      if (userDocSnap.exists() && userDocSnap.data().hiddenProjects) {
-        Object.keys(userDocSnap.data().hiddenProjects).forEach((projectId) => hiddenProjectIds.add(projectId));
+      const candidateDocIds = new Set([
+        userEmailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_'),
+        getUserDocId(currentUser.email, currentUser.displayName),
+        currentUser.uid
+      ]);
+
+      for (const candidateId of candidateDocIds) {
+        if (!candidateId) continue;
+        try {
+          const userDocRef = doc(db, 'users', candidateId);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            const uData = userDocSnap.data();
+            if (uData.projects) {
+              Object.entries(uData.projects).forEach(([key, p]) => upsertProject(p, key));
+            }
+            if (uData.hiddenProjects) {
+              Object.keys(uData.hiddenProjects).forEach((projectId) => hiddenProjectIds.add(projectId));
+            }
+          }
+        } catch (innerErr) {}
       }
     } catch (fsErr) {
       console.warn("Client Firestore user projects lookup notice:", fsErr);
@@ -120,29 +125,36 @@ export const DashboardPage = () => {
       projectsSnap.forEach(docSnap => {
         const p = docSnap.data();
         if (p) {
-          const ownerNorm = (p.ownerEmail || '').trim().toLowerCase();
-          const isOwner = ownerNorm === userEmailNorm;
-          const isCollab = p.collaborators && Boolean(p.collaborators[userEmailNorm] || p.collaborators[currentUser.email]);
-          if (isOwner || isCollab) {
-            upsertProject(p, docSnap.id);
-          }
+          upsertProject(p, docSnap.id);
         }
       });
     } catch (colErr) {
       console.warn("Client Firestore projects collection lookup notice:", colErr);
     }
 
-    // 4. Fetch from Backend REST API
+    // 4. Fetch from Backend REST API (with direct Render fallback)
     try {
-      const token = await getFirebaseIdToken();
-      const res = await fetch(`/api/projects?email=${encodeURIComponent(currentUser.email)}`, {
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        }
-      });
-      const data = await res.json();
-      if (res.ok && data.projects && Array.isArray(data.projects)) {
-        data.projects.forEach(p => upsertProject(p, p.projectId));
+      const token = (await getFirebaseIdToken().catch(() => '')) || (currentUser.getIdToken ? await currentUser.getIdToken().catch(() => '') : '');
+      const apiUrls = [
+        `/api/projects?email=${encodeURIComponent(currentUser.email)}`,
+        `https://obsidianide.onrender.com/api/projects?email=${encodeURIComponent(currentUser.email)}`
+      ];
+
+      for (const url of apiUrls) {
+        try {
+          const res = await fetch(url, {
+            headers: {
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.projects && Array.isArray(data.projects)) {
+              data.projects.forEach(p => upsertProject(p, p.projectId));
+              break;
+            }
+          }
+        } catch (fetchErr) {}
       }
     } catch (err) {
       console.warn("Backend REST API projects lookup notice:", err);

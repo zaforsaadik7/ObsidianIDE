@@ -157,8 +157,32 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
             }
           }
         }, { merge: true });
+
+        // Also stamp project catalog for all invited collaborators
+        if (Array.isArray(collaborators) && collaborators.length > 0) {
+          const collabPromises = collaborators.map(async (c) => {
+            if (!c?.email) return;
+            const cEmail = c.email.trim().toLowerCase();
+            const cDocId = (cEmail.split('@')[0] || 'user').replace(/[^a-z0-9_]/g, '_');
+            return setDoc(doc(db, 'users', cDocId), {
+              info: { email: cEmail },
+              projects: {
+                [pid]: {
+                  projectId: pid,
+                  title: newProject.title,
+                  description: newProject.description,
+                  languageEnv: newProject.languageEnv,
+                  userRole: c.role || 'EDITOR',
+                  ownerEmail,
+                  updatedAt: timestamp
+                }
+              }
+            }, { merge: true }).catch(() => {});
+          });
+          await Promise.allSettled(collabPromises);
+        }
       } catch (uErr) {
-        console.warn('Owner project catalog stamp notice:', uErr);
+        console.warn('Project catalog stamp notice:', uErr);
       }
     } catch (err) {
       setError(err.message || 'The project could not be created.');

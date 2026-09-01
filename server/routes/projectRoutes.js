@@ -262,11 +262,66 @@ router.get('/', verifyToken, async (req, res) => {
       const pid = p.projectId || p.id || fallbackId;
       if (!pid) return;
 
-      const isOwner = (p.ownerEmail || '').toLowerCase() === emailNorm;
-      const collabs = p.collaborators || {};
-      const collabRole = collabs[emailNorm] || collabs[email];
+      const ownerNorm = (p.ownerEmail || '').trim().toLowerCase();
+      const isOwner = Boolean(ownerNorm && ownerNorm === emailNorm);
 
-      if (isOwner || collabRole) {
+      let collabRole = null;
+      const collabs = p.collaborators;
+
+      // 1. Map Collaborators
+      if (collabs && typeof collabs === 'object' && !Array.isArray(collabs)) {
+        if (collabs[emailNorm]) {
+          collabRole = collabs[emailNorm];
+        } else if (collabs[email]) {
+          collabRole = collabs[email];
+        } else {
+          const matchedKey = Object.keys(collabs).find(k => String(k).trim().toLowerCase() === emailNorm);
+          if (matchedKey) collabRole = collabs[matchedKey];
+        }
+
+        if (!collabRole) {
+          const matchedVal = Object.values(collabs).find(v => {
+            if (!v) return false;
+            if (typeof v === 'string') return v.trim().toLowerCase() === emailNorm;
+            const vEmail = (v.email || v.userEmail || '').trim().toLowerCase();
+            return vEmail === emailNorm;
+          });
+          if (matchedVal) {
+            collabRole = typeof matchedVal === 'string' ? matchedVal : (matchedVal.role || 'EDITOR');
+          }
+        }
+      }
+
+      // 2. Array Collaborators
+      if (!collabRole && Array.isArray(collabs)) {
+        const found = collabs.find(item => {
+          if (!item) return false;
+          if (typeof item === 'string') return item.trim().toLowerCase() === emailNorm;
+          return (item.email || item.userEmail || '').trim().toLowerCase() === emailNorm;
+        });
+        if (found) {
+          collabRole = typeof found === 'string' ? 'EDITOR' : (found.role || 'EDITOR');
+        }
+      }
+
+      // 3. Team members / Text / History check
+      if (!collabRole) {
+        if (typeof p.teamMembersInput === 'string' && p.teamMembersInput.toLowerCase().includes(emailNorm)) {
+          collabRole = 'EDITOR';
+        } else if (Array.isArray(p.teamMembers) && p.teamMembers.some(m => String(m).toLowerCase().includes(emailNorm))) {
+          collabRole = 'EDITOR';
+        } else if (Array.isArray(p.members) && p.members.some(m => (typeof m === 'string' ? m : m?.email || '').toLowerCase() === emailNorm)) {
+          collabRole = 'EDITOR';
+        } else if ((p.lastWorkingModifiedBy || '').toLowerCase() === emailNorm || (p.masterLastSyncedBy || '').toLowerCase() === emailNorm) {
+          collabRole = p.userRole || p.role || 'EDITOR';
+        } else if (Array.isArray(p.working_files) && p.working_files.some(f => (f?.lastModifiedBy || '').toLowerCase() === emailNorm)) {
+          collabRole = p.userRole || p.role || 'EDITOR';
+        }
+      }
+
+      const isMember = isOwner || Boolean(collabRole) || Boolean(p.userRole) || Boolean(p.role);
+
+      if (isMember) {
         const key = getCanonicalKey(p, pid);
         const existing = userProjectsMap.get(key) || {};
         const chosenPid = (p.projectId && String(p.projectId).startsWith('proj_')) 
@@ -275,11 +330,13 @@ router.get('/', verifyToken, async (req, res) => {
             ? existing.projectId 
             : pid;
 
+        const finalRole = isOwner ? 'OWNER' : (collabRole ? (typeof collabRole === 'string' ? collabRole : (collabRole.role || 'EDITOR')) : (p.userRole || p.role || 'EDITOR'));
+
         userProjectsMap.set(key, {
           ...existing,
           ...p,
           projectId: chosenPid,
-          userRole: isOwner ? 'OWNER' : (collabRole || existing.userRole || 'EDITOR')
+          userRole: typeof finalRole === 'string' ? finalRole.toUpperCase() : 'EDITOR'
         });
       }
     };
