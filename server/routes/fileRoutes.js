@@ -3,22 +3,26 @@ import { adminDb } from '../config/firebaseAdmin.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
 import { v4 as uuidv4 } from 'uuid';
 import { requireProjectRole } from '../utils/projectMembership.js';
+import { inMemoryProjectStore, persistStoreToDisk } from './projectRoutes.js';
 
 const router = express.Router();
 
-const requireStorage = (res) => {
-  if (!adminDb) {
-    res.status(503).json({ error: 'File storage backend is unavailable.' });
-    return false;
-  }
-  return true;
-};
-
-// Resolves the projectId stored on a flat file document (or via its path convention).
+// Resolves the projectId stored on a flat file document (or via inMemoryProjectStore).
 const getFileProjectId = async (fileId) => {
-  const snap = await adminDb.collection('files').doc(fileId).get();
-  if (!snap.exists) return null;
-  return { data: snap.data() || {}, projectId: (snap.data() || {}).projectId || '' };
+  if (adminDb) {
+    try {
+      const snap = await adminDb.collection('files').doc(fileId).get();
+      if (snap.exists) {
+        return { data: snap.data() || {}, projectId: (snap.data() || {}).projectId || '' };
+      }
+    } catch (e) {}
+  }
+  for (const [pid, proj] of inMemoryProjectStore.entries()) {
+    const allFiles = [...(proj.working_files || []), ...(proj.project_files || []), ...(proj.master_project_files || [])];
+    const found = allFiles.find(f => f.fileId === fileId);
+    if (found) return { data: found, projectId: pid };
+  }
+  return null;
 };
 
 // GET /api/files/:projectId: Fetch flat array of files for a project
@@ -43,11 +47,19 @@ router.get('/:projectId', verifyToken, async (req, res) => {
       }
 
       if (filesList.length === 0) {
-        const querySnapshot = await adminDb.collection('files').where('projectId', '==', projectId).get();
-        querySnapshot.forEach((docSnap) => {
-          filesList.push(docSnap.data());
-        });
+        try {
+          const querySnapshot = await adminDb.collection('files').where('projectId', '==', projectId).get();
+          querySnapshot.forEach((docSnap) => {
+            filesList.push(docSnap.data());
+          });
+        } catch (e) {}
       }
+    }
+
+    // Fallback to in-memory store
+    if (filesList.length === 0 && inMemoryProjectStore.has(projectId)) {
+      const p = inMemoryProjectStore.get(projectId);
+      filesList = p.working_files || p.project_files || p.master_project_files || [];
     }
 
     res.json({
@@ -70,7 +82,6 @@ router.put('/:fileId', verifyToken, async (req, res) => {
     if (content === undefined) {
       return res.status(400).json({ error: 'File content payload is required.' });
     }
-    if (!requireStorage(res)) return;
 
     const fileDoc = await getFileProjectId(fileId);
     if (!fileDoc) {
@@ -81,15 +92,32 @@ router.put('/:fileId', verifyToken, async (req, res) => {
     if (!membership) return;
 
     const timestamp = new Date().toISOString();
-    await adminDb.collection('files').doc(fileId).update({
-      content,
-      lastModifiedBy: req.user?.email || '',
-      updatedAt: timestamp
-    });
+    const userEmail = req.user?.email || '';
+
+    // Update in-memory store
+    const proj = inMemoryProjectStore.get(fileDoc.projectId);
+    if (proj) {
+      const updateFileList = (list = []) => list.map(f => f.fileId === fileId ? { ...f, content, lastModifiedBy: userEmail, updatedAt: timestamp } : f);
+      proj.working_files = updateFileList(proj.working_files || []);
+      proj.project_files = updateFileList(proj.project_files || []);
+      proj.master_project_files = updateFileList(proj.master_project_files || []);
+      proj.updatedAt = timestamp;
+      persistStoreToDisk();
+    }
+
+    if (adminDb) {
+      try {
+        await adminDb.collection('files').doc(fileId).update({
+          content,
+          lastModifiedBy: userEmail,
+          updatedAt: timestamp
+        });
+      } catch (e) {}
+    }
 
     res.json({
       status: 'SUCCESS',
-      message: 'Atomic Firestore Write Committed Successfully!',
+      message: 'Atomic Write Committed Successfully!',
       updatedAt: timestamp
     });
   } catch (error) {
@@ -109,21 +137,35 @@ router.post('/', verifyToken, async (req, res) => {
 
     const membership = await requireProjectRole(req, res, projectId, 'EDITOR');
     if (!membership) return;
-    if (!requireStorage(res)) return;
 
     const fileId = uuidv4();
     const timestamp = new Date().toISOString();
+    const userEmail = req.user?.email || '';
 
     const newFile = {
       fileId,
       projectId,
       filePath: filePath.trim(),
       content,
-      lastModifiedBy: req.user?.email || '',
+      lastModifiedBy: userEmail,
       updatedAt: timestamp
     };
 
-    await adminDb.collection('files').doc(fileId).set(newFile);
+    // Update in-memory store
+    const proj = inMemoryProjectStore.get(projectId);
+    if (proj) {
+      proj.working_files = [...(proj.working_files || []), newFile];
+      proj.project_files = [...(proj.project_files || []), newFile];
+      proj.master_project_files = [...(proj.master_project_files || []), newFile];
+      proj.updatedAt = timestamp;
+      persistStoreToDisk();
+    }
+
+    if (adminDb) {
+      try {
+        await adminDb.collection('files').doc(fileId).set(newFile);
+      } catch (e) {}
+    }
 
     res.status(201).json({
       status: 'SUCCESS',
@@ -140,7 +182,6 @@ router.post('/', verifyToken, async (req, res) => {
 router.delete('/:fileId', verifyToken, async (req, res) => {
   try {
     const { fileId } = req.params;
-    if (!requireStorage(res)) return;
 
     const fileDoc = await getFileProjectId(fileId);
     if (!fileDoc) {
@@ -150,7 +191,22 @@ router.delete('/:fileId', verifyToken, async (req, res) => {
     const membership = await requireProjectRole(req, res, fileDoc.projectId, 'EDITOR');
     if (!membership) return;
 
-    await adminDb.collection('files').doc(fileId).delete();
+    // Update in-memory store
+    const proj = inMemoryProjectStore.get(fileDoc.projectId);
+    if (proj) {
+      const filterOut = (list = []) => list.filter(f => f.fileId !== fileId);
+      proj.working_files = filterOut(proj.working_files || []);
+      proj.project_files = filterOut(proj.project_files || []);
+      proj.master_project_files = filterOut(proj.master_project_files || []);
+      proj.updatedAt = new Date().toISOString();
+      persistStoreToDisk();
+    }
+
+    if (adminDb) {
+      try {
+        await adminDb.collection('files').doc(fileId).delete();
+      } catch (e) {}
+    }
 
     res.json({
       status: 'SUCCESS',

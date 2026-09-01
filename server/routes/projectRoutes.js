@@ -717,6 +717,7 @@ router.post('/update-files', verifyToken, async (req, res) => {
       lastModifiedBy: userEmail || memProj.lastModifiedBy
     };
     inMemoryProjectStore.set(projectId, updatedProj);
+    persistStoreToDisk();
 
     if (adminDb) {
       try {
@@ -820,6 +821,7 @@ router.post('/sync-master', verifyToken, async (req, res) => {
       masterLastSyncedBy: ownerEmail,
       updatedAt: timestamp
     });
+    persistStoreToDisk();
 
     if (adminDb) {
       try {
