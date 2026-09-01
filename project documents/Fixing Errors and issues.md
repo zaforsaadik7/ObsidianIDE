@@ -2039,6 +2039,27 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #149: Collaborator Project Disappearance on Fresh Login & Universal Membership Resolution
+* **Symptoms**:
+  - The Project Owner saw the project on their dashboard, but a collaborator who previously joined and worked on the project logged in on a fresh browser session and saw `"No Workspace Repositories Found"`.
+* **Root Cause**:
+  1. **Strict Collaborator Mapping in Client Queries**: `DashboardPage.jsx` and `ProfilePage.jsx` checked only `p.collaborators[userEmailNorm] || p.collaborators[currentUser.email]`. When `collaborators` was stored as an Array, had casing/whitespace differences, or when membership was tracked via `teamMembers`, `invitations`, or past edit history (`working_files[].lastModifiedBy`), the lookup evaluated to `false`.
+  2. **Single User Document ID Assumptions**: `DashboardPage.jsx` and `ProfilePage.jsx` looked up only `cleanDocId`, missing user profiles stored under `getUserDocId(email, displayName)` or `currentUser.uid`.
+  3. **Vercel API Rewrite Target Mismatch**: `vercel.json` rewrote `/api/:match*` to `https://obsidianide-backend.onrender.com/api/:match*` instead of `https://obsidianide.onrender.com/api/:match*`, causing REST project lookups on Vercel to fail.
+  4. **Creation Stamp Scope**: `CreateProjectModal.jsx` stamped only the owner's catalog document in Firestore upon creation without stamping invited collaborators' catalogs.
+* **Solutions Implemented**:
+  1. **Universal Membership Resolver (`resolveProjectUserRoleAndMembership`)**: Implemented in `src/utils/projectTitle.js` to dynamically resolve membership across map rosters (case-insensitive & object values), array rosters, `teamMembers` inputs, invitation rosters, and author activity history.
+  2. **Multi-Doc Candidate Lookups**: Updated `DashboardPage.jsx` and `ProfilePage.jsx` to query all candidate user doc IDs (`cleanDocId`, `getUserDocId(...)`, `currentUser.uid`).
+  3. **Direct Render API Fallback & Vercel Route Fix**: Corrected `vercel.json` destination to `https://obsidianide.onrender.com/api/:match*` and added direct Render fetch fallback in `DashboardPage.jsx` and `ProfilePage.jsx`.
+  4. **Collaborator Creation Stamping**: `CreateProjectModal.jsx` now stamps user catalog documents for both the owner and all invited teammates in Firestore upon creation.
+  5. **Backend Collaborator Resolution**: Upgraded `addOrMergeProject` in `server/routes/projectRoutes.js` with case-insensitive and multi-format collaborator detection.
+* **QA & Automated Verification**:
+  - Unit test `test_project_membership_fix.js` executed with 6/6 tests passing (100% success).
+  - Production build compiled in **13.85s with 0 errors**.
+  - Pushed to `origin/main` commit `accd188`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
