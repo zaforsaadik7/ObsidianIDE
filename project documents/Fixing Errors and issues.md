@@ -2163,6 +2163,24 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #156: Terminal Out-Of-Memory Crash on Python ML Package Installs & WebSocket Reconnect Resilience
+* **Symptoms**:
+  - While running ML training code after installing `numpy` (and packages like `pandas`, `matplotlib`, `shap`, `scikit-learn`), the Integrated Terminal abruptly disconnected (`OFFLINE`) and failed to come back online, displaying:
+    `[Terminal connection failed at wss://obsidianide.onrender.com/ws/terminal?token=... Ensure backend server is active on Render (obsidianide.onrender.com) or port 5000.]`
+* **Root Cause**:
+  1. **Sandbox Scanner OOM Crash on Render**: Pip installs packages into the user sandbox directory (`sandboxDir/.local/lib/python3.x/site-packages/` and `sandboxDir/.cache/pip/`). When the pip command completed, `scanAndSyncGeneratedFiles` in `server/routes/terminalRoutes.js` recursively walked the entire sandbox, including `.local` and `.cache`. It attempted to read, base64 encode, and JSON-serialize thousands of `.py`, `.so`, and `.whl` package files over WebSocket. This exhausted Render's 512 MB RAM limit, causing the Linux kernel to terminate the Node process (`SIGKILL / OOM`), instantly severing all WebSocket connections.
+  2. **Lack of Frontend WebSocket Reconnection Retry**: In `src/components/ide/InteractiveTerminal.jsx`, when the WebSocket closed unexpectedly during server restarts or network blips, the client did not have an exponential backoff auto-reconnection loop, leaving the terminal permanently in `OFFLINE` status until a hard page refresh.
+* **Solutions Implemented**:
+  1. **Sandbox Package Isolation (`IGNORED_SANDBOX_DIRS`)**: Added an ignore set in `server/routes/terminalRoutes.js` (`.local`, `.cache`, `.config`, `.pip`, `.npm`, `site-packages`, `__pycache__`, `.venv`, `dist-info`, `egg-info`, `.pytest_cache`, `bin`, `lib`, `lib64`) to prevent internal runtime files and package wheels from ever being scanned or synchronized.
+  2. **Safe Artifact Synchronization Caps**: In `scanAndSyncGeneratedFiles`, capped output syncs to user project artifacts only (max 40 files, max 5MB for binaries, max 2MB for text/code) to ensure zero memory exhaustion.
+  3. **Frontend Exponential Backoff Reconnection**: In `src/components/ide/InteractiveTerminal.jsx`, implemented auto-reconnection with exponential backoff on socket close or error, with clean timer resets on manual reconnect.
+* **QA & Automated Verification**:
+  - Automated test suite `test_terminal_sandbox_resilience.js` executed with 200+ simulated `.so`/package files in `.local`—asserted 0 package leaks and clean capture of user artifacts (`main.py`, `model.pkl`, `report.csv`).
+  - Production build compiled in **18.39s with 0 errors**.
+  - Pushed to `origin/main` commit `f48e9dd`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
