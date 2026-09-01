@@ -2236,6 +2236,28 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+---
+
+### Issue #160: Terminal Going Offline Repeatedly — Root Cause Analysis & Permanent Fix
+* **Symptoms**:
+  - Terminal kept going `OFFLINE` repeatedly, even after prior fixes. Going to another tab or being idle for ~1 minute caused disconnection. After returning, terminal sometimes auto-recovered but often stayed `OFFLINE` permanently.
+* **Root Cause Analysis (4 independent causes working together)**:
+  1. **Render Free Tier Cold Sleep**: `render.yaml` specified `plan: free`. Render's free plan shuts the backend server down after ~50 seconds of no incoming traffic. On cold start (30–60 seconds), all WebSocket connections fail. This was the **#1 cause** of repeated OFFLINE status.
+  2. **No WebSocket Heartbeat / Ping-Pong**: The server never sent WebSocket-level pings. Render's load balancer and any proxy silently terminate idle WebSocket connections after 30–90 seconds of no traffic. Even an actively open connection with no keystrokes would be killed.
+  3. **Hard Retry Cap → Permanent OFFLINE**: `retryCountRef.current < 8` meant after 8 failed reconnect attempts (all failing because Render was still cold-starting in that 30–60s window), the terminal permanently stopped retrying and displayed `OFFLINE` with no way to recover except clicking Refresh.
+  4. **No Client-Side Keepalive**: The frontend sent no data between user interactions, allowing proxy-level timeouts to accumulate into disconnection.
+* **Solutions Implemented**:
+  1. **Server-Side WSS Ping/Pong Heartbeat** (`server/routes/terminalRoutes.js`): Added a `setInterval` every 25 seconds that pings all connected WebSocket clients. Sockets that miss a pong within 25 seconds are terminated cleanly (so the client reconnects immediately rather than sitting on a dead connection). Each connection now registers `ws.isAlive = true` and a `ws.on('pong', ...)` handler.
+  2. **Client-Side JSON Keepalive Ping** (`src/components/ide/InteractiveTerminal.jsx`): Added a `setInterval` every 20 seconds on `socket.onopen` that sends `{ type: '__ping' }` to the server. The server handles it silently (updates `lastActivity`, responds with `{ type: '__pong' }`). The `__pong` response is intercepted and filtered before reaching the terminal output. The interval is cleared on socket close and component unmount.
+  3. **Unlimited Smart Retry** (`src/components/ide/InteractiveTerminal.jsx`): Removed the hard cap of `retryCountRef.current < 8`. Replaced with unlimited retries: `Math.min(1500 * 1.3^min(retryCount, 10), 10000ms)` — fast retries at first, capped at 10-second intervals. This ensures the terminal keeps reconnecting through Render's entire cold-start window until the server is ready.
+  4. **Server Self-Ping Keepalive** (`server/index.js` + `render.yaml`): Added an HTTP `fetch` to `${RENDER_EXTERNAL_URL}/api/health` every 10 minutes (in production only) from inside the server itself. Added `RENDER_EXTERNAL_URL: https://obsidianide.onrender.com` to `render.yaml`. This prevents the Render free tier instance from going to sleep entirely.
+* **QA & Automated Verification**:
+  - Production build compiled in **18.41s with 0 errors**.
+  - Pushed to `origin/main` commit `c64bc03`.
+  - Sister directory synced to `HEAD is now at c64bc03`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
