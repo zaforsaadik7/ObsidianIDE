@@ -2200,6 +2200,25 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #158: Integrated Terminal Package Retention Across Sessions & Tab Visibility Auto-Reconnection
+* **Symptoms**:
+  - After installing Python packages (such as `numpy`, `pandas`, `shap`, `scikit-learn`) and running ML scripts, switching to another browser tab or website caused the terminal to disconnect (`OFFLINE`).
+  - Upon returning to ObsidianIDE, previously installed packages were completely gone, throwing `ModuleNotFoundError` and forcing developers to re-download all libraries from scratch.
+* **Root Cause**:
+  1. **Ephemeral Random Session Folders & Aggressive Sandbox Deletion**: In `server/routes/terminalRoutes.js`, each new WebSocket connection was assigned an ephemeral UUID-based directory (`session_${sessionId}`). When the socket closed on page navigation or tab suspension, `cleanupSession()` purged the entire sandbox directory (`fs.rmSync`) from disk. On reconnect, a brand-new random session directory was created with an empty environment.
+  2. **Missing `visibilitychange` Auto-Wakeup**: In `src/components/ide/InteractiveTerminal.jsx`, background tab disconnection caused retry attempts to reach the retry threshold (`retryCountRef.current >= 6`), leaving the terminal stuck in `OFFLINE` status without reconnecting when the developer returned to the tab.
+* **Solutions Implemented**:
+  1. **Persistent Project-Scoped Sandbox Directories**: Replaced ephemeral random session directories with deterministic project-scoped workspaces (`project_${safeProjectId}_${safeUserEmail}`).
+  2. **Non-Destructive Session Cleanup**: Updated `cleanupSession()` in `server/routes/terminalRoutes.js` to kill lingering processes while keeping the sandbox directory, `.local/lib/python*/site-packages`, and pip cache intact on disk across sessions.
+  3. **PYTHONUSERBASE & PYTHONPATH Integration**: In `buildSafeEnvironment()`, configured `safeEnv.PYTHONUSERBASE = sandboxDir` and injected persistent `.local/lib/python*/site-packages` paths into `PYTHONPATH` so all installed libraries are immediately resolved by Python interpreters.
+  4. **Browser Tab Visibility & Window Focus Auto-Reconnection**: Added `document.addEventListener('visibilitychange')` and `window.addEventListener('focus')` in `InteractiveTerminal.jsx` to automatically reset retry limits and re-establish the WebSocket connection whenever the user switches back to ObsidianIDE.
+* **QA & Automated Verification**:
+  - Automated test suite `test_terminal_persistence_across_sessions.js` verified that mock packages (`numpy`, `pandas`) installed in Session 1 remain on disk after socket termination and are immediately accessible in Session 2.
+  - Production build compiled in **15.70s with 0 errors**.
+  - Pushed to `origin/main` commit `e2dd2fb`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
