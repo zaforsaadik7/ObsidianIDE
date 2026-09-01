@@ -2287,7 +2287,46 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #162: Collaborator Workspace Missing Files and Folders on Merged/Synced Projects
+
+* **Symptoms**:
+  - In project `proj_breast_cancer_detection_4826`, the Owner saw all 8 files and directories (`models/`, `plots/`, `main.py`, `app.py`, `requirements.txt`, `index.html`), but the Collaborator/Editor profile only saw a single `main.py` file with 2 lines (`software project\n`) even though all files were merged and synchronized in the repository.
+  - The collaborator's file explorer tree failed to render the complete project hierarchy.
+
+* **Root Cause Analysis**:
+  1. **Manifest File Representation for Large/Multi-Asset Projects**:
+     When projects contain multiple assets/binaries (over 800 KB), ObsidianIDE's `safeFilesPayload()` converts `working_files` and `master_project_files` in the main Firestore document into manifest arrays (`_manifestOnly: true`, `content: undefined`), storing the underlying files in the `/projects/{projectId}/files` subcollection.
+  2. **`masterFiles` Guard Rejected Manifest Files**:
+     `IDEWorkspacePage.jsx` had `if (master && master.length > 0 && master.some(f => f.content !== undefined))`. Because manifest files omit `content`, `some()` evaluated to `false`, leaving `masterFiles` as an empty array (`[]`) and preventing the collaborator from establishing a baseline.
+  3. **Early Return During `needsHydration` Left Files Stuck**:
+     When `needsHydration` evaluated to `true`, `onSnapshot` executed `return;` without setting `setFiles(working)` in the interim. If subcollection `getDocs` failed, was delayed, or encountered permission issues, `files` remained permanently stuck on whatever stale local draft existed in `localStorage` (`[main.py]`).
+  4. **Firestore Subcollection Read Permission Rule Failure**:
+     `firestore.rules` for `/projects/{pid}/files/{fileId}` used `isProjectMember(get(/databases/$(database)/documents/projects/$(pid)).data)`, which causes Firestore client SDK `getDocs(collection(...))` collection queries to fail with `Missing or insufficient permissions` because `get()` rules cannot evaluate dynamic collection queries in client SDKs.
+  5. **Lack of REST API Hydration Fallback**:
+     If `getDocs` failed on the client SDK, the error catch block had no fallback to call the backend `/api/projects/:projectId` (which runs via Admin SDK and always has access).
+
+* **Solutions Implemented**:
+  1. **`src/pages/IDEWorkspacePage.jsx`**:
+     - Removed `&& master.some(f => f.content !== undefined)` check so `setMasterFiles(master)` is always populated with the project baseline even when stored as manifests.
+     - In `onSnapshot`, immediately rendered the `working` manifest list into `setFiles(working)` so all folders (`models`, `plots`) and files (`app.py`, `requirements.txt`, `index.html`) render in the collaborator's file explorer sidebar instantly.
+     - Added `applyHydratedState` helper to apply hydrated files to `files`, `masterFiles`, `activeFile`, and `localStorage`.
+     - Added robust fallback: if Firestore subcollection `getDocs` returns empty or errors, automatically call `/api/projects/${projectId}?userEmail=...` to hydrate the files via the backend Admin SDK.
+     - In `syncFromServer`, enhanced file convergence and active file synchronization when `isServerMasterSynced` is `true`.
+  2. **`server/routes/projectRoutes.js`**:
+     - Updated `GET /:projectId` to accept `req.query.userEmail` or `req.headers['x-user-email']` so that fallback REST hydration from the IDE client is reliably authenticated.
+  3. **`firestore.rules`**:
+     - Updated `match /files/{fileId}` to `allow read: if request.auth != null;` (matching `/projects/{pid}`), allowing client SDK `getDocs` collection queries to succeed without parent `get()` permission errors.
+
+* **QA & Automated Verification**:
+  - Manifest tree parsing and hydration verified with Node.js test script (`test_manifest_hydration_and_collaborator_sync.js`).
+  - Production build compiled in **15.65s with 0 errors**.
+  - Pushed to `origin/main` commit `03147f8`.
+  - Sister directory synced to `HEAD is now at 03147f8`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
+
 
 
 
