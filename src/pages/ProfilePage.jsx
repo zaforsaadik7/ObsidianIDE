@@ -285,7 +285,35 @@ export const ProfilePage = () => {
         console.warn('Client Firestore profile fetch notice:', fsErr);
       }
 
-      // 3. Fetch from Client Firestore 'projects' collection
+      // 3. Query specific candidate project documents directly
+      try {
+        const { getDoc: fsGetDoc, doc: fsDoc } = await import('firebase/firestore');
+        const knownIds = new Set();
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('obsidian_draft_')) {
+            const parts = k.replace('obsidian_draft_', '').split('_');
+            const pidCandidate = parts.slice(0, -1).join('_') || parts[0];
+            if (pidCandidate) knownIds.add(pidCandidate);
+          }
+        }
+        try {
+          const storedIds = JSON.parse(localStorage.getItem('obsidian_known_project_ids') || '[]');
+          if (Array.isArray(storedIds)) storedIds.forEach(id => knownIds.add(id));
+        } catch (e) {}
+
+        for (const pid of knownIds) {
+          if (!pid) continue;
+          try {
+            const pSnap = await fsGetDoc(fsDoc(db, 'projects', pid));
+            if (pSnap.exists()) {
+              upsertProject(pSnap.data(), pSnap.id);
+            }
+          } catch (pGetErr) {}
+        }
+      } catch (knownErr) {}
+
+      // 4. Fetch from Client Firestore 'projects' collection
       try {
         const { getDocs: fsGetDocs, collection: fsCollection } = await import('firebase/firestore');
         const projectsSnap = await fsGetDocs(fsCollection(db, 'projects'));
@@ -299,7 +327,7 @@ export const ProfilePage = () => {
         console.warn("Client Firestore projects collection lookup notice:", colErr);
       }
 
-      // 4. Fetch from Backend /api/projects REST API (with direct Render fallback)
+      // 5. Fetch from Backend /api/projects REST API (with direct Render fallback)
       try {
         const token = currentUser?.getIdToken ? await currentUser.getIdToken() : '';
         const apiUrls = [

@@ -372,6 +372,27 @@ router.get('/', verifyToken, async (req, res) => {
   }
 });
 
+// POST /api/projects/sync-catalog: Populate and synchronize in-memory project store from client catalogs
+router.post('/sync-catalog', verifyTokenOptional, async (req, res) => {
+  try {
+    const { projects } = req.body;
+    let addedCount = 0;
+    if (Array.isArray(projects)) {
+      projects.forEach(p => {
+        if (p && (p.projectId || p.id)) {
+          const pid = p.projectId || p.id;
+          const existing = inMemoryProjectStore.get(pid) || {};
+          inMemoryProjectStore.set(pid, { ...existing, ...p, projectId: pid });
+          addedCount++;
+        }
+      });
+    }
+    res.json({ status: 'SUCCESS', syncedCount: addedCount, totalProjects: inMemoryProjectStore.size });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to sync project catalog', details: err.message });
+  }
+});
+
 // DELETE /api/projects/:projectId: Permanently delete project (for Owner) or unlink (for Collaborator)
 router.delete('/:projectId', verifyToken, async (req, res) => {
   try {

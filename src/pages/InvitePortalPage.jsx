@@ -3,7 +3,8 @@ import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { db, getFirebaseIdToken } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { getUserDocId } from '../context/AuthContext';
 
 export const InvitePortalPage = () => {
   const { inviteId } = useParams();
@@ -151,6 +152,57 @@ export const InvitePortalPage = () => {
         setAuthMessage(errData?.error || 'This invitation could not be accepted. Please contact the project owner.');
         return;
       }
+
+      // 1. Record known project ID locally for instant cross-session resilience
+      try {
+        const storedIds = JSON.parse(localStorage.getItem('obsidian_known_project_ids') || '[]');
+        if (!storedIds.includes(targetPid)) {
+          storedIds.push(targetPid);
+          localStorage.setItem('obsidian_known_project_ids', JSON.stringify(storedIds));
+        }
+      } catch (e) {}
+
+      // 2. Auto-stamp collaborator user catalog in Firestore
+      if (currentUser?.email) {
+        try {
+          const userDocId = getUserDocId(currentUser.email, currentUser.displayName);
+          await setDoc(doc(db, 'users', userDocId), {
+            info: { email: currentUser.email, fullName: currentUser.displayName || '' },
+            projects: {
+              [targetPid]: {
+                projectId: targetPid,
+                title: projectInfo.title,
+                userRole: projectInfo.assignedRole || 'EDITOR',
+                ownerEmail: projectInfo.ownerEmail,
+                updatedAt: new Date().toISOString()
+              }
+            }
+          }, { merge: true });
+        } catch (fsDocErr) {
+          console.warn('User doc catalog stamp notice:', fsDocErr);
+        }
+      }
+
+      // 3. Sync to backend in-memory catalog
+      const syncObj = {
+        projects: [{
+          projectId: targetPid,
+          title: projectInfo.title,
+          ownerEmail: projectInfo.ownerEmail,
+          userRole: projectInfo.assignedRole || 'EDITOR',
+          updatedAt: new Date().toISOString()
+        }]
+      };
+      fetch('/api/projects/sync-catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(syncObj)
+      }).catch(() => {});
+      fetch('https://obsidianide.onrender.com/api/projects/sync-catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(syncObj)
+      }).catch(() => {});
 
       await refreshProfile();
       navigate(`/ide/${targetPid}`);

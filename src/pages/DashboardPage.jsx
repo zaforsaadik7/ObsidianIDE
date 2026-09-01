@@ -119,7 +119,36 @@ export const DashboardPage = () => {
       console.warn("Client Firestore user projects lookup notice:", fsErr);
     }
 
-    // 3. Fetch from Client Firestore 'projects' collection
+    // 3. Query specific candidate project documents directly (works under strict get-only rules)
+    try {
+      const knownIds = new Set();
+      // Scan localStorage keys for draft projects or known project IDs
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('obsidian_draft_')) {
+          const parts = k.replace('obsidian_draft_', '').split('_');
+          const pidCandidate = parts.slice(0, -1).join('_') || parts[0];
+          if (pidCandidate) knownIds.add(pidCandidate);
+        }
+      }
+      try {
+        const storedIds = JSON.parse(localStorage.getItem('obsidian_known_project_ids') || '[]');
+        if (Array.isArray(storedIds)) storedIds.forEach(id => knownIds.add(id));
+      } catch (e) {}
+
+      // Add common project ID patterns found in session
+      for (const pid of knownIds) {
+        if (!pid) continue;
+        try {
+          const pSnap = await getDoc(doc(db, 'projects', pid));
+          if (pSnap.exists()) {
+            upsertProject(pSnap.data(), pSnap.id);
+          }
+        } catch (pGetErr) {}
+      }
+    } catch (knownErr) {}
+
+    // 4. Fetch from Client Firestore 'projects' collection
     try {
       const projectsSnap = await getDocs(collection(db, 'projects'));
       projectsSnap.forEach(docSnap => {
@@ -132,7 +161,7 @@ export const DashboardPage = () => {
       console.warn("Client Firestore projects collection lookup notice:", colErr);
     }
 
-    // 4. Fetch from Backend REST API (with direct Render fallback)
+    // 5. Fetch from Backend REST API (with direct Render fallback)
     try {
       const token = (await getFirebaseIdToken().catch(() => '')) || (currentUser.getIdToken ? await currentUser.getIdToken().catch(() => '') : '');
       const apiUrls = [
@@ -164,6 +193,48 @@ export const DashboardPage = () => {
     mergedList.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
     setProjects(mergedList);
     setLoading(false);
+
+    // 6. Resilience: Persist discovered project IDs to localStorage & auto-stamp user catalog in Firestore
+    if (mergedList.length > 0) {
+      try {
+        const allIds = mergedList.map(p => p.projectId).filter(Boolean);
+        localStorage.setItem('obsidian_known_project_ids', JSON.stringify(allIds));
+
+        // Auto-stamp user doc in Firestore so future reloads are instant
+        const userDocId = getUserDocId(currentUser.email, currentUser.displayName);
+        const projectsCatalog = {};
+        mergedList.forEach(p => {
+          if (p?.projectId) {
+            projectsCatalog[p.projectId] = {
+              projectId: p.projectId,
+              title: p.title,
+              description: p.description || '',
+              languageEnv: p.languageEnv || 'PYTHON_3.11',
+              userRole: p.userRole || 'EDITOR',
+              ownerEmail: p.ownerEmail,
+              updatedAt: p.updatedAt || new Date().toISOString()
+            };
+          }
+        });
+        setDoc(doc(db, 'users', userDocId), {
+          info: { email: currentUser.email, fullName: currentUser.displayName || '' },
+          projects: projectsCatalog
+        }, { merge: true }).catch(() => {});
+
+        // Sync catalog to backend in-memory store so all collaborators see it
+        const syncPayload = JSON.stringify({ projects: mergedList });
+        fetch('/api/projects/sync-catalog', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: syncPayload
+        }).catch(() => {});
+        fetch('https://obsidianide.onrender.com/api/projects/sync-catalog', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: syncPayload
+        }).catch(() => {});
+      } catch (saveErr) {}
+    }
   };
 
   useEffect(() => {

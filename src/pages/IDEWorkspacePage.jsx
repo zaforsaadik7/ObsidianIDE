@@ -265,18 +265,67 @@ export const IDEWorkspacePage = () => {
           const docOwnerEmail = (data.ownerEmail || '').trim().toLowerCase();
           if (docOwnerEmail) projectOwnerEmailRef.current = docOwnerEmail;
 
+          let resolvedRole = 'EDITOR';
           if (docOwnerEmail && docOwnerEmail === userEmail) {
+            resolvedRole = 'OWNER';
             setServerUserRole('OWNER');
           } else if (data.collaborators && userEmail) {
             const matchedKey = Object.keys(data.collaborators).find(k => k.toLowerCase() === userEmail);
             if (matchedKey) {
               const rv = data.collaborators[matchedKey];
               const roleName = typeof rv === 'string' ? rv.toUpperCase() : (rv?.role || 'EDITOR').toUpperCase();
+              resolvedRole = roleName;
               setServerUserRole(roleName);
             } else {
               setServerUserRole('EDITOR');
             }
           }
+
+          // Resilience: Record project in user's localStorage and stamp user document catalog in Firestore
+          try {
+            const storedIds = JSON.parse(localStorage.getItem('obsidian_known_project_ids') || '[]');
+            if (!storedIds.includes(projectId)) {
+              storedIds.push(projectId);
+              localStorage.setItem('obsidian_known_project_ids', JSON.stringify(storedIds));
+            }
+            if (currentUser?.email) {
+              const userDocId = (currentUser.email.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+              setDoc(doc(db, 'users', userDocId), {
+                info: { email: currentUser.email, fullName: currentUser.displayName || '' },
+                projects: {
+                  [projectId]: {
+                    projectId,
+                    title: data.title || projectId,
+                    description: data.description || '',
+                    languageEnv: data.languageEnv || 'PYTHON_3.11',
+                    ownerEmail: data.ownerEmail,
+                    userRole: resolvedRole,
+                    updatedAt: new Date().toISOString()
+                  }
+                }
+              }, { merge: true }).catch(() => {});
+
+              const syncObj = {
+                projects: [{
+                  projectId,
+                  title: data.title || projectId,
+                  ownerEmail: data.ownerEmail,
+                  userRole: resolvedRole,
+                  updatedAt: new Date().toISOString()
+                }]
+              };
+              fetch('/api/projects/sync-catalog', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(syncObj)
+              }).catch(() => {});
+              fetch('https://obsidianide.onrender.com/api/projects/sync-catalog', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(syncObj)
+              }).catch(() => {});
+            }
+          } catch (e) {}
 
           // 2. Resolve Master Baseline (Strictly from master_project_files, falling back to project_files or working_files)
           const master = (data.master_project_files && data.master_project_files.length > 0)

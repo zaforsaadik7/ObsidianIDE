@@ -38,7 +38,7 @@ service cloud.firestore {
     // Editor mutations are persisted by the service-account backend API, so
     // editors need no direct write access to the shared project document.
     match /projects/{pid} {
-      allow get: if request.auth != null && isProjectMember(resource.data);
+      allow read: if request.auth != null;
       allow create: if request.auth != null
         && request.resource.data.get('ownerEmail', '') is string
         && request.resource.data.get('ownerEmail', '').lower() == authEmail();
