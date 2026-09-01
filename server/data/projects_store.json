@@ -1,0 +1,21 @@
+[
+  {
+    "projectId": "proj_new_5032",
+    "title": "new",
+    "ownerEmail": "sdpbubt@gmail.com",
+    "collaborators": {
+      "zafor.saadik7@gmail.com": "EDITOR"
+    },
+    "memberEmails": [
+      "sdpbubt@gmail.com",
+      "zafor.saadik7@gmail.com"
+    ],
+    "collaboratorEmails": [
+      "zafor.saadik7@gmail.com"
+    ],
+    "rosterEmails": [
+      "sdpbubt@gmail.com",
+      "zafor.saadik7@gmail.com"
+    ]
+  }
+]

@@ -2325,7 +2325,37 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #163: Full Codebase Audit and Redundant Dead Code Elimination
+
+* **Symptoms / Context**:
+  - The repository accumulated unused legacy components, sample auto-generated templates, deprecated flat file routes, and one-off helper scripts from earlier prototyping iterations.
+
+* **Audit Findings & Deletions**:
+  1. **Firebase Data Connect Sample Template (`src/dataconnect-generated/`)**:
+     - Auto-generated movie review connector from initial experimental Data Connect trial. Completely unused as ObsidianIDE interfaces with Firestore via `src/firebase.js` and `server/config/firebaseAdmin.js`.
+     - *Removed 9 files*: `.guides/config.json`, `.guides/setup.md`, `.guides/usage.md`, `esm/index.esm.js`, `esm/package.json`, `index.cjs.js`, `index.d.ts`, `package.json`, `README.md`.
+  2. **Unreferenced Frontend Components**:
+     - `src/components/ide/AITerminalPanel.jsx`: Legacy AI terminal panel; active terminal is `InteractiveTerminal.jsx`.
+     - `src/components/ide/ReviewDrawer.jsx`: Legacy staging drawer; active review diff workflow is `GitHubDiffViewer.jsx`.
+     - `src/components/layout/ThemeToggle.jsx`: Empty stub (`return null;`).
+  3. **Deprecated Backend Route Files**:
+     - `server/routes/fileRoutes.js`: Legacy flat collection `/api/files` routes; replaced by `projectRoutes.js` (`/api/projects/update-files`, `/api/projects/sync-master`).
+     - `server/routes/patchRoutes.js`: Legacy `/api/patches` routes; replaced by `projectRoutes.js` (`/api/projects/save-and-sync`, `/api/projects/resolve-patch`).
+     - Unmounted both routes from `server/index.js`.
+  4. **Unused Wrapper Scripts & Scratch Test Files**:
+     - `scripts/start-backend.mjs`, `scripts/start-frontend.mjs`, `scripts/start-preview.mjs`: Unused script wrappers.
+     - `scratch/test_ai_generated_files_selection.js`, `scratch/test_terminal_persistence_across_sessions.js`: Scratch test scripts.
+
+* **QA & Automated Verification**:
+  - Production build compiled in **14.85s with 0 errors**.
+  - Server unit tests (`server/tests/projectRoutes.test.js`) passed successfully (`1/1 tests ok`).
+  - Dual workspace synchronization executed.
+  - Push committed with `[skip ci] [skip vercel] [skip render]` deployment suppression directives.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
+
 
 
 

@@ -21,8 +21,6 @@ process.on('uncaughtException', (err) => {
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import projectRoutes from './routes/projectRoutes.js';
 import userRoutes from './routes/userRoutes.js';
-import fileRoutes from './routes/fileRoutes.js';
-import patchRoutes from './routes/patchRoutes.js';
 import aiAgentRoutes from './routes/aiAgentRoutes.js';
 import execRoutes from './routes/execRoutes.js';
 import githubRoutes from './routes/githubRoutes.js';
@@ -75,8 +73,6 @@ app.use(telemetryMiddleware);
 // Routes
 app.use('/api/projects', projectRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/files', fileRoutes);
-app.use('/api/patches', patchRoutes);
 app.use('/api/ai-agent', aiAgentRoutes);
 app.use('/api/exec', execRoutes);
 app.use('/api/github', githubRoutes);
