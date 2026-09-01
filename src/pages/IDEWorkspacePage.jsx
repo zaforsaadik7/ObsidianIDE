@@ -1560,11 +1560,11 @@ export const IDEWorkspacePage = () => {
 
       if (isActiveMatched) {
         setCurrentContent(newContent);
-        setSavedContent(newContent);
+        // Do NOT overwrite savedContent here so the file remains in an Unsaved (dirty dot ●) state for user review
         setActiveFile(prev => ({ ...prev, content: newContent }));
       }
 
-      // Update in openFiles tabs as well
+      // Update in openFiles tabs as well (keeping working buffer)
       setOpenFiles(prev => prev.map(f => {
         if (
           (existingFile && (f.fileId === existingFile.fileId || clean(f.filePath) === clean(existingFile.filePath))) ||
@@ -1577,49 +1577,12 @@ export const IDEWorkspacePage = () => {
         return f;
       }));
 
-      // Persist to Client Firestore
+      // Cache locally in offline draft storage for safety without auto-committing
       try {
-        const manifestFiles = toManifest(updatedFiles);
-        await setDoc(doc(db, 'projects', projectId), {
-          working_files: manifestFiles,
-          updatedAt: new Date().toISOString(),
-          lastWorkingModifiedBy: userEmail
-        }, { merge: true });
+        localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(updatedFiles));
+      } catch (e) {}
 
-        const modFile = updatedFiles.find(f => (existingFile && (f.fileId === existingFile.fileId || clean(f.filePath) === clean(existingFile.filePath))) || clean(f.filePath) === targetClean);
-        if (modFile && (modFile.fileId || modFile.filePath)) {
-          const fileDocId = modFile.fileId || `file_${projectId}_${modFile.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-          setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
-            fileId: String(fileDocId),
-            projectId: String(projectId),
-            filePath: String(modFile.filePath),
-            fileName: String(modFile.fileName || modFile.filePath.split('/').pop()),
-            content: String(newContent || ''),
-            fileType: String(modFile.fileType || 'plaintext'),
-            isBinary: Boolean(modFile.isBinary),
-            size: Number(newContent ? newContent.length : 0),
-            updatedAt: new Date().toISOString(),
-            lastModifiedBy: userEmail
-          }, { merge: true }).catch(() => {});
-        }
-
-        await fetch('/api/projects/update-files', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({
-            projectId,
-            working_files: updatedFiles,
-            master_project_files: masterFiles,
-            userEmail,
-            ownerEmail: projectData?.ownerEmail
-          })
-        });
-      } catch (fsErr) { }
-
-      showNotificationToast(`⚡ Applied AI edits to ${actualFilePath}`, 3500);
+      showNotificationToast(`⚡ Applied AI edits to ${actualFilePath} (Unsaved)`, 3500);
     } catch (err) {
       console.error('Error applying AI modifications:', err);
       alert(`Failed to apply edits: ${err.message}`);
