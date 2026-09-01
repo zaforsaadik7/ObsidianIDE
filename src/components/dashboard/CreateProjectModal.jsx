@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { auth } from '../../firebase';
+import { auth, db } from '../../firebase';
+import { doc, setDoc } from 'firebase/firestore';
 
 export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
   const { currentUser, userProfile } = useAuth();
@@ -125,6 +126,39 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
       createResult = await createResponse.json().catch(() => ({}));
       if (!createResponse.ok) {
         throw new Error(createResult.message || createResult.error || 'The project could not be created.');
+      }
+
+      // The Render backend runs without a Firestore service account, so its copy
+      // of the project lives only in process memory and dies on the next deploy
+      // or restart. The owner's browser is allowed to create the project document
+      // (firestore.rules), so persist the server-authoritative copy plus the
+      // owner's dashboard catalog entry here to keep the project durable.
+      const durableProject = (createResult.project && createResult.project.projectId)
+        ? createResult.project
+        : newProject;
+      try {
+        await setDoc(doc(db, 'projects', pid), durableProject);
+      } catch (fsErr) {
+        console.warn('Project cloud persistence notice:', fsErr);
+      }
+      try {
+        const ownerDocId = (ownerEmail.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        await setDoc(doc(db, 'users', ownerDocId), {
+          info: { email: ownerEmail },
+          projects: {
+            [pid]: {
+              projectId: pid,
+              title: newProject.title,
+              description: newProject.description,
+              languageEnv: newProject.languageEnv,
+              userRole: 'OWNER',
+              ownerEmail,
+              updatedAt: timestamp
+            }
+          }
+        }, { merge: true });
+      } catch (uErr) {
+        console.warn('Owner project catalog stamp notice:', uErr);
       }
     } catch (err) {
       setError(err.message || 'The project could not be created.');
