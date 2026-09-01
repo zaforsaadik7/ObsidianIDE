@@ -2148,6 +2148,21 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #155: Cross-Device File Storage & Folder Upload Backend Resilience
+* **Symptoms**:
+  - When opening a project workspace on a different device / clean browser session, files and uploaded folder structures failed to load or were missing despite having been saved the previous night.
+* **Root Cause**:
+  1. **Storage Guard Service Account Dependency**: In `server/routes/fileRoutes.js`, operations (`GET /api/files/:projectId`, `PUT /api/files/:fileId`, `POST /api/files`, `DELETE /api/files/:fileId`) were gated behind `requireStorage()` checking `adminDb`. On Render free tier deployments where `adminDb` is not configured, `GET` returned an empty array `[]` and `PUT`/`POST`/`DELETE` rejected requests with `503 File storage backend is unavailable`.
+  2. **Missing Disk Persistence on File Mutation Routes**: In `server/routes/projectRoutes.js`, routes like `POST /api/projects/update-files` and `POST /api/projects/sync-master` updated in-memory state without invoking `persistStoreToDisk()`, causing uploaded folders and modified file arrays to be lost when the container slept.
+* **Solutions Implemented**:
+  1. **Resilient In-Memory & Disk Fallback in `fileRoutes.js`**: Updated all file CRUD operations in `server/routes/fileRoutes.js` to look up, create, modify, and delete files inside `inMemoryProjectStore` backed by `persistStoreToDisk()` whenever `adminDb` is unavailable.
+  2. **Guaranteed File Persistence on Project Update Routes**: Added `persistStoreToDisk()` to `POST /api/projects/update-files` and `POST /api/projects/sync-master` in `server/routes/projectRoutes.js`.
+* **QA & Automated Verification**:
+  - Production build compiled in **12.54s with 0 errors**.
+  - Pushed to `origin/main` commit `1973b08`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
