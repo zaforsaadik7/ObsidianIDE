@@ -356,6 +356,7 @@ export function createTerminalWebSocket() {
     }
 
     // ── 2. Create / Reattach Persistent Project Sandbox ──────────────────────
+    const sessionId = uuidv4().slice(0, 8); // Short UUID used as a session map key & timer handle
     const safeProjectId = (projectId || 'workspace').replace(/[^a-zA-Z0-9_-]/g, '_');
     const safeUserEmail = (authenticatedEmail || 'developer').split('@')[0].replace(/[^a-zA-Z0-9_-]/g, '_');
     const sandboxDir = path.join(SANDBOX_ROOT, `project_${safeProjectId}_${safeUserEmail}`);
