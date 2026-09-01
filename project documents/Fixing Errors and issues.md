@@ -2108,6 +2108,23 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #153: Project Ownership Overwrite & Multi-Account Simultaneous Repository Visibility
+* **Symptoms**:
+  - After fixing collaborator repository discovery, refreshing the collaborator profile showed the repository as `EDITOR`, but the owner profile switched to showing `"No Workspace Repositories Found"`.
+* **Root Cause**:
+  1. **Catalog Sync Field Clobbering**: In `server/routes/projectRoutes.js` (`POST /api/projects/sync-catalog`), `inMemoryProjectStore.set(pid, { ...existing, ...p })` allowed an undefined or empty `ownerEmail` sent from a collaborator's client to overwrite the project's true `ownerEmail` in memory.
+  2. **Role Misattribution**: Storing `userRole: 'EDITOR'` globally on the backend project object caused subsequent queries by the owner (`GET /api/projects`) to treat the project as editor-only rather than owner-owned.
+  3. **Personal User Catalog Flagging**: Projects loaded directly from a user's personal Firestore document were not explicitly flagged as authenticated user catalog entries, causing fallback membership checks to fail if `ownerEmail` was missing.
+* **Solutions Implemented**:
+  1. **Strict Metadata Protection**: In `server/routes/projectRoutes.js` (`POST /api/projects/sync-catalog`), ensured `ownerEmail` is never overwritten by undefined/empty values (`p.ownerEmail || existing.ownerEmail`), and merged `collaborators` maps cleanly without dropping the owner.
+  2. **Dynamic Per-User Role Resolution**: In `GET /api/projects` and `resolveProjectUserRoleAndMembership`, `userRole` is computed dynamically per caller (`OWNER` if caller matches `ownerEmail`, `EDITOR`/assigned role if caller is in `collaborators`).
+  3. **Preserved Catalog Sync Payloads**: In `DashboardPage.jsx`, guaranteed `syncPayload` includes `userEmail` and preserves the authoritative `ownerEmail` (or falls back to `currentUser.email` if the user is the owner).
+* **QA & Automated Verification**:
+  - Production build compiled in **11.95s with 0 errors**.
+  - Pushed to `origin/main` commit `0cabbbc`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
