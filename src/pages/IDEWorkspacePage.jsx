@@ -1093,71 +1093,6 @@ export const IDEWorkspacePage = () => {
     } catch (e) {}
   };
 
-  // â”€â”€ 1. Save to Editor's Local Draft & Project Cloud (No Fork Push to Owner) â”€â”€
-  const handleSaveToLocalStorage = async () => {
-    const targetFile = activeFileRef.current || activeFile;
-    setIsSaving(true);
-    setSaveSyncSuccessMsg('');
-    try {
-      const userEmail = currentUser?.email || 'developer@obsidian.io';
-      const timestamp = new Date().toISOString();
-
-      localMutationTimestampRef.current = Date.now();
-
-      const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
-      let updatedFiles = currentFiles;
-      if (targetFile) {
-        updatedFiles = currentFiles.map(f =>
-          (f.fileId === targetFile.fileId || f.filePath === targetFile.filePath)
-            ? { ...f, content: currentContent, updatedAt: timestamp, lastModifiedBy: userEmail }
-            : f
-        );
-        if (!updatedFiles.some(f => f.fileId === targetFile.fileId || f.filePath === targetFile.filePath)) {
-          updatedFiles.push({ ...targetFile, content: currentContent, updatedAt: timestamp, lastModifiedBy: userEmail });
-        }
-      }
-
-      localFilesRef.current = updatedFiles;
-      setFiles(updatedFiles);
-        // Check which files are new or modified compared to previous local draft
-      let changedFilesCount = 0;
-      try {
-        const existingDraftRaw = localStorage.getItem(`obsidian_draft_${projectId}_${userEmail}`);
-        const existingDraft = existingDraftRaw ? JSON.parse(existingDraftRaw) : [];
-        const existingMap = new Map(existingDraft.map(f => [f.filePath, f.content]));
-        changedFilesCount = updatedFiles.filter(f => !existingMap.has(f.filePath) || existingMap.get(f.filePath) !== f.content).length;
-      } catch (e) {
-        changedFilesCount = updatedFiles.length;
-      }
-
-      // 1. Persist local offline draft in browser localStorage
-      try {
-        localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(updatedFiles));
-      } catch (e) { }
-
-      // 2. Update User Catalog in website DB
-      const userDocUsername = (userEmail.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
-      try {
-        await setDoc(doc(db, 'users', userDocUsername), {
-          projects: {
-            [projectId]: {
-              projectId,
-              title: projectData?.title || projectId,
-              lastModifiedAt: timestamp
-            }
-          }
-        }, { merge: true });
-      } catch (uErr) { }
-
-      showNotificationToast(`💾 Saved ${changedFilesCount || updatedFiles.length} file(s) to your Local Draft & ObsidianIDE Cloud!`, 3500);
-    } catch (err) {
-      console.error('Error saving to local storage:', err);
-      alert(`Failed to save to local storage: ${err.message}`);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   // ── 2. Request Fork / Submit Working Copy to Project Owner ─────────────────
   const handleRequestFork = async () => {
     const targetFile = activeFileRef.current || activeFile;
@@ -1259,12 +1194,12 @@ export const IDEWorkspacePage = () => {
     }
   };
 
-  // General Save Handler (Dispatches to Local Save or Owner Commit)
+  // General Save Handler (Dispatches to Owner Commit or Editor Fork Request)
   const handleSaveFile = () => {
     if (isProjectOwner) {
       handleSaveAndSyncMaster();
     } else {
-      handleSaveToLocalStorage();
+      handleRequestFork();
     }
   };
 
@@ -3464,7 +3399,7 @@ export const IDEWorkspacePage = () => {
             <span>AI Assistant</span>
           </button>
 
-          {/* â”€â”€ Dual-Tier Architecture: Owner Master Commit vs Editor Local Save & Fork Request â”€â”€ */}
+          {/* â”€â”€ Dual-Tier Architecture: Owner Master Commit vs Editor Fork Request â”€â”€ */}
           {isProjectOwner ? (
             <div className="flex items-center gap-2">
               <button
@@ -3495,15 +3430,6 @@ export const IDEWorkspacePage = () => {
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleSaveToLocalStorage}
-                disabled={isSaving}
-                className="flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 text-cyan-300 border border-cyan-500/40 px-3 py-1 text-xs rounded-md font-bold transition-all cursor-pointer font-mono shadow-sm active:scale-95"
-                title="Save modified and new files to your local draft & the project cloud"
-              >
-                <span className="material-symbols-outlined text-sm">{isSaving ? 'sync' : 'save'}</span>
-                <span>Save to Local</span>
-              </button>
               {/* Request Fork button ONLY appears when Editor has modified code or staged uncommitted changes */}
               {hasEditorForkChanges && (
                 <button
@@ -3608,7 +3534,7 @@ export const IDEWorkspacePage = () => {
                     <span className="material-symbols-outlined text-base text-cyan-400">cloud_download</span>
                     <div>
                       <span className="font-bold text-cyan-300">Master Updated by Owner:</span>{' '}
-                      <span>The Project Owner updated repository files. Click &apos;Save to Local&apos; to save a local copy.</span>
+                      <span>The Project Owner updated repository files. Your workspace refreshes automatically from Master.</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
