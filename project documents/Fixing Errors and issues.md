@@ -2060,6 +2060,20 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #150: Preserving Unsaved Dirty State for AI-Applied Code Edits
+* **Symptoms**:
+  - Applying code generated or modified by the Agentic AI sidebar automatically cleared the unsaved dirty dot `●` and immediately persisted changes to the project's cloud working tree before the user had a chance to test, review, or manually save.
+* **Root Cause**:
+  - In `src/pages/IDEWorkspacePage.jsx` (`handleApplyAIModifications`), `setSavedContent(newContent)` was called immediately upon applying the AI diff, forcing `currentContent === savedContent` and immediately executing background cloud Firestore mutations (`setDoc` and `/api/projects/update-files`).
+* **Solutions Implemented**:
+  1. **Preserved Saved Baseline**: In `handleApplyAIModifications`, retained the existing `savedContent` baseline rather than overwriting it with `newContent`. `currentContent !== savedContent` now correctly triggers the Unsaved `●` dirty dot indicator on the open file tab and toolbar.
+  2. **Deferred Cloud Commits**: Removed automatic cloud Firestore writes on AI apply; changes are now safely staged in the local editor buffer and offline draft storage until the user explicitly presses **Ctrl+S** or clicks **"Save & Sync to Master"** (or Request Fork).
+* **QA & Automated Verification**:
+  - Production build compiled in **20.42s with 0 errors**.
+  - Pushed to `origin/main` commit `c6a602a`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
