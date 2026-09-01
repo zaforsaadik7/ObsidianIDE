@@ -44,6 +44,8 @@ export const InteractiveTerminal = ({
   const wsRef = useRef(null);
   const outputBufferRef = useRef('');
   const authBlockedRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const reconnectTimerRef = useRef(null);
 
   const [sessionStatus, setSessionStatus] = useState('disconnected'); // 'disconnected' | 'connecting' | 'connected' | 'error'
   const [lastRunTimestamp, setLastRunTimestamp] = useState(null);
@@ -192,6 +194,8 @@ export const InteractiveTerminal = ({
 
       socket.onopen = () => {
         authBlockedRef.current = false;
+        retryCountRef.current = 0;
+        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
         setSessionStatus('connected');
         try {
           fitAddonRef.current?.fit();
@@ -236,6 +240,16 @@ export const InteractiveTerminal = ({
           return;
         }
         setSessionStatus('disconnected');
+
+        // Auto-reconnect with exponential backoff if not closed due to auth rejection
+        if (!authBlockedRef.current && retryCountRef.current < 6) {
+          const delay = Math.min(1500 * Math.pow(1.4, retryCountRef.current), 8000);
+          retryCountRef.current += 1;
+          if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = setTimeout(() => {
+            connectWebSocket();
+          }, delay);
+        }
       };
 
       socket.onerror = () => {
@@ -243,8 +257,18 @@ export const InteractiveTerminal = ({
           createSocket(fallbackWsUrl, true);
         } else {
           setSessionStatus('error');
-          term?.writeln(`\r\n\x1b[31m[Terminal connection failed at ${targetUrl}. Ensure backend server is active on Render (obsidianide.onrender.com) or port 5000.]\x1b[0m`);
           wsRef.current = null;
+
+          if (!authBlockedRef.current && retryCountRef.current < 6) {
+            const delay = Math.min(2000 * Math.pow(1.4, retryCountRef.current), 8000);
+            retryCountRef.current += 1;
+            if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = setTimeout(() => {
+              connectWebSocket();
+            }, delay);
+          } else {
+            term?.writeln(`\r\n\x1b[31m[Terminal connection failed at ${targetUrl}. Click Refresh or re-open project to reconnect.]\x1b[0m`);
+          }
         }
       };
 
@@ -324,16 +348,19 @@ export const InteractiveTerminal = ({
     if (onOutput) onOutput('');
   }, [onOutput]);
 
-  const handleReconnect = () => {
+  const handleReconnect = useCallback(() => {
     authBlockedRef.current = false;
+    retryCountRef.current = 0;
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     if (wsRef.current) {
-      wsRef.current.close();
+      try { wsRef.current.close(); } catch {}
       wsRef.current = null;
     }
+    xtermInstanceRef.current?.writeln('\r\n\x1b[36m[Reconnecting terminal session...]\x1b[0m');
     setTimeout(() => {
       connectWebSocket();
     }, 200);
-  };
+  }, [connectWebSocket]);
 
   // Expose controller to parent
   useEffect(() => {

@@ -182,20 +182,52 @@ function populateWorkspaceFilesToSandbox(sandboxDir, workspaceFiles = []) {
   }
 }
 
-function getSandboxFileTree(dir, base = '') {
+const IGNORED_SANDBOX_DIRS = new Set([
+  '.git', 'node_modules', '.venv', 'venv', 'env', '__pycache__',
+  '.local', '.cache', '.config', '.pip', '.npm', '.cargo', '.rustup',
+  'site-packages', 'dist-info', 'egg-info', '.pytest_cache', '.mypy_cache',
+  'build', 'dist', '.coverage', 'bin', 'scripts', 'include', 'share', 'lib', 'lib64',
+  '.ipynb_checkpoints', '.vscode', '.idea'
+]);
+
+function getSandboxFileTree(dir, base = '', depth = 0) {
   const results = [];
-  if (!fs.existsSync(dir)) return results;
+  if (depth > 6 || !fs.existsSync(dir)) return results;
   try {
     const list = fs.readdirSync(dir, { withFileTypes: true });
     for (const item of list) {
-      if (item.name === '.git' || item.name === 'node_modules' || item.name === '.venv' || item.name === '__pycache__') continue;
+      const nameLower = item.name.toLowerCase();
+      // Skip hidden runtime/package directories
+      if (
+        IGNORED_SANDBOX_DIRS.has(nameLower) ||
+        nameLower.startsWith('.') ||
+        nameLower.endsWith('.dist-info') ||
+        nameLower.endsWith('.egg-info')
+      ) {
+        continue;
+      }
+
       const relPath = base ? `${base}/${item.name}` : item.name;
       const fullPath = path.join(dir, item.name);
+
       if (item.isDirectory()) {
-        results.push(...getSandboxFileTree(fullPath, relPath));
+        results.push(...getSandboxFileTree(fullPath, relPath, depth + 1));
       } else if (item.isFile()) {
-        // Skip compiler intermediates
-        if (item.name.endsWith('.obj') || item.name.endsWith('.o') || item.name.endsWith('.tmp')) continue;
+        // Skip compiler intermediates, system libraries, and bytecode
+        if (
+          item.name.endsWith('.obj') ||
+          item.name.endsWith('.o') ||
+          item.name.endsWith('.tmp') ||
+          item.name.endsWith('.pyc') ||
+          item.name.endsWith('.pyo') ||
+          item.name.endsWith('.so') ||
+          item.name.endsWith('.dylib') ||
+          item.name.endsWith('.dll') ||
+          item.name.endsWith('.a') ||
+          item.name.endsWith('.whl')
+        ) {
+          continue;
+        }
         results.push({
           relPath: relPath.replace(/\\/g, '/'),
           fullPath,
@@ -212,16 +244,30 @@ function scanAndSyncGeneratedFiles(sandboxDir, ws, projectId, authenticatedEmail
     const filesOnDisk = getSandboxFileTree(sandboxDir);
     if (filesOnDisk.length === 0) return [];
 
+    // Filter and cap to user project artifacts only (e.g. models, charts, outputs, source files)
+    const MAX_SYNC_FILES = 40;
+    const MAX_BINARY_SIZE = 5 * 1024 * 1024; // 5MB limit for generated images/models
+    const MAX_TEXT_SIZE = 2 * 1024 * 1024; // 2MB limit for text/code
+
     const generatedFiles = [];
-    const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB limit
-
-    for (const file of filesOnDisk) {
+    for (const file of filesOnDisk.slice(0, MAX_SYNC_FILES)) {
       try {
-        const stat = fs.statSync(file.fullPath);
-        if (stat.size > MAX_FILE_SIZE) continue;
+        const lowerRel = file.relPath.toLowerCase();
+        if (
+          lowerRel.includes('site-packages') ||
+          lowerRel.includes('.local') ||
+          lowerRel.includes('.cache') ||
+          lowerRel.includes('__pycache__')
+        ) {
+          continue;
+        }
 
+        const stat = fs.statSync(file.fullPath);
         const ext = (file.name.split('.').pop() || '').toLowerCase();
         const isBinary = BINARY_EXTENSIONS.has(ext);
+        const limit = isBinary ? MAX_BINARY_SIZE : MAX_TEXT_SIZE;
+
+        if (stat.size > limit) continue;
 
         let fileContent = '';
         if (isBinary) {
@@ -247,14 +293,12 @@ function scanAndSyncGeneratedFiles(sandboxDir, ws, projectId, authenticatedEmail
       }
     }
 
-    if (generatedFiles.length > 0 && ws.readyState === ws.OPEN) {
-      // Send WebSocket payload to client
+    if (generatedFiles.length > 0 && ws && ws.readyState === ws.OPEN) {
       ws.send(JSON.stringify({
         type: 'workspace_files_synced',
         generatedFiles
       }));
 
-      // Send terminal feedback notification
       const summaryList = generatedFiles.slice(0, 4).map(f => f.filePath).join(', ');
       const extraCount = generatedFiles.length > 4 ? ` +${generatedFiles.length - 4} more` : '';
       ws.send(`\r\n\x1b[32m[📁 Auto-synced ${generatedFiles.length} file(s) to Project Explorer: ${summaryList}${extraCount}]\x1b[0m\r\n`);
