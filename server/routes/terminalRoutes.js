@@ -334,6 +334,26 @@ const activeSessions = new Map();
 export function createTerminalWebSocket() {
   const wss = new WebSocketServer({ noServer: true });
 
+  // ── Server-Side Ping/Pong Heartbeat ──────────────────────────────────────
+  // Pings all connected clients every 25 seconds.
+  // Any proxy (Render load balancer, Nginx, Cloudflare) that silently drops
+  // idle WebSocket connections after 30–90s will be kept alive by this ping.
+  // If the client doesn't pong within 10 seconds, the socket is terminated
+  // so the client auto-reconnects instead of sitting on a dead connection.
+  const heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (ws.isAlive === false) {
+        // Client missed its pong — terminate so frontend reconnects cleanly
+        ws.terminate();
+        return;
+      }
+      ws.isAlive = false;
+      try { ws.ping(); } catch {}
+    });
+  }, 25000);
+
+  wss.on('close', () => clearInterval(heartbeatInterval));
+
   wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const token = url.searchParams.get('token');
@@ -374,6 +394,9 @@ export function createTerminalWebSocket() {
     const isWindows = process.platform === 'win32';
 
     // ── 3. Session State ─────────────────────────────────────────────────────
+    ws.isAlive = true;               // Mark alive for heartbeat checker
+    ws.on('pong', () => { ws.isAlive = true; }); // Reset alive on every pong received
+
     const session = {
       sessionId,
       sandboxDir,
@@ -696,6 +719,13 @@ export function createTerminalWebSocket() {
       if (raw.startsWith('{') && raw.endsWith('}')) {
         try {
           const payload = JSON.parse(raw);
+
+          // Client Keepalive Ping — silently update activity & respond with pong
+          if (payload.type === '__ping') {
+            session.lastActivity = Date.now();
+            try { ws.send(JSON.stringify({ type: '__pong' })); } catch {}
+            return;
+          }
 
           // Resize
           if (payload.type === 'resize') {

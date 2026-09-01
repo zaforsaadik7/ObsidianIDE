@@ -44,3 +44,5 @@ services:
         sync: false
       - key: BREVO_SENDER_EMAIL
         sync: false
+      - key: RENDER_EXTERNAL_URL
+        value: https://obsidianide.onrender.com

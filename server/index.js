@@ -390,5 +390,25 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 ObsidianIDE Express REST Server listening on http://localhost:${PORT}`);
   console.log(`🔌 WebSocket Terminal available at ws://localhost:${PORT}/ws/terminal`);
   console.log(`👥 WebSocket Collaboration available at ws://localhost:${PORT}/ws/collaboration`);
+
+  // ── Self-Ping to Prevent Render Free Tier Cold Sleep ─────────────────────
+  // Render free plan shuts the server down after ~50s of no traffic.
+  // Pinging /api/health every 10 minutes keeps the instance warm, preventing
+  // the 30–60 second cold-start delay that causes terminal WebSocket failures.
+  const selfPingUrl = process.env.RENDER_EXTERNAL_URL
+    ? `${process.env.RENDER_EXTERNAL_URL}/api/health`
+    : null;
+
+  if (selfPingUrl && process.env.NODE_ENV === 'production') {
+    setInterval(async () => {
+      try {
+        const res = await fetch(selfPingUrl, { signal: AbortSignal.timeout(10000) });
+        console.log(`[Self-Ping] ${selfPingUrl} → ${res.status}`);
+      } catch (pingErr) {
+        console.warn('[Self-Ping] Keepalive ping failed:', pingErr.message);
+      }
+    }, 10 * 60 * 1000); // every 10 minutes
+    console.log(`🏓 Self-ping keepalive active → ${selfPingUrl} (every 10 min)`);
+  }
 });
 

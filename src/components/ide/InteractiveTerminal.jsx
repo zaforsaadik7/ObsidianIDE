@@ -46,6 +46,7 @@ export const InteractiveTerminal = ({
   const authBlockedRef = useRef(false);
   const retryCountRef = useRef(0);
   const reconnectTimerRef = useRef(null);
+  const keepaliveIntervalRef = useRef(null);
 
   const [sessionStatus, setSessionStatus] = useState('disconnected'); // 'disconnected' | 'connecting' | 'connected' | 'error'
   const [lastRunTimestamp, setLastRunTimestamp] = useState(null);
@@ -133,6 +134,7 @@ export const InteractiveTerminal = ({
 
     return () => {
       resizeObserver.disconnect();
+      if (keepaliveIntervalRef.current) { clearInterval(keepaliveIntervalRef.current); keepaliveIntervalRef.current = null; }
       if (wsRef.current) {
         wsRef.current.close();
       }
@@ -197,18 +199,31 @@ export const InteractiveTerminal = ({
         retryCountRef.current = 0;
         if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
         setSessionStatus('connected');
-        try {
-          fitAddonRef.current?.fit();
-        } catch {}
+        try { fitAddonRef.current?.fit(); } catch {}
+
+        // ── Client-Side Keepalive Ping ──────────────────────────────────────
+        // Sends a JSON ping every 20 seconds to keep the WebSocket alive through
+        // Render's load balancer and any CDN/proxy that drops idle connections.
+        if (keepaliveIntervalRef.current) clearInterval(keepaliveIntervalRef.current);
+        keepaliveIntervalRef.current = setInterval(() => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            try { wsRef.current.send(JSON.stringify({ type: '__ping' })); } catch {}
+          } else {
+            clearInterval(keepaliveIntervalRef.current);
+            keepaliveIntervalRef.current = null;
+          }
+        }, 20000);
       };
 
       socket.onmessage = (event) => {
         const rawData = event.data;
 
-        // Check if message is a system sync JSON event for newly generated project files
+        // Check if message is a system JSON control event
         if (typeof rawData === 'string' && rawData.startsWith('{') && rawData.endsWith('}')) {
           try {
             const parsed = JSON.parse(rawData);
+            // Silently swallow server __pong responses — do not write to terminal
+            if (parsed.type === '__pong') return;
             if ((parsed.type === 'workspace_files_synced' || parsed.type === 'files_generated') && Array.isArray(parsed.generatedFiles)) {
               if (onFilesGenerated) {
                 onFilesGenerated(parsed.generatedFiles);
@@ -233,6 +248,9 @@ export const InteractiveTerminal = ({
 
       socket.onclose = (event) => {
         wsRef.current = null;
+        // Stop keepalive ping on close
+        if (keepaliveIntervalRef.current) { clearInterval(keepaliveIntervalRef.current); keepaliveIntervalRef.current = null; }
+
         if (event.code === 4401 || event.code === 4403) {
           authBlockedRef.current = true;
           setSessionStatus('error');
@@ -241,9 +259,12 @@ export const InteractiveTerminal = ({
         }
         setSessionStatus('disconnected');
 
-        // Auto-reconnect with exponential backoff if not closed due to auth rejection
-        if (!authBlockedRef.current && retryCountRef.current < 8) {
-          const delay = Math.min(1500 * Math.pow(1.3, retryCountRef.current), 8000);
+        // ── Unlimited Smart Retry with Capped Delay ─────────────────────────
+        // No hard retry limit — keep retrying until the server wakes up.
+        // Render free tier needs ~30-60s to cold-start; stopping at 8 retries
+        // meant the terminal permanently went OFFLINE before the server was ready.
+        if (!authBlockedRef.current) {
+          const delay = Math.min(1500 * Math.pow(1.3, Math.min(retryCountRef.current, 10)), 10000);
           retryCountRef.current += 1;
           if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = setTimeout(() => {
@@ -258,16 +279,16 @@ export const InteractiveTerminal = ({
         } else {
           setSessionStatus('error');
           wsRef.current = null;
+          if (keepaliveIntervalRef.current) { clearInterval(keepaliveIntervalRef.current); keepaliveIntervalRef.current = null; }
 
-          if (!authBlockedRef.current && retryCountRef.current < 8) {
-            const delay = Math.min(2000 * Math.pow(1.3, retryCountRef.current), 8000);
+          // Unlimited retry on error as well — server may be cold-starting
+          if (!authBlockedRef.current) {
+            const delay = Math.min(2000 * Math.pow(1.3, Math.min(retryCountRef.current, 10)), 10000);
             retryCountRef.current += 1;
             if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
             reconnectTimerRef.current = setTimeout(() => {
               connectWebSocket();
             }, delay);
-          } else {
-            term?.writeln(`\r\n\x1b[31m[Terminal connection failed at ${targetUrl}. Click Refresh or return to tab to reconnect.]\x1b[0m`);
           }
         }
       };
