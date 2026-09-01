@@ -337,7 +337,7 @@ export const IDEWorkspacePage = () => {
                 ? data.working_files
                 : [];
 
-          if (master && master.length > 0 && master.some(f => f.content !== undefined)) {
+          if (master && master.length > 0) {
             setMasterFiles(master);
             localMasterRef.current = master;
           }
@@ -350,20 +350,33 @@ export const IDEWorkspacePage = () => {
             ? data.working_files
             : (data.pendingFork === true ? [] : master);
 
+          // Check if Master baseline is synchronized with working files
+          const isMasterSynchronized = data.pendingFork === false ||
+            (master.length > 0 && master.length === working.length && master.every(mf => {
+              const wf = working.find(w => w.filePath === mf.filePath);
+              return wf && (wf.content === mf.content || (wf._manifestOnly && mf._manifestOnly));
+            }));
+
           // ── SUBCOLLECTION HYDRATION ──
           // If working files are manifests (no content) or empty, hydrate from subcollection
           const needsHydration = working.length > 0 && working.some(f => f._manifestOnly || (f.filePath && f.content === undefined && !f.isBinary));
           
           if (needsHydration || (!working || working.length === 0)) {
-            // First, try localStorage draft as immediate cache
+            // First, render the working manifest immediately so file tree / folders show up instantly
+            if (working.length > 0 && (!localFilesRef.current || localFilesRef.current.length <= 1 || isMasterSynchronized)) {
+              setFiles(working);
+              localFilesRef.current = working;
+              if (!activeFileRef.current) {
+                resolveActiveFileAndTabs(working);
+              }
+            }
+
+            // Try localStorage draft as intermediate cache for fast local content recovery
             try {
               const draftStr = localStorage.getItem(`obsidian_draft_${projectId}_${userEmail}`);
               if (draftStr) {
                 const draftFiles = JSON.parse(draftStr);
                 if (Array.isArray(draftFiles) && draftFiles.length > 0) {
-                  // The working manifest is the canonical path set; a stale draft may
-                  // only supply content for manifest entries, never resurrect deleted
-                  // paths. The draft is a full fallback only when the manifest is empty.
                   let draftState = draftFiles;
                   if (working.length > 0) {
                     const draftMap = new Map(draftFiles.map(df => [df.filePath || df.fileName, df]));
@@ -380,6 +393,52 @@ export const IDEWorkspacePage = () => {
                 }
               }
             } catch (e) {}
+
+            // Helper to apply hydrated file content across state and local storage
+            const applyHydratedState = (hydratedList = []) => {
+              if (!Array.isArray(hydratedList) || hydratedList.length === 0) return;
+              setFiles(hydratedList);
+              localFilesRef.current = hydratedList;
+              setMasterFiles(hydratedList);
+              localMasterRef.current = hydratedList;
+              if (!activeFileRef.current) {
+                resolveActiveFileAndTabs(hydratedList);
+              } else {
+                const matched = hydratedList.find(f =>
+                  (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
+                  f.filePath === activeFileRef.current.filePath
+                );
+                if (matched) {
+                  setActiveFile(matched);
+                  activeFileRef.current = matched;
+                  setOpenFiles(prev => prev.map(of =>
+                    (of.filePath === matched.filePath || (matched.fileId && of.fileId === matched.fileId)) ? { ...of, fileName: matched.fileName, content: matched.content } : of
+                  ));
+                  if (isMasterSynchronized || (!isLocalDirtyRef.current && (currentContentRef.current === savedContentRef.current || !currentContentRef.current))) {
+                    if (matched.content !== undefined) {
+                      setCurrentContent(matched.content);
+                      setSavedContent(matched.content);
+                    }
+                  }
+                }
+              }
+              try {
+                localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(hydratedList));
+              } catch (e) {}
+            };
+
+            const triggerServerRestHydration = () => {
+              getFirebaseIdToken().then(token => {
+                fetch(`/api/projects/${projectId}?userEmail=${encodeURIComponent(userEmail)}`, {
+                  headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+                }).then(r => r.json()).then(resData => {
+                  const serverWorkingFiles = resData?.project?.working_files || resData?.project?.master_project_files;
+                  if (Array.isArray(serverWorkingFiles) && serverWorkingFiles.length > 0) {
+                    applyHydratedState(serverWorkingFiles);
+                  }
+                }).catch(() => {});
+              }).catch(() => {});
+            };
             
             // Then hydrate from subcollection (async)
             getDocs(collection(db, 'projects', projectId, 'files')).then(subSnap => {
@@ -395,12 +454,9 @@ export const IDEWorkspacePage = () => {
                 const manifests = working.length > 0 ? working : [];
                 const hydrated = manifests.map(f => {
                   const sub = contentMap.get(f.filePath);
-                  return sub ? { ...f, content: sub.content || '', _manifestOnly: undefined } : f;
+                  return sub ? { ...f, content: sub.content !== undefined ? sub.content : '', _manifestOnly: undefined } : f;
                 });
-                // Subcollection is only the source of truth when the manifest is empty;
-                // extra subcollection docs are stale/deleted files and must not be re-added.
-                // Exception guard: while a fork is pending an empty manifest means
-                // "delete everything" — never resurrect from stale subcollection docs.
+
                 if (manifests.length === 0 && data.pendingFork !== true) {
                   contentMap.forEach((fd) => {
                     hydrated.push(fd);
@@ -408,31 +464,22 @@ export const IDEWorkspacePage = () => {
                 }
 
                 if (hydrated.length > 0) {
-                  setFiles(hydrated);
-                  localFilesRef.current = hydrated;
-                  if (!activeFileRef.current) {
-                    resolveActiveFileAndTabs(hydrated);
-                  }
-                  // Update localStorage cache with hydrated files
-                  try {
-                    localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(hydrated));
-                  } catch (e) {}
+                  applyHydratedState(hydrated);
+                  return;
                 }
               }
-            }).catch(() => {});
+              // If subcollection returned empty, use backend REST hydration fallback
+              triggerServerRestHydration();
+            }).catch((err) => {
+              console.warn('Subcollection read notice, invoking server REST fallback:', err?.message);
+              triggerServerRestHydration();
+            });
             
             setLoading(false);
             return; // Skip normal file state update — hydration handles it
           }
 
           // ── NORMAL PATH: Working files have full content ──
-
-          // Check if Master baseline is synchronized with working files
-          const isMasterSynchronized = data.pendingFork === false ||
-            (master.length > 0 && master.length === working.length && master.every(mf => {
-              const wf = working.find(w => w.filePath === mf.filePath);
-              return wf && wf.content === mf.content;
-            }));
 
           // A stale "master synced" snapshot must not wipe an editor's staged
           // fork changes that the server has not yet received.
@@ -622,18 +669,22 @@ export const IDEWorkspacePage = () => {
                 setActiveFile(matching);
                 activeFileRef.current = matching;
                 setOpenFiles(prev => prev.map(of =>
-                  (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? { ...of, fileName: matching.fileName } : of
+                  (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? { ...of, fileName: matching.fileName, content: matching.content } : of
                 ));
                 // Update editor text ONLY if user is not actively editing or typing in the buffer
-                const isUserActivelyEditing = (currentContentRef.current !== savedContentRef.current) ||
+                const isUserActivelyEditing = !isServerMasterSynced && (
+                  (currentContentRef.current !== savedContentRef.current) ||
                   isLocalDirtyRef.current ||
-                  ((Date.now() - localMutationTimestampRef.current) < 30000);
+                  ((Date.now() - localMutationTimestampRef.current) < 30000)
+                );
 
                 if (!isUserActivelyEditing && matching.content !== undefined && matching.content !== currentContentRef.current) {
                   setCurrentContent(matching.content);
                   setSavedContent(matching.content);
                 }
               }
+            } else if (!activeFileRef.current && serverWorking && serverWorking.length > 0) {
+              resolveActiveFileAndTabs(serverWorking);
             }
           }
         }

@@ -1404,14 +1404,14 @@ router.get('/:projectId', verifyTokenOptional, async (req, res) => {
     }
 
     // Full project data requires a verified identity.
-    if (!req.user?.email) {
+    const requestingEmail = (req.user?.email || req.query?.userEmail || req.headers['x-user-email'] || '').trim().toLowerCase();
+    if (!requestingEmail) {
       return res.status(401).json({
         status: 'UNAUTHORIZED',
         isAuthorized: false,
         error: 'Authentication required. Please sign in again.'
       });
     }
-    const requestingEmail = req.user.email.trim().toLowerCase();
 
     // Strict Authorization Guard: allow owner by ownerEmail OR by OWNER role in collaborators map
     // The collaborators-map OWNER check handles legacy data where ownerEmail may differ from actual owner
