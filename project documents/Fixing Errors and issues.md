@@ -2181,6 +2181,25 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #157: Agentic AI Generated Files Selection & Tab Activation Resilience
+* **Symptoms**:
+  - After generating code and creating files with the Agentic AI assistant, newly created files appeared in the File Explorer tree and were selectable (highlighted in cyan), but failed to open or displayed empty editor buffers when clicked.
+* **Root Cause**:
+  1. **Stale Closure File State Overwrite**: In `handleApplyAIModifications` (`src/pages/IDEWorkspacePage.jsx`), applying modifications in batch loops closed over the initial render's `files` state rather than `localFilesRef.current`. Sequential additions overwrote prior new files in the in-memory array.
+  2. **Path Matching Inconsistencies**: `handleSelectFile` and `handleSelectTab` performed strict `===` path comparisons. Leading slashes, relative prefixes (e.g., `/src/model.py` vs `src/model.py`), or missing IDs caused `find()` to miss the file in `files` state and open an empty/unhydrated file object.
+  3. **Missing Auto-Tab Activation & Buffer Flushing**: Newly created AI files were not automatically added to `openFiles` tab state, and outgoing active editor buffers were not flushed into `localFilesRef.current` before switching files.
+  4. **Flat Tree Parser Edge Cases**: In `src/utils/flatTreeParser.js`, items with missing `filePath` strings were dropped from tree construction.
+* **Solutions Implemented**:
+  1. **Dynamic Ref State in `handleApplyAIModifications`**: Updated `handleApplyAIModifications` to always read from `localFilesRef.current`, append newly created files without overwriting siblings, immediately open tabs in `openFiles`, and activate the applied file in Monaco Editor.
+  2. **Normalized Path Resolution & Async Hydration**: Updated `handleSelectFile` and `handleSelectTab` with path normalization (`normPath`), outgoing buffer flushing, and asynchronous Firestore subcollection hydration fallback when file content is missing.
+  3. **Robust Tree Parser**: Updated `parseFlatArrayToTreeNodes` in `src/utils/flatTreeParser.js` to normalize paths and gracefully fall back to `fileName`.
+* **QA & Automated Verification**:
+  - Automated test suite `test_ai_generated_files_selection.js` executed with 100% assertions passed: verified multi-file sequential generation, tree parsing with path variations, file selection, tab addition, and Monaco activation.
+  - Production build compiled in **13.46s with 0 errors**.
+  - Pushed to `origin/main` commit `0dc853e`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
