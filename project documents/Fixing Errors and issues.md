@@ -2125,6 +2125,29 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #154: Cold Restart Repository Recovery via Targeted Where Queries & Durable Backend Store
+* **Symptoms**:
+  - After powering down the PC and reopening the web application across separate profiles/accounts, one account showed the repository while the other account showed `"No Workspace Repositories Found"`.
+* **Root Cause**:
+  1. **Render Cold Restart Data Loss**: Render's free tier spins down after inactivity, resetting RAM `inMemoryProjectStore` to 0. Since Render has no Firestore Admin SDK service account in environment, `GET /api/projects` returned empty until re-synced.
+  2. **Full Collection Query Permissions**: `getDocs(collection(db, 'projects'))` requires whole-collection list permissions in Cloud Firestore rules, which fails on fresh unseeded sessions when security rules only permit `get` on authorized partitions.
+  3. **Owner-to-Collaborator Security Restriction**: When creating a project, the Owner's browser cannot write directly to the Collaborator's `/users/{collabDocId}` document due to Firestore security rule constraints (`authEmail() != collabEmail`).
+* **Solutions Implemented**:
+  1. **Durable Backend Disk Store**: Implemented `server/data/projects_store.json` persistence in `server/routes/projectRoutes.js` (`persistStoreToDisk`), auto-reloaded on Node startup so Render restarts retain all projects across cold boots.
+  2. **Targeted Member Queries**: Added Firestore `where()` queries in `DashboardPage.jsx` and `ProfilePage.jsx` (`where('memberEmails', 'array-contains', email)`, `where('ownerEmail', '==', email)`, `where('collaboratorEmails', 'array-contains', email)`), allowing authorized users to discover their projects independently.
+  3. **Authoritative Member Arrays**: Updated `CreateProjectModal.jsx` and `server/routes/projectRoutes.js` to automatically populate `memberEmails`, `collaboratorEmails`, and `rosterEmails` on project creation and syncs.
+  4. **Collaborator Self-Stamping**: Upon discovering the project via targeted queries or API, the Collaborator's client self-stamps `/users/{userDocId}` in Firestore (permitted by rules).
+* **QA & Automated Verification**:
+  - Automated test suite `test_restart_resilience_multi_account.js` executed with **4/4 passed assertions**:
+    - Client membership resolution for Owner (`OWNER`), Collaborator (`EDITOR`), Stranger (denied).
+    - Disk recovery across simulated cold restarts.
+    - Non-destructive sync-catalog merging.
+    - Simultaneous multi-account query execution.
+  - Production build compiled in **17.20s with 0 errors**.
+  - Pushed to `origin/main` commit `74e94c2`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
