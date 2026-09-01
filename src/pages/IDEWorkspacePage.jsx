@@ -1075,47 +1075,137 @@ export const IDEWorkspacePage = () => {
 
   const handleSelectFile = (fileObj) => {
     if (!fileObj) return;
-    const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
-    const latest = currentFiles.find(f => f.fileId === fileObj.fileId || f.filePath === fileObj.filePath) || fileObj;
-    let nextOpenTabs = openFiles;
-    if (!openFiles.some((f) => f.fileId === latest.fileId || f.filePath === latest.filePath)) {
-      nextOpenTabs = [...openFiles, latest];
-      setOpenFiles(nextOpenTabs);
+    const normPath = (p = '') => String(p).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').trim().toLowerCase();
+
+    // 1. Flush currently active file buffer to localFilesRef so no dirty edits are lost
+    if (activeFileRef.current && currentContentRef.current !== undefined) {
+      const activePath = activeFileRef.current.filePath;
+      const activeId = activeFileRef.current.fileId;
+      localFilesRef.current = (localFilesRef.current || files || []).map(f =>
+        ((activeId && f.fileId === activeId) || normPath(f.filePath) === normPath(activePath))
+          ? { ...f, content: currentContentRef.current }
+          : f
+      );
     }
-    setActiveFile(latest);
-    activeFileRef.current = latest;
-    setCurrentContent(latest.content || '');
-    setSavedContent(latest.content || '');
+
+    const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
+    const targetPath = fileObj.filePath || fileObj.fileName || '';
+    const latest = currentFiles.find(f =>
+      (fileObj.fileId && f.fileId === fileObj.fileId) ||
+      normPath(f.filePath) === normPath(targetPath) ||
+      normPath(f.fileName) === normPath(targetPath) ||
+      normPath(f.filePath).endsWith('/' + normPath(targetPath)) ||
+      normPath(targetPath).endsWith('/' + normPath(f.filePath))
+    ) || fileObj;
+
+    const fileContent = latest.content !== undefined
+      ? latest.content
+      : (fileObj.content !== undefined ? fileObj.content : '');
+
+    const resolvedFile = {
+      ...latest,
+      content: fileContent,
+      filePath: latest.filePath || targetPath,
+      fileName: latest.fileName || targetPath.split('/').pop() || 'file'
+    };
+
+    let nextOpenTabs = openFiles;
+    if (!openFiles.some((f) => (f.fileId && f.fileId === resolvedFile.fileId) || normPath(f.filePath) === normPath(resolvedFile.filePath))) {
+      nextOpenTabs = [...openFiles, resolvedFile];
+      setOpenFiles(nextOpenTabs);
+    } else {
+      setOpenFiles(openFiles.map(f =>
+        ((f.fileId && f.fileId === resolvedFile.fileId) || normPath(f.filePath) === normPath(resolvedFile.filePath))
+          ? { ...f, ...resolvedFile }
+          : f
+      ));
+    }
+
+    setActiveFile(resolvedFile);
+    activeFileRef.current = resolvedFile;
+    setCurrentContent(fileContent);
+    setSavedContent(fileContent);
     setIsDiffViewActive(false);
+
+    // If file content is missing (e.g. manifest from cloud), asynchronously hydrate from Firestore
+    if (latest.content === undefined && !isBinaryFile(resolvedFile.filePath) && projectId) {
+      const fileDocId = resolvedFile.fileId || `file_${projectId}_${resolvedFile.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+      getDoc(doc(db, 'projects', projectId, 'files', fileDocId)).then(fSnap => {
+        if (fSnap.exists()) {
+          const remoteContent = fSnap.data()?.content;
+          if (typeof remoteContent === 'string') {
+            setCurrentContent(remoteContent);
+            setSavedContent(remoteContent);
+            resolvedFile.content = remoteContent;
+            setFiles(prev => prev.map(f => (normPath(f.filePath) === normPath(resolvedFile.filePath)) ? { ...f, content: remoteContent } : f));
+            localFilesRef.current = (localFilesRef.current || []).map(f => (normPath(f.filePath) === normPath(resolvedFile.filePath)) ? { ...f, content: remoteContent } : f);
+          }
+        }
+      }).catch(() => {});
+    }
 
     try {
       const userEmail = (currentUser?.email || '').trim().toLowerCase();
-      localStorage.setItem(`obsidian_active_file_${projectId}_${userEmail}`, latest.filePath);
+      localStorage.setItem(`obsidian_active_file_${projectId}_${userEmail}`, resolvedFile.filePath);
       localStorage.setItem(`obsidian_open_tabs_${projectId}_${userEmail}`, JSON.stringify(nextOpenTabs.map(f => f.filePath)));
     } catch (e) {}
   };
 
   const handleSelectTab = (fileObj) => {
     if (!fileObj) return;
+    const normPath = (p = '') => String(p).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').trim().toLowerCase();
+
+    if (activeFileRef.current && currentContentRef.current !== undefined) {
+      const activePath = activeFileRef.current.filePath;
+      const activeId = activeFileRef.current.fileId;
+      localFilesRef.current = (localFilesRef.current || files || []).map(f =>
+        ((activeId && f.fileId === activeId) || normPath(f.filePath) === normPath(activePath))
+          ? { ...f, content: currentContentRef.current }
+          : f
+      );
+    }
+
     const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
-    const latest = currentFiles.find(f => f.fileId === fileObj.fileId || f.filePath === fileObj.filePath) || fileObj;
-    setActiveFile(latest);
-    activeFileRef.current = latest;
-    setCurrentContent(latest.content || '');
-    setSavedContent(latest.content || '');
+    const targetPath = fileObj.filePath || fileObj.fileName || '';
+    const latest = currentFiles.find(f =>
+      (fileObj.fileId && f.fileId === fileObj.fileId) ||
+      normPath(f.filePath) === normPath(targetPath) ||
+      normPath(f.fileName) === normPath(targetPath) ||
+      normPath(f.filePath).endsWith('/' + normPath(targetPath))
+    ) || fileObj;
+
+    const fileContent = latest.content !== undefined
+      ? latest.content
+      : (fileObj.content !== undefined ? fileObj.content : '');
+
+    const resolvedFile = {
+      ...latest,
+      content: fileContent,
+      filePath: latest.filePath || targetPath,
+      fileName: latest.fileName || targetPath.split('/').pop() || 'file'
+    };
+
+    setActiveFile(resolvedFile);
+    activeFileRef.current = resolvedFile;
+    setCurrentContent(fileContent);
+    setSavedContent(fileContent);
     setIsDiffViewActive(false);
 
     try {
       const userEmail = (currentUser?.email || '').trim().toLowerCase();
-      localStorage.setItem(`obsidian_active_file_${projectId}_${userEmail}`, latest.filePath);
+      localStorage.setItem(`obsidian_active_file_${projectId}_${userEmail}`, resolvedFile.filePath);
     } catch (e) {}
   };
 
   const handleCloseTab = (fileObj) => {
-    const nextTabs = openFiles.filter((f) => f.fileId !== fileObj.fileId && f.filePath !== fileObj.filePath);
+    const normPath = (p = '') => String(p).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').trim().toLowerCase();
+    const nextTabs = openFiles.filter((f) =>
+      !(f.fileId && fileObj.fileId && f.fileId === fileObj.fileId) &&
+      normPath(f.filePath) !== normPath(fileObj.filePath)
+    );
     setOpenFiles(nextTabs);
     let nextActive = null;
-    if (activeFile?.fileId === fileObj.fileId || activeFile?.filePath === fileObj.filePath) {
+    if ((activeFile?.fileId && fileObj.fileId && activeFile.fileId === fileObj.fileId) || normPath(activeFile?.filePath) === normPath(fileObj.filePath)) {
       if (nextTabs.length > 0) {
         nextActive = nextTabs[nextTabs.length - 1];
         setActiveFile(nextActive);
@@ -1554,12 +1644,15 @@ export const IDEWorkspacePage = () => {
     const token = await getFirebaseIdToken();
 
     try {
-      const clean = (p = '') => p.replace(/^\/+|\/+$/g, '').trim().toLowerCase();
+      const clean = (p = '') => String(p).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').trim().toLowerCase();
       const targetClean = clean(targetFilePath);
       const targetBase = targetClean.split('/').pop();
 
+      // Read from latest localFilesRef to avoid stale closure when applying multiple files in a loop
+      const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
+
       // Find existing file matching exact path, stripped path, base fileName, or suffix
-      const existingFile = files.find(f => {
+      const existingFile = currentFiles.find(f => {
         const fPath = clean(f.filePath);
         const fName = clean(f.fileName);
         return fPath === targetClean ||
@@ -1572,17 +1665,19 @@ export const IDEWorkspacePage = () => {
 
       const actualFilePath = existingFile ? existingFile.filePath : targetFilePath;
       let updatedFiles;
+      let appliedFileObj;
 
       if (existingFile) {
-        updatedFiles = files.map(f => f.fileId === existingFile.fileId ? {
-          ...f,
+        appliedFileObj = {
+          ...existingFile,
           content: newContent,
           updatedAt: new Date().toISOString(),
           lastModifiedBy: userEmail
-        } : f);
+        };
+        updatedFiles = currentFiles.map(f => (f.fileId === existingFile.fileId || clean(f.filePath) === clean(existingFile.filePath)) ? appliedFileObj : f);
       } else {
         const fileExt = targetFilePath.split('.').pop() || 'txt';
-        const newFileObj = {
+        appliedFileObj = {
           fileId: 'file_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
           filePath: targetFilePath,
           fileName: targetFilePath.split('/').pop(),
@@ -1591,48 +1686,54 @@ export const IDEWorkspacePage = () => {
           updatedAt: new Date().toISOString(),
           lastModifiedBy: userEmail
         };
-        updatedFiles = [...files, newFileObj];
+        updatedFiles = [...currentFiles, appliedFileObj];
       }
 
       localMutationTimestampRef.current = Date.now();
       localFilesRef.current = updatedFiles;
       setFiles(updatedFiles);
 
-      // Check if current activeFile matches the modified file
-      const isActiveMatched = activeFile && (
-        (existingFile && (activeFile.fileId === existingFile.fileId || clean(activeFile.filePath) === clean(existingFile.filePath))) ||
-        clean(activeFile.filePath) === targetClean ||
-        clean(activeFile.fileName) === targetClean ||
-        clean(activeFile.fileName) === targetBase ||
-        clean(activeFile.filePath).endsWith('/' + targetClean) ||
-        targetClean.endsWith('/' + clean(activeFile.filePath))
-      );
-
-      if (isActiveMatched) {
-        setCurrentContent(newContent);
-        // Do NOT overwrite savedContent here so the file remains in an Unsaved (dirty dot ●) state for user review
-        setActiveFile(prev => ({ ...prev, content: newContent }));
+      // Automatically open and activate the applied file in editor & tabs
+      setActiveFile(appliedFileObj);
+      activeFileRef.current = appliedFileObj;
+      setCurrentContent(newContent);
+      if (!existingFile) {
+        setSavedContent(newContent);
       }
 
-      // Update in openFiles tabs as well (keeping working buffer)
-      setOpenFiles(prev => prev.map(f => {
-        if (
-          (existingFile && (f.fileId === existingFile.fileId || clean(f.filePath) === clean(existingFile.filePath))) ||
-          clean(f.filePath) === targetClean ||
-          clean(f.fileName) === targetClean ||
-          clean(f.fileName) === targetBase
-        ) {
-          return { ...f, content: newContent };
+      setOpenFiles(prev => {
+        const hasTab = prev.some(f => (f.fileId && f.fileId === appliedFileObj.fileId) || clean(f.filePath) === targetClean);
+        if (hasTab) {
+          return prev.map(f => ((f.fileId && f.fileId === appliedFileObj.fileId) || clean(f.filePath) === targetClean) ? { ...f, content: newContent } : f);
         }
-        return f;
-      }));
+        return [...prev, appliedFileObj];
+      });
 
-      // Cache locally in offline draft storage for safety without auto-committing
+      // Cache locally in offline draft storage
       try {
         localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(updatedFiles));
+        localStorage.setItem(`obsidian_active_file_${projectId}_${userEmail}`, appliedFileObj.filePath);
       } catch (e) {}
 
-      showNotificationToast(`⚡ Applied AI edits to ${actualFilePath} (Unsaved)`, 3500);
+      // Persist to backend and Firestore
+      try {
+        fetch('/api/projects/update-files', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            projectId,
+            working_files: updatedFiles,
+            master_project_files: isProjectOwner ? updatedFiles : masterFiles,
+            userEmail,
+            isOwner: isProjectOwner
+          })
+        }).catch(() => {});
+      } catch (syncErr) {}
+
+      showNotificationToast(`⚡ Applied AI edits to ${actualFilePath}`, 3500);
     } catch (err) {
       console.error('Error applying AI modifications:', err);
       alert(`Failed to apply edits: ${err.message}`);

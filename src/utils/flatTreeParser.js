@@ -14,10 +14,13 @@ export function parseFlatArrayToTreeNodes(filesArray = []) {
     files: []
   };
 
-  filesArray.forEach((fileObj) => {
-    if (!fileObj || !fileObj.filePath) return;
-    const cleanPath = fileObj.filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+  (filesArray || []).forEach((fileObj) => {
+    if (!fileObj) return;
+    const rawPath = fileObj.filePath || fileObj.fileName || '';
+    if (!rawPath) return;
+    const cleanPath = String(rawPath).replace(/\\/g, '/').replace(/^\/+/, '');
     const parts = cleanPath.split('/').filter(Boolean);
+    if (parts.length === 0) return;
     let current = root;
     let accumulatedPath = '';
 
@@ -28,7 +31,11 @@ export function parseFlatArrayToTreeNodes(filesArray = []) {
       if (isFile) {
         current.files.push({
           name: part,
-          fileObj
+          fileObj: {
+            ...fileObj,
+            filePath: fileObj.filePath || cleanPath,
+            fileName: fileObj.fileName || part
+          }
         });
       } else {
         const parentPath = accumulatedPath;
