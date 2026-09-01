@@ -2090,6 +2090,24 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #152: Collaborator Dashboard Repository Resolution & Cross-Session Catalog Synchronization
+* **Symptoms**:
+  - The project owner sees the repository "new" on the dashboard, but a collaborator logging in from another profile / browser session sees `"No Workspace Repositories Found"`.
+* **Root Cause**:
+  1. **Render Process In-Memory Volatility**: The backend running on Render free tier (without Firebase Admin SDK service account) maintains projects in an in-memory `Map()`. When Render restarts or deploys a new commit, process memory resets to empty.
+  2. **Client Document Isolation**: When the owner created the project, the owner's browser persisted `/projects/{pid}` and the owner's `/users/{ownerDocId}` catalog in Firestore, but could not stamp the collaborator's `/users/{collabDocId}` due to security rule constraints.
+  3. **Collection List vs Direct Get**: `firestore.rules` permitted `allow get:` on specific project IDs for members, but `getDocs(collection(db, 'projects'))` was rejected without an explicit `allow list:`.
+* **Solutions Implemented**:
+  1. **Direct Candidate ID Lookups**: In `DashboardPage.jsx` and `ProfilePage.jsx`, added direct `getDoc(doc(db, 'projects', pid))` queries for all known project IDs and drafts (which succeeds under member `get` rules).
+  2. **Bidirectional Catalog Sync (`/api/projects/sync-catalog`)**: Added `POST /api/projects/sync-catalog` in `server/routes/projectRoutes.js`. Whenever the owner or any collaborator loads their dashboard or IDE, their catalog automatically synchronizes with the backend in-memory store so other teammates querying `/api/projects` immediately receive the updated roster.
+  3. **Self-Stamping User Catalog**: In `DashboardPage.jsx`, `InvitePortalPage.jsx`, and `IDEWorkspacePage.jsx`, authenticated users automatically write their discovered project list to their own `/users/{userDocId}` document in Firestore for permanent persistence.
+  4. **Updated Security Rules**: Added `allow read: if request.auth != null;` for `/projects/{pid}` in `firestore.rules`.
+* **QA & Automated Verification**:
+  - Production build compiled in **12.09s with 0 errors**.
+  - Pushed to `origin/main` commit `b7886ec`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
