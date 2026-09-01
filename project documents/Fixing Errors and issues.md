@@ -2219,6 +2219,23 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #159: Blank Terminal (Regression from Issue #158 Sandbox Persistence Fix)
+* **Symptoms**:
+  - After deploying the Issue #158 fix, the terminal appeared completely blank. No welcome banner, no prompt, no cursor — nothing. The status indicator would flash `CONNECTING...` then go `OFFLINE`.
+* **Root Cause**:
+  - When the persistent sandbox code replaced `const sessionId = uuidv4().slice(0, 8); const sandboxDir = path.join(SANDBOX_ROOT, 'session_' + sessionId)` with a new project-scoped sandbox block, the `const sessionId = ...` **declaration line was accidentally removed** while the sandbox directory line was updated.
+  - `sessionId` was still referenced on **10 lines** throughout `terminalRoutes.js` — in the session object (`session.sessionId`), `activeSessions.set(sessionId, session)`, the welcome banner, inactivity timer callbacks, close/error handlers, and `cleanupSession(sessionId)`.
+  - This caused a JavaScript **`ReferenceError: sessionId is not defined`** crash on the backend the moment any WebSocket connected, instantly crashing the connection handler and leaving the frontend terminal blank.
+* **Solution Implemented**:
+  - Re-added `const sessionId = uuidv4().slice(0, 8);` as the first line inside the sandbox block (line 359 of `terminalRoutes.js`), with a comment clarifying it is a **session-level map key and timer handle only** — not used for the sandbox directory name.
+  - The persistent project-scoped sandbox directory (`project_${safeProjectId}_${safeUserEmail}`) is preserved entirely intact.
+* **QA & Automated Verification**:
+  - Re-ran automated test suite `test_terminal_persistence_across_sessions.js` — all assertions passed.
+  - Production build compiled in **16.77s with 0 errors**.
+  - Pushed to `origin/main` commit `564dbb6`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
