@@ -2258,7 +2258,37 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+  - Sister directory synced to `HEAD is now at c64bc03`.
+
+---
+
+### Issue #161: Fork System Banner Flickering / Coming and Going Repeatedly
+
+* **Symptoms**:
+  - The "Working Fork Active" banner and "Request Fork" / "Reject Fork" buttons were appearing and disappearing rapidly and repeatedly — visibly flickering every few seconds for both editors and the project owner.
+  - The flickering was most pronounced when an editor was actively typing.
+
+* **Root Cause Analysis (3 independent causes)**:
+  1. **Volatile `useMemo` deps — `currentContent` & `savedContent` in deps array** (`src/pages/IDEWorkspacePage.jsx`, line ~966–1045):
+     The `hasEditorForkChanges` `useMemo` had `currentContent`, `savedContent`, and `fileStatusMap` in its dependency array. `currentContent` is a React state value that updates on **every keystroke**. `savedContent` is updated by a 1-second debounce. This 1-second lag between the two caused `isEditorLocalTyping` (which used `currentContent !== savedContent`) to rapidly flip `true` → `false` → `true` with each keystroke, directly toggling the fork banner visibility.
+  2. **Volatile `useMemo` dep — `fileStatusMap`**: `fileStatusMap` itself depends on `currentContent`, so it recomputes on every keystroke and was also listed as a dep of the fork detection memo, causing double-recomputation.
+  3. **Collaboration WebSocket reconnecting on file tab switch** (line ~651, deps `[projectId, currentUser?.email, activeFile?.filePath]`):
+     `activeFile?.filePath` was in the `useEffect` dependency array. Every time the user clicked a different file tab, the entire collaboration WebSocket was torn down and rebuilt. During the reconnect gap, `collaborationWsRef.current` was `null`, which briefly cleared the fork state visible to the UI.
+
+* **Solutions Implemented** (`src/pages/IDEWorkspacePage.jsx`):
+  1. **Removed `currentContent`, `savedContent`, `fileStatusMap` from `useMemo` deps**: The `isEditorLocalTyping` flag now uses `hasUnsavedForkChangesRef.current` (a stable ref set only in deliberate fork/save handlers, never on every keystroke) instead of the volatile `currentContent !== savedContent` comparison. This eliminates all per-keystroke re-evaluations of the fork detection memo.
+  2. **Removed `activeFile?.filePath` from collaboration WS `useEffect` deps**: The active file path is already communicated over the existing WebSocket connection via `CURSOR_MOVE` messages. There is no need to reconnect the entire WebSocket when the user clicks a different file tab. This prevents the WS teardown/rebuild cycle that was momentarily clearing fork state.
+  3. Added `// eslint-disable-next-line react-hooks/exhaustive-deps` with detailed comments explaining the intentional dep exclusions to prevent regression.
+
+* **QA & Automated Verification**:
+  - Production build compiled in **18.52s with 0 errors**.
+  - Pushed to `origin/main` commit `d82d643`.
+  - Sister directory synced to `HEAD is now at d82d643`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
+
 
 
 
