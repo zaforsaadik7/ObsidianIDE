@@ -2074,6 +2074,22 @@ This document serves as an ongoing log tracking bugs, architectural queries, UI 
 
 ---
 
+### Issue #151: Terminal WebSocket Endpoint Resolution & Pip Sandbox Binary PATH Warning
+* **Symptoms**:
+  - Running `pip install matplotlib` printed warnings: `WARNING: The scripts ... are installed in '/tmp/obsidian_terminal/session_.../.local/bin' which is not on PATH`.
+  - Terminal connection failed on Vercel with error: `[Terminal connection failed at wss://obsidianide-backend.onrender.com/ws/terminal?...]`.
+* **Root Cause**:
+  1. **Sandbox PATH Configuration**: In `server/routes/terminalRoutes.js`, `$HOME/.local/bin` (and `.local/Scripts`, `bin`) was not automatically prepended to `PATH` in the sandbox environment using POSIX/Windows compatible path delimiters.
+  2. **WebSocket URL Hardcoding**: In `InteractiveTerminal.jsx` and `AgenticAIChatSidebar.jsx`, the Render URL contained `-backend` (`obsidianide-backend.onrender.com`), which returned connection errors since the active backend on Render is `obsidianide.onrender.com`.
+* **Solutions Implemented**:
+  1. **Sandbox Local Bin PATH Injection**: In `server/routes/terminalRoutes.js` (`buildSafeEnvironment`), automatically added `.local/bin`, `.local/Scripts`, `bin`, `Scripts`, and `node_modules/.bin` to `safeEnv.PATH` using the OS-specific path delimiter (`:` on Linux, `;` on Windows).
+  2. **Corrected WebSocket Target**: In `InteractiveTerminal.jsx` and `AgenticAIChatSidebar.jsx`, updated the production target to `wss://obsidianide.onrender.com/ws/terminal` and `https://obsidianide.onrender.com`.
+* **QA & Automated Verification**:
+  - Production build compiled in **14.17s with 0 errors**.
+  - Pushed to `origin/main` commit `7d90ab9`.
+
+---
+
 *Log automatically maintained by Antigravity AI assistant for ObsidianIDE.*
 
 
