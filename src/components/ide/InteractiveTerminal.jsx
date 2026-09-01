@@ -176,7 +176,10 @@ export const InteractiveTerminal = ({
     if (rawBackendUrl) {
       const cleanWsUrl = rawBackendUrl.replace(/^http/, 'ws').replace(/\/$/, '');
       primaryWsUrl = `${cleanWsUrl}/ws/terminal?${urlParams}`;
-      fallbackWsUrl = primaryWsUrl;
+      fallbackWsUrl = `wss://obsidianide.onrender.com/ws/terminal?${urlParams}`;
+    } else if (typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || window.location.hostname.includes('obsidian-ide'))) {
+      primaryWsUrl = `wss://obsidianide.onrender.com/ws/terminal?${urlParams}`;
+      fallbackWsUrl = `wss://obsidianide.onrender.com/ws/terminal?${urlParams}`;
     } else {
       const isSecure = window.location.protocol === 'https:';
       const wsProto = isSecure ? 'wss:' : 'ws:';
@@ -236,11 +239,11 @@ export const InteractiveTerminal = ({
       };
 
       socket.onerror = () => {
-        if (!isFallback && window.location.port !== '5000') {
+        if (!isFallback && targetUrl !== fallbackWsUrl) {
           createSocket(fallbackWsUrl, true);
         } else {
           setSessionStatus('error');
-          term?.writeln(`\r\n\x1b[31m[Terminal connection failed at ${targetUrl}. Ensure backend server is active on port 5000.]\x1b[0m`);
+          term?.writeln(`\r\n\x1b[31m[Terminal connection failed at ${targetUrl}. Ensure backend server is active on Render (obsidianide.onrender.com) or port 5000.]\x1b[0m`);
           wsRef.current = null;
         }
       };

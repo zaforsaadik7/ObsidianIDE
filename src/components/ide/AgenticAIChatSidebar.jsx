@@ -78,7 +78,7 @@ export const AgenticAIChatSidebar = ({
     const envUrl = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
     if (envUrl) return envUrl;
     if (typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || window.location.port === '5173')) {
-      return 'https://obsidianide-backend.onrender.com';
+      return 'https://obsidianide.onrender.com';
     }
     return '';
   };

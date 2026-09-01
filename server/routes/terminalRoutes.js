@@ -48,6 +48,9 @@ const EXTRA_TOOLCHAIN_PATHS = [
   'D:\\Installed_Appication'
 ].filter(p => fs.existsSync(p));
 
+const isWindows = process.platform === 'win32';
+const PATH_DELIMITER = isWindows ? ';' : ':';
+
 function buildSafeEnvironment(sandboxDir) {
   const safeEnv = { ...process.env };
 
@@ -59,9 +62,18 @@ function buildSafeEnvironment(sandboxDir) {
     }
   });
 
+  // Inject sandbox-local script/binary paths so pip --user tools (f2py, pytest, etc.) and npm tools work seamlessly without PATH warnings
+  const sandboxBinPaths = [
+    path.join(sandboxDir, '.local', 'bin'),
+    path.join(sandboxDir, '.local', 'Scripts'),
+    path.join(sandboxDir, 'bin'),
+    path.join(sandboxDir, 'Scripts'),
+    path.join(sandboxDir, 'node_modules', '.bin')
+  ];
+
   // Inject multi-language toolchain paths
   const existingPath = safeEnv.PATH || safeEnv.Path || '';
-  const mergedPath = [...EXTRA_TOOLCHAIN_PATHS, existingPath].join(';');
+  const mergedPath = [...sandboxBinPaths, ...EXTRA_TOOLCHAIN_PATHS, existingPath].filter(Boolean).join(PATH_DELIMITER);
   safeEnv.PATH = mergedPath;
   safeEnv.Path = mergedPath;
 
