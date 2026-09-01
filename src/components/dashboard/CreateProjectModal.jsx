@@ -133,9 +133,16 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
       // or restart. The owner's browser is allowed to create the project document
       // (firestore.rules), so persist the server-authoritative copy plus the
       // owner's dashboard catalog entry here to keep the project durable.
-      const durableProject = (createResult.project && createResult.project.projectId)
-        ? createResult.project
-        : newProject;
+      const allCollabKeys = Object.keys(normalizedCollabs).map(e => e.toLowerCase());
+      const memberEmails = Array.from(new Set([ownerEmail.toLowerCase(), ...allCollabKeys]));
+      const collaboratorEmails = allCollabKeys.filter(e => e !== ownerEmail.toLowerCase());
+
+      const durableProject = {
+        ...((createResult.project && createResult.project.projectId) ? createResult.project : newProject),
+        memberEmails,
+        collaboratorEmails,
+        rosterEmails: memberEmails
+      };
       try {
         await setDoc(doc(db, 'projects', pid), durableProject);
       } catch (fsErr) {

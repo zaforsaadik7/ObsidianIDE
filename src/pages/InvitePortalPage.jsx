@@ -185,6 +185,7 @@ export const InvitePortalPage = () => {
 
       // 3. Sync to backend in-memory catalog
       const syncObj = {
+        userEmail: currentUser?.email || '',
         projects: [{
           projectId: targetPid,
           title: projectInfo.title,

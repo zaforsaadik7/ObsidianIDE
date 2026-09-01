@@ -7,7 +7,7 @@ import { ProjectDetailsModal } from '../components/dashboard/ProjectDetailsModal
 import { InviteTeammateModal } from '../components/dashboard/InviteTeammateModal';
 import { ExportToGitHubModal } from '../components/dashboard/ExportToGitHubModal';
 import { db, getFirebaseIdToken } from '../firebase';
-import { doc, getDoc, collection, getDocs, updateDoc, deleteField } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc, deleteField, query, where } from 'firebase/firestore';
 import { getProjectDisplayTitle, resolveProjectUserRoleAndMembership } from '../utils/projectTitle';
 import { getUserDocId } from '../context/AuthContext';
 
@@ -123,7 +123,27 @@ export const DashboardPage = () => {
       console.warn("Client Firestore user projects lookup notice:", fsErr);
     }
 
-    // 3. Query specific candidate project documents directly (works under strict get-only rules)
+    // 3. Targeted Firestore Queries by User Membership (immune to full-collection list blocks)
+    try {
+      const userQueries = [
+        query(collection(db, 'projects'), where('memberEmails', 'array-contains', userEmailNorm)),
+        query(collection(db, 'projects'), where('ownerEmail', '==', userEmailNorm)),
+        query(collection(db, 'projects'), where('collaboratorEmails', 'array-contains', userEmailNorm)),
+        query(collection(db, 'projects'), where('rosterEmails', 'array-contains', userEmailNorm))
+      ];
+
+      for (const q of userQueries) {
+        try {
+          const snap = await getDocs(q);
+          snap.forEach(docSnap => {
+            const p = docSnap.data();
+            if (p) upsertProject(p, docSnap.id);
+          });
+        } catch (qErr) {}
+      }
+    } catch (targetErr) {}
+
+    // 4. Query specific candidate project documents directly (works under strict get-only rules)
     try {
       const knownIds = new Set();
       // Scan localStorage keys for draft projects or known project IDs

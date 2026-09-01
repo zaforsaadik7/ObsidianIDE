@@ -1,4 +1,6 @@
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 import { adminDb } from '../config/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
 import { verifyToken, verifyTokenOptional } from '../middleware/authMiddleware.js';
@@ -24,8 +26,37 @@ export const resolveAppDomain = (req) => {
   return `${proto}://${host}`;
 };
 
-// Synchronous In-Memory fallback cache for robust local development and fast testing
+// Synchronous In-Memory fallback cache backed by durable disk persistence
 export const inMemoryProjectStore = new Map();
+
+const STORE_FILE_PATH = path.resolve(process.cwd(), 'server', 'data', 'projects_store.json');
+
+// Initialize store directory and load persisted projects on startup
+try {
+  const dir = path.dirname(STORE_FILE_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (fs.existsSync(STORE_FILE_PATH)) {
+    const raw = fs.readFileSync(STORE_FILE_PATH, 'utf-8');
+    const data = JSON.parse(raw);
+    if (Array.isArray(data)) {
+      data.forEach(p => {
+        if (p && (p.projectId || p.id)) {
+          const pid = p.projectId || p.id;
+          inMemoryProjectStore.set(pid, { ...p, projectId: pid });
+        }
+      });
+    }
+  }
+} catch (e) {}
+
+export const persistStoreToDisk = () => {
+  try {
+    const dir = path.dirname(STORE_FILE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const arr = Array.from(inMemoryProjectStore.values());
+    fs.writeFileSync(STORE_FILE_PATH, JSON.stringify(arr, null, 2), 'utf-8');
+  } catch (e) {}
+};
 
 // Mock default project template files for initial repository seeding
 const getDefaultFileContent = (languageEnv = '', title = '') => {
@@ -112,6 +143,10 @@ router.post('/', verifyToken, async (req, res) => {
       }
     ];
 
+    const allCollabEmails = Object.keys(normalizedCollabs).map(e => e.toLowerCase());
+    const memberEmails = Array.from(new Set([cleanOwnerEmail, ...allCollabEmails]));
+    const collaboratorEmails = allCollabEmails.filter(e => e !== cleanOwnerEmail);
+
     const newProject = {
       projectId,
       ownerEmail,
@@ -119,6 +154,9 @@ router.post('/', verifyToken, async (req, res) => {
       description: description ? String(description).trim().slice(0, 150) : '',
       languageEnv: languageEnv || 'RUST_1.75',
       collaborators: normalizedCollabs,
+      memberEmails,
+      collaboratorEmails,
+      rosterEmails: memberEmails,
       project_files: initialFiles,
       working_files: initialFiles,
       master_project_files: initialFiles,
@@ -127,8 +165,9 @@ router.post('/', verifyToken, async (req, res) => {
       updatedAt: timestamp
     };
 
-    // Cache in memory
+    // Cache in memory and persist to disk
     inMemoryProjectStore.set(projectId, newProject);
+    persistStoreToDisk();
 
     // Automatic Anti-Spam Invitation Email Dispatch (Requirement 1 Fix)
     // Brevo HTTPS API is the primary provider (Render blocks outbound SMTP);
@@ -398,17 +437,25 @@ router.post('/sync-catalog', verifyTokenOptional, async (req, res) => {
             mergedCollabs[callerEmail] = p.userRole || 'EDITOR';
           }
 
+          const allCollabEmails = Object.keys(mergedCollabs).map(e => e.toLowerCase());
+          const memberEmails = Array.from(new Set([ownerEmail.toLowerCase(), ...allCollabEmails].filter(Boolean)));
+          const collaboratorEmails = allCollabEmails.filter(e => e !== ownerEmail.toLowerCase());
+
           inMemoryProjectStore.set(pid, {
             ...existing,
             ...p,
             projectId: pid,
             title: p.title || existing.title || pid,
             ownerEmail,
-            collaborators: mergedCollabs
+            collaborators: mergedCollabs,
+            memberEmails,
+            collaboratorEmails,
+            rosterEmails: memberEmails
           });
           addedCount++;
         }
       });
+      persistStoreToDisk();
     }
     res.json({ status: 'SUCCESS', syncedCount: addedCount, totalProjects: inMemoryProjectStore.size });
   } catch (err) {
@@ -478,6 +525,7 @@ router.delete('/:projectId', verifyToken, async (req, res) => {
         }
       }
       inMemoryProjectStore.delete(projectId);
+      persistStoreToDisk();
 
       // 2. Remove project reference from owner's user document
       if (adminDb && userEmail) {
@@ -508,6 +556,7 @@ router.delete('/:projectId', verifyToken, async (req, res) => {
             delete memProj.collaborators[key];
           }
         });
+        persistStoreToDisk();
       }
 
       if (adminDb) {
@@ -1478,7 +1527,13 @@ router.post('/:projectId/accept-invite', verifyToken, async (req, res) => {
       const proj = inMemoryProjectStore.get(projectId);
       proj.collaborators = proj.collaborators || {};
       proj.collaborators[userEmail] = role;
+      const allCollabs = Object.keys(proj.collaborators).map(e => e.toLowerCase());
+      const owner = (proj.ownerEmail || '').toLowerCase();
+      proj.memberEmails = Array.from(new Set([owner, ...allCollabs].filter(Boolean)));
+      proj.collaboratorEmails = allCollabs.filter(e => e !== owner);
+      proj.rosterEmails = proj.memberEmails;
       proj.updatedAt = timestamp;
+      persistStoreToDisk();
     }
 
     if (adminDb) {
@@ -1488,6 +1543,9 @@ router.post('/:projectId/accept-invite', verifyToken, async (req, res) => {
           collaborators: {
             [userEmail]: role
           },
+          memberEmails: FieldValue.arrayUnion(userEmail),
+          collaboratorEmails: FieldValue.arrayUnion(userEmail),
+          rosterEmails: FieldValue.arrayUnion(userEmail),
           updatedAt: timestamp
         }, { merge: true });
 

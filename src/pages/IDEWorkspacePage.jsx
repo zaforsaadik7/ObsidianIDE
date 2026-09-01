@@ -306,6 +306,7 @@ export const IDEWorkspacePage = () => {
               }, { merge: true }).catch(() => {});
 
               const syncObj = {
+                userEmail: currentUser.email,
                 projects: [{
                   projectId,
                   title: data.title || projectId,

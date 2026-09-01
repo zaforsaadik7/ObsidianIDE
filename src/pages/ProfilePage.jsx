@@ -287,7 +287,28 @@ export const ProfilePage = () => {
         console.warn('Client Firestore profile fetch notice:', fsErr);
       }
 
-      // 3. Query specific candidate project documents directly
+      // 3. Targeted Firestore Queries by User Membership (immune to full-collection list blocks)
+      try {
+        const { getDocs: fsGetDocs, collection: fsCollection, query: fsQuery, where: fsWhere } = await import('firebase/firestore');
+        const userQueries = [
+          fsQuery(fsCollection(db, 'projects'), fsWhere('memberEmails', 'array-contains', userEmailNorm)),
+          fsQuery(fsCollection(db, 'projects'), fsWhere('ownerEmail', '==', userEmailNorm)),
+          fsQuery(fsCollection(db, 'projects'), fsWhere('collaboratorEmails', 'array-contains', userEmailNorm)),
+          fsQuery(fsCollection(db, 'projects'), fsWhere('rosterEmails', 'array-contains', userEmailNorm))
+        ];
+
+        for (const q of userQueries) {
+          try {
+            const snap = await fsGetDocs(q);
+            snap.forEach(docSnap => {
+              const p = docSnap.data();
+              if (p) upsertProject(p, docSnap.id);
+            });
+          } catch (qErr) {}
+        }
+      } catch (targetErr) {}
+
+      // 4. Query specific candidate project documents directly
       try {
         const { getDoc: fsGetDoc, doc: fsDoc } = await import('firebase/firestore');
         const knownIds = new Set();
