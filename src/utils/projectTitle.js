@@ -103,17 +103,23 @@ export const resolveProjectUserRoleAndMembership = (p, userEmail, uid, displayNa
       (Array.isArray(p.project_files) && p.project_files.some(f => (f?.lastModifiedBy || '').trim().toLowerCase() === emailNorm));
 
     if (isPastEditor) {
-      collabRole = p.userRole || p.role || 'EDITOR';
+      collabRole = 'EDITOR';
     }
   }
 
-  const finalRole = collabRole
-    ? (typeof collabRole === 'string' ? collabRole.toUpperCase() : (collabRole.role || 'EDITOR').toUpperCase())
-    : (p.userRole || p.role || null);
+  // 5. If this project came directly from the authenticated user's personal Firestore document catalog:
+  if (!collabRole && p._fromUserCatalog) {
+    collabRole = p.userRole || 'EDITOR';
+  }
+
+  const isMember = Boolean(isOwner || collabRole);
+  const resolvedRole = isOwner
+    ? 'OWNER'
+    : (collabRole ? (typeof collabRole === 'string' ? collabRole.toUpperCase() : (collabRole.role || 'EDITOR').toUpperCase()) : 'EDITOR');
 
   return {
-    isMember: Boolean(isOwner || collabRole || p.userRole || p.role),
-    role: isOwner ? 'OWNER' : (finalRole || 'EDITOR'),
+    isMember,
+    role: resolvedRole,
     isOwner
   };
 };

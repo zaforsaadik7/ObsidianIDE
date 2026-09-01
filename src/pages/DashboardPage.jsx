@@ -88,7 +88,9 @@ export const DashboardPage = () => {
 
     // 1. Load from AuthContext userProfile state
     if (userProfile?.projects) {
-      Object.entries(userProfile.projects).forEach(([key, p]) => upsertProject(p, key));
+      Object.entries(userProfile.projects).forEach(([key, p]) => {
+        if (p) upsertProject({ ...p, _fromUserCatalog: true }, key);
+      });
     }
 
     // 2. Fetch directly from Client Firestore User Documents (checking multiple candidate doc IDs)
@@ -107,7 +109,9 @@ export const DashboardPage = () => {
           if (userDocSnap.exists()) {
             const uData = userDocSnap.data();
             if (uData.projects) {
-              Object.entries(uData.projects).forEach(([key, p]) => upsertProject(p, key));
+              Object.entries(uData.projects).forEach(([key, p]) => {
+                if (p) upsertProject({ ...p, _fromUserCatalog: true }, key);
+              });
             }
             if (uData.hiddenProjects) {
               Object.keys(uData.hiddenProjects).forEach((projectId) => hiddenProjectIds.add(projectId));
@@ -211,7 +215,7 @@ export const DashboardPage = () => {
               description: p.description || '',
               languageEnv: p.languageEnv || 'PYTHON_3.11',
               userRole: p.userRole || 'EDITOR',
-              ownerEmail: p.ownerEmail,
+              ownerEmail: p.ownerEmail || (p.userRole === 'OWNER' ? currentUser.email : ''),
               updatedAt: p.updatedAt || new Date().toISOString()
             };
           }
@@ -222,7 +226,14 @@ export const DashboardPage = () => {
         }, { merge: true }).catch(() => {});
 
         // Sync catalog to backend in-memory store so all collaborators see it
-        const syncPayload = JSON.stringify({ projects: mergedList });
+        const syncPayload = JSON.stringify({
+          userEmail: currentUser.email,
+          projects: mergedList.map(p => ({
+            ...p,
+            ownerEmail: p.ownerEmail || (p.userRole === 'OWNER' ? currentUser.email : ''),
+            collaborators: p.collaborators || {}
+          }))
+        });
         fetch('/api/projects/sync-catalog', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -313,13 +313,13 @@ router.get('/', verifyToken, async (req, res) => {
         } else if (Array.isArray(p.members) && p.members.some(m => (typeof m === 'string' ? m : m?.email || '').toLowerCase() === emailNorm)) {
           collabRole = 'EDITOR';
         } else if ((p.lastWorkingModifiedBy || '').toLowerCase() === emailNorm || (p.masterLastSyncedBy || '').toLowerCase() === emailNorm) {
-          collabRole = p.userRole || p.role || 'EDITOR';
+          collabRole = 'EDITOR';
         } else if (Array.isArray(p.working_files) && p.working_files.some(f => (f?.lastModifiedBy || '').toLowerCase() === emailNorm)) {
-          collabRole = p.userRole || p.role || 'EDITOR';
+          collabRole = 'EDITOR';
         }
       }
 
-      const isMember = isOwner || Boolean(collabRole) || Boolean(p.userRole) || Boolean(p.role);
+      const isMember = isOwner || Boolean(collabRole);
 
       if (isMember) {
         const key = getCanonicalKey(p, pid);
@@ -330,13 +330,13 @@ router.get('/', verifyToken, async (req, res) => {
             ? existing.projectId 
             : pid;
 
-        const finalRole = isOwner ? 'OWNER' : (collabRole ? (typeof collabRole === 'string' ? collabRole : (collabRole.role || 'EDITOR')) : (p.userRole || p.role || 'EDITOR'));
+        const resolvedRole = isOwner ? 'OWNER' : (typeof collabRole === 'string' ? collabRole.toUpperCase() : (collabRole?.role || 'EDITOR').toUpperCase());
 
         userProjectsMap.set(key, {
           ...existing,
           ...p,
           projectId: chosenPid,
-          userRole: typeof finalRole === 'string' ? finalRole.toUpperCase() : 'EDITOR'
+          userRole: resolvedRole
         });
       }
     };
@@ -375,14 +375,37 @@ router.get('/', verifyToken, async (req, res) => {
 // POST /api/projects/sync-catalog: Populate and synchronize in-memory project store from client catalogs
 router.post('/sync-catalog', verifyTokenOptional, async (req, res) => {
   try {
-    const { projects } = req.body;
+    const { projects, userEmail } = req.body;
+    const callerEmail = ((userEmail || req.user?.email || '')).trim().toLowerCase();
     let addedCount = 0;
     if (Array.isArray(projects)) {
       projects.forEach(p => {
         if (p && (p.projectId || p.id)) {
           const pid = p.projectId || p.id;
           const existing = inMemoryProjectStore.get(pid) || {};
-          inMemoryProjectStore.set(pid, { ...existing, ...p, projectId: pid });
+
+          // Never clobber existing ownerEmail with an empty or undefined value
+          const ownerEmail = p.ownerEmail || existing.ownerEmail || '';
+          
+          // Merge collaborators map
+          const mergedCollabs = {
+            ...(existing.collaborators || {}),
+            ...(p.collaborators || {})
+          };
+
+          // If caller is an editor/collaborator, ensure they are registered in the collaborators roster
+          if (callerEmail && ownerEmail && callerEmail !== ownerEmail.toLowerCase()) {
+            mergedCollabs[callerEmail] = p.userRole || 'EDITOR';
+          }
+
+          inMemoryProjectStore.set(pid, {
+            ...existing,
+            ...p,
+            projectId: pid,
+            title: p.title || existing.title || pid,
+            ownerEmail,
+            collaborators: mergedCollabs
+          });
           addedCount++;
         }
       });

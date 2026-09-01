@@ -276,7 +276,9 @@ export const ProfilePage = () => {
                 }
               }
               if (fsData.projects) {
-                Object.entries(fsData.projects).forEach(([key, p]) => upsertProject(p, key));
+                Object.entries(fsData.projects).forEach(([key, p]) => {
+                  if (p) upsertProject({ ...p, _fromUserCatalog: true }, key);
+                });
               }
             }
           } catch (innerErr) {}
@@ -377,7 +379,9 @@ export const ProfilePage = () => {
           setEditDesignation(infoData.profession || data.profile.designation || '');
 
           if (data.profile.projects) {
-            Object.entries(data.profile.projects).forEach(([key, p]) => upsertProject(p, key));
+            Object.entries(data.profile.projects).forEach(([key, p]) => {
+              if (p) upsertProject({ ...p, _fromUserCatalog: true }, key);
+            });
           }
         }
       } catch (err) {
