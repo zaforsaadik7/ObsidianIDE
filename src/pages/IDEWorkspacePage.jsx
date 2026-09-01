@@ -831,13 +831,14 @@ export const IDEWorkspacePage = () => {
         } catch (e) { }
       }
     };
-    // IMPORTANT: activeUserRole is intentionally excluded from deps.
-    // Including it caused the WebSocket to reconnect every time the role resolved from nullâ†’OWNER,
-    // which broadcast EDITOR (the intermediate state) to all peers before OWNER was confirmed.
-    // The role is computed via getAuthoritativeRole() using projectOwnerEmailRef (a ref, not state)
-    // so it always reads the latest value without triggering a reconnect.
+  // FORK FLICKER FIX: Removed activeFile?.filePath from deps.
+  // Including it caused the collaboration WebSocket to close and reopen every time the
+  // user clicked a different file tab, which momentarily nulled collaborationWsRef.current
+  // and caused the fork state to flicker. The active file path is sent over the existing
+  // connection via CURSOR_MOVE messages — no reconnect needed.
+  // activeUserRole is also excluded: it caused reconnect on null→OWNER role resolution.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, currentUser?.email, activeFile?.filePath]);
+  }, [projectId, currentUser?.email]);
 
   // Handler for local cursor position update from Monaco editor
   const handleLocalCursorChange = (cursorPos) => {
@@ -963,6 +964,11 @@ export const IDEWorkspacePage = () => {
   }, [files, masterFiles, activeFile, currentContent]);
 
   // Detect who authored the unmerged changes in the workspace
+  // NOTE: currentContent, savedContent, and fileStatusMap are intentionally excluded from deps.
+  // They change on every single keystroke (React state), which caused the fork banner
+  // to flicker in/out rapidly due to the 1-second debounce lag between content states.
+  // Instead we use hasUnsavedForkChangesRef.current (a ref set only on deliberate fork
+  // actions) as the stable signal for whether the editor has staged changes.
   const { hasEditorForkChanges, hasOwnerAuthoredChanges, editorAuthoredChangesCount, collaboratorPendingChangesCount } = useMemo(() => {
     const ownerEmail = (projectData?.ownerEmail || '').toLowerCase().trim();
     const userEmail = (currentUser?.email || '').toLowerCase().trim();
@@ -979,13 +985,15 @@ export const IDEWorkspacePage = () => {
     let ownerChangesExist = false;
     let collabCount = 0;
 
+    // Use the stable ref (not currentContent/savedContent state) to detect local typing.
+    // hasUnsavedForkChangesRef is set explicitly in save/fork handlers and is NOT
+    // sensitive to the debounce lag — it never flickers.
     const isEditorLocalTyping = Boolean(
       !isProjectOwner &&
       isLocalDirtyRef.current &&
+      hasUnsavedForkChangesRef.current &&
       activeFile &&
-      !isBinaryFile(activeFile.filePath) &&
-      currentContent !== undefined &&
-      currentContent !== savedContent
+      !isBinaryFile(activeFile.filePath)
     );
 
     (files || []).forEach(wf => {
@@ -1042,7 +1050,11 @@ export const IDEWorkspacePage = () => {
       editorAuthoredChangesCount: editorCount,
       collaboratorPendingChangesCount: isProjectOwner ? (hasPendingFork ? Math.max(collabCount, 1) : collabCount) : 0
     };
-  }, [files, masterFiles, activeFile, currentContent, savedContent, currentUser?.email, projectData?.ownerEmail, isProjectOwner, fileStatusMap, liveProjectData?.lastWorkingModifiedBy, projectData?.lastWorkingModifiedBy, projectData?.pendingFork, liveProjectData?.pendingFork]);
+  // FORK FLICKER FIX: Removed currentContent, savedContent, fileStatusMap from deps.
+  // Those change on every keystroke → caused fork banner to flicker every time editor typed.
+  // The ref-based isEditorLocalTyping above does not depend on them.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files, masterFiles, activeFile, currentUser?.email, projectData?.ownerEmail, isProjectOwner, liveProjectData?.lastWorkingModifiedBy, projectData?.lastWorkingModifiedBy, projectData?.pendingFork, liveProjectData?.pendingFork]);
 
   const activeMasterFile = useMemo(() => {
     if (!activeFile) return null;
