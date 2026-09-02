@@ -457,9 +457,24 @@ export const IDEWorkspacePage = () => {
                   return sub ? { ...f, content: sub.content !== undefined ? sub.content : '', _manifestOnly: undefined } : f;
                 });
 
-                if (manifests.length === 0 && data.pendingFork !== true) {
+                // FIX: Include subcollection files that are NOT referenced in the current
+                // manifest but ARE present in any of the three canonical Firestore arrays.
+                // This catches newly-created files that were written to the subcollection
+                // before the root-doc manifest was updated (race condition), or that appear
+                // in master/project_files but were temporarily absent from working_files.
+                // Scoping to "known-by-Firestore" paths prevents resurrecting deleted files
+                // that still have stale subcollection documents.
+                if (data.pendingFork !== true) {
+                  const allKnownPaths = new Set([
+                    ...(data.working_files || []).map(f => f?.filePath),
+                    ...(data.master_project_files || []).map(f => f?.filePath),
+                    ...(data.project_files || []).map(f => f?.filePath),
+                  ].filter(Boolean));
+                  const manifestPaths = new Set(manifests.map(f => f.filePath));
                   contentMap.forEach((fd) => {
-                    hydrated.push(fd);
+                    if (fd.filePath && allKnownPaths.has(fd.filePath) && !manifestPaths.has(fd.filePath)) {
+                      hydrated.push(fd);
+                    }
                   });
                 }
 
@@ -1432,23 +1447,15 @@ export const IDEWorkspacePage = () => {
         setSavedContent(currentContent);
       }
 
-      // 1. Commit to Client Firestore Master & Working files in Website Database (Instant atomic doc update)
+      // 1. Commit to Client Firestore Master & Working files in Website Database
+      // FIX: Write subcollection files FIRST (await) so the Firestore root-document
+      // onSnapshot never fires before subcollection data is fully written. Previously
+      // the subcollection writes were non-blocking (Promise.allSettled without await),
+      // creating a race where collaborators hydrating on refresh would read an empty
+      // subcollection and silently miss newly-saved files.
       try {
-        const manifestFiles = toManifest(targetWorkingFiles);
-        await setDoc(doc(db, 'projects', projectId), {
-          master_project_files: manifestFiles,
-          project_files: manifestFiles,
-          working_files: manifestFiles,
-          pending_patches: [],
-          pendingFork: false,
-          lastWorkingModifiedBy: userEmail,
-          masterLastSyncedAt: timestamp,
-          masterLastSyncedBy: userEmail,
-          updatedAt: timestamp
-        }, { merge: true });
-
-        // Update files subcollection non-blocking in parallel
-        Promise.allSettled(targetWorkingFiles.map(f => {
+        // Step A: Write all file contents to the subcollection first (blocking)
+        await Promise.allSettled(targetWorkingFiles.map(f => {
           if (f && (f.fileId || f.filePath)) {
             const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
             return setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
@@ -1463,7 +1470,22 @@ export const IDEWorkspacePage = () => {
             }, { merge: true });
           }
           return Promise.resolve();
-        })).catch(() => {});
+        }));
+
+        // Step B: Now write the root document manifest (triggers onSnapshot on all clients)
+        // Subcollection is guaranteed to be fully populated before this snapshot fires.
+        const manifestFiles = toManifest(targetWorkingFiles);
+        await setDoc(doc(db, 'projects', projectId), {
+          master_project_files: manifestFiles,
+          project_files: manifestFiles,
+          working_files: manifestFiles,
+          pending_patches: [],
+          pendingFork: false,
+          lastWorkingModifiedBy: userEmail,
+          masterLastSyncedAt: timestamp,
+          masterLastSyncedBy: userEmail,
+          updatedAt: timestamp
+        }, { merge: true });
 
         const ownerDocUsername = userEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
         setDoc(doc(db, 'users', ownerDocUsername), {

@@ -825,6 +825,9 @@ router.post('/sync-master', verifyToken, async (req, res) => {
 
     if (adminDb) {
       try {
+        // FIX: Write subcollection files FIRST (blocking batched commits), then the root doc.
+        // The root-doc write triggers onSnapshot on all connected clients; if it fires before
+        // the subcollection is populated, hydration on refresh silently misses newly-saved files.
         const safeServerFilesPayload = (fileArray = []) => {
           try {
             if (JSON.stringify(fileArray).length < 800000) return fileArray;
@@ -832,21 +835,9 @@ router.post('/sync-master', verifyToken, async (req, res) => {
           return fileArray.map(({ content, ...rest }) => ({ ...rest, _manifestOnly: true }));
         };
 
-        const payloadFiles = safeServerFilesPayload(files);
         const projRef = adminDb.collection('projects').doc(projectId);
-        await projRef.set({
-          master_project_files: payloadFiles,
-          project_files: payloadFiles,
-          working_files: payloadFiles,
-          pending_patches: [],
-          pendingFork: false,
-          lastWorkingModifiedBy: ownerEmail || 'owner@obsidian.io',
-          masterLastSyncedAt: timestamp,
-          masterLastSyncedBy: ownerEmail,
-          updatedAt: timestamp
-        }, { merge: true });
 
-        // Update files subcollection with FULL content in chunks of 400
+        // Step A: Write all file contents to the subcollection first (blocking, chunked)
         const chunkSize = 400;
         for (let i = 0; i < files.length; i += chunkSize) {
           const chunk = files.slice(i, i + chunkSize);
@@ -875,6 +866,21 @@ router.post('/sync-master', verifyToken, async (req, res) => {
         // Remove subcollection docs that were deleted in the accepted fork so the
         // merge is fully applied on the first try (no stale docs to resurrect)
         await pruneStaleFileDocs(projRef, projectId, files);
+
+        // Step B: Now write the root document manifest (triggers onSnapshot on all clients).
+        // Subcollection is guaranteed to be fully populated at this point.
+        const payloadFiles = safeServerFilesPayload(files);
+        await projRef.set({
+          master_project_files: payloadFiles,
+          project_files: payloadFiles,
+          working_files: payloadFiles,
+          pending_patches: [],
+          pendingFork: false,
+          lastWorkingModifiedBy: ownerEmail || 'owner@obsidian.io',
+          masterLastSyncedAt: timestamp,
+          masterLastSyncedBy: ownerEmail,
+          updatedAt: timestamp
+        }, { merge: true });
       } catch (dbErr) {
         console.warn('AdminDB sync-master notice:', dbErr.message);
       }
