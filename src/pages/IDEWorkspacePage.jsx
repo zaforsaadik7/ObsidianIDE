@@ -11,7 +11,7 @@ import { AgenticAIChatSidebar } from '../components/ide/AgenticAIChatSidebar';
 import { InteractiveTerminal } from '../components/ide/InteractiveTerminal';
 import { KeyboardShortcutsModal } from '../components/ide/KeyboardShortcutsModal';
 import { db, getFirebaseIdToken } from '../firebase';
-import { doc, getDoc, setDoc, deleteDoc, updateDoc, collection, getDocs, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, updateDoc, collection, getDocs, onSnapshot, arrayUnion } from 'firebase/firestore';
 import { exportSingleFile, exportProjectZip } from '../utils/fileExporter';
 import { ImportAnalysisModal } from '../components/ide/ImportAnalysisModal';
 import {
@@ -189,20 +189,46 @@ export const IDEWorkspacePage = () => {
   const localFilesRef = useRef(files);
   const localMasterRef = useRef(masterFiles);
 
+  // Helper to ensure every file object is 100% valid for Firestore (NO undefined keys anywhere)
+  const sanitizeFirestoreFile = useCallback((f) => {
+    if (!f) return null;
+    const cleanPath = String(f.filePath || f.fileName || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    const cleanName = String(f.fileName || (cleanPath ? cleanPath.split('/').pop() : 'file'));
+    const clean = {
+      fileId: String(f.fileId || `file_${projectId}_${cleanPath.replace(/[^a-zA-Z0-9_]/g, '_')}`),
+      projectId: String(projectId),
+      filePath: cleanPath,
+      fileName: cleanName,
+      fileType: String(f.fileType || (cleanPath.split('.').pop() || 'plaintext')),
+      isBinary: Boolean(f.isBinary),
+      size: Number(f.size || (typeof f.content === 'string' ? f.content.length : 0)),
+      updatedAt: f.updatedAt || new Date().toISOString()
+    };
+    if (typeof f.content === 'string') {
+      clean.content = f.content;
+    }
+    if (f.lastModifiedBy) clean.lastModifiedBy = String(f.lastModifiedBy);
+    if (f.lastModifiedByName) clean.lastModifiedByName = String(f.lastModifiedByName);
+    if (f._manifestOnly === true) clean._manifestOnly = true;
+    return clean;
+  }, [projectId]);
+
   // Helper: Ensures file payloads are safe for Firestore document size (< 800 KB).
   // Preserves full content for normal projects, and strips content into manifests only if payload exceeds 800 KB.
   const safeFilesPayload = useCallback((fileArray = []) => {
+    if (!Array.isArray(fileArray)) return [];
+    const sanitized = fileArray.map(sanitizeFirestoreFile).filter(Boolean);
     try {
-      const jsonStr = JSON.stringify(fileArray);
+      const jsonStr = JSON.stringify(sanitized);
       if (jsonStr.length < 800000) {
-        return fileArray;
+        return sanitized;
       }
     } catch (e) {}
-    return fileArray.map(({ content, ...rest }) => ({
-      ...rest,
-      _manifestOnly: true
-    }));
-  }, []);
+    return sanitized.map(f => {
+      const { content, ...rest } = f;
+      return { ...rest, _manifestOnly: true };
+    });
+  }, [sanitizeFirestoreFile]);
 
   const toManifest = safeFilesPayload;
 
@@ -397,14 +423,15 @@ export const IDEWorkspacePage = () => {
             // Helper to apply hydrated file content across state and local storage
             const applyHydratedState = (hydratedList = []) => {
               if (!Array.isArray(hydratedList) || hydratedList.length === 0) return;
-              setFiles(hydratedList);
-              localFilesRef.current = hydratedList;
-              setMasterFiles(hydratedList);
-              localMasterRef.current = hydratedList;
+              const sanitizedList = hydratedList.map(sanitizeFirestoreFile).filter(Boolean);
+              setFiles(sanitizedList);
+              localFilesRef.current = sanitizedList;
+              setMasterFiles(sanitizedList);
+              localMasterRef.current = sanitizedList;
               if (!activeFileRef.current) {
-                resolveActiveFileAndTabs(hydratedList);
+                resolveActiveFileAndTabs(sanitizedList);
               } else {
-                const matched = hydratedList.find(f =>
+                const matched = sanitizedList.find(f =>
                   (activeFileRef.current.fileId && f.fileId === activeFileRef.current.fileId) ||
                   f.filePath === activeFileRef.current.filePath
                 );
@@ -414,16 +441,21 @@ export const IDEWorkspacePage = () => {
                   setOpenFiles(prev => prev.map(of =>
                     (of.filePath === matched.filePath || (matched.fileId && of.fileId === matched.fileId)) ? { ...of, fileName: matched.fileName, content: matched.content } : of
                   ));
-                  if (isMasterSynchronized || (!isLocalDirtyRef.current && (currentContentRef.current === savedContentRef.current || !currentContentRef.current))) {
-                    if (matched.content !== undefined) {
-                      setCurrentContent(matched.content);
-                      setSavedContent(matched.content);
-                    }
+                  // FIX: Update editor text ONLY if the user is NOT actively editing or typing.
+                  // Decoupled from isMasterSynchronized to protect live typing buffer from reset.
+                  const isUserActivelyEditing = (
+                    isLocalDirtyRef.current ||
+                    (currentContentRef.current !== savedContentRef.current) ||
+                    ((Date.now() - localMutationTimestampRef.current) < 30000)
+                  );
+                  if (!isUserActivelyEditing && matched.content !== undefined && matched.content !== currentContentRef.current) {
+                    setCurrentContent(matched.content);
+                    setSavedContent(matched.content);
                   }
                 }
               }
               try {
-                localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(hydratedList));
+                localStorage.setItem(`obsidian_draft_${projectId}_${userEmail}`, JSON.stringify(sanitizedList));
               } catch (e) {}
             };
 
@@ -450,11 +482,13 @@ export const IDEWorkspacePage = () => {
                   if (fd && fd.filePath) contentMap.set(fd.filePath, fd);
                 });
 
-                // Merge subcollection content into manifest entries
+                // Merge subcollection content into manifest entries (cleaning any manifest flags)
                 const manifests = working.length > 0 ? working : [];
                 const hydrated = manifests.map(f => {
                   const sub = contentMap.get(f.filePath);
-                  return sub ? { ...f, content: sub.content !== undefined ? sub.content : '', _manifestOnly: undefined } : f;
+                  const base = { ...f };
+                  delete base._manifestOnly;
+                  return sub ? { ...base, ...sub, content: sub.content !== undefined ? sub.content : '' } : base;
                 });
 
                 // FIX: Include subcollection files that are NOT referenced in the current
@@ -651,12 +685,10 @@ export const IDEWorkspacePage = () => {
             }
 
             // A stale "master synced" report must not clear an editor's staged
-            // fork changes that the server has not received yet (mirrors the
-            // snapshot listener guard).
+            // fork changes that the server has not received yet
             if (isServerMasterSynced && !(hasUnsavedForkChangesRef.current && serverOwnerEmail && serverOwnerEmail !== userEmail)) {
               hasUnsavedForkChangesRef.current = false;
-              isLocalDirtyRef.current = false;
-              localMutationTimestampRef.current = 0;
+              // FIX: Do NOT reset isLocalDirtyRef or localMutationTimestampRef on polling.
             }
 
             // Use refs instead of stale closure variables for accurate comparison.
@@ -696,8 +728,9 @@ export const IDEWorkspacePage = () => {
                 setOpenFiles(prev => prev.map(of =>
                   (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? { ...of, fileName: matching.fileName, content: matching.content } : of
                 ));
-                // Update editor text ONLY if user is not actively editing or typing in the buffer
-                const isUserActivelyEditing = !isServerMasterSynced && (
+                // FIX: Update editor text ONLY if user is not actively editing or typing in the buffer.
+                // Decoupled from isServerMasterSynced so that active typing is NEVER erased.
+                const isUserActivelyEditing = (
                   (currentContentRef.current !== savedContentRef.current) ||
                   isLocalDirtyRef.current ||
                   ((Date.now() - localMutationTimestampRef.current) < 30000)
@@ -1458,14 +1491,12 @@ export const IDEWorkspacePage = () => {
       }
 
       // 1. Commit to Client Firestore Master & Working files in Website Database
-      // FIX: Write subcollection files FIRST (await) so the Firestore root-document
-      // onSnapshot never fires before subcollection data is fully written. Previously
-      // the subcollection writes were non-blocking (Promise.allSettled without await),
-      // creating a race where collaborators hydrating on refresh would read an empty
-      // subcollection and silently miss newly-saved files.
+      // Sanitized files guarantee 0 undefined properties so setDoc never throws.
       try {
+        const sanitizedWorking = targetWorkingFiles.map(sanitizeFirestoreFile).filter(Boolean);
+
         // Step A: Write all file contents to the subcollection first (blocking)
-        await Promise.allSettled(targetWorkingFiles.map(f => {
+        await Promise.allSettled(sanitizedWorking.map(f => {
           if (f && (f.fileId || f.filePath)) {
             const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
             return setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
@@ -1475,6 +1506,8 @@ export const IDEWorkspacePage = () => {
               fileName: f.fileName || f.filePath.split('/').pop(),
               content: f.content || '',
               fileType: f.fileType || 'plaintext',
+              isBinary: Boolean(f.isBinary),
+              size: Number(f.size || (typeof f.content === 'string' ? f.content.length : 0)),
               updatedAt: timestamp,
               lastModifiedBy: userEmail
             }, { merge: true });
@@ -1484,7 +1517,7 @@ export const IDEWorkspacePage = () => {
 
         // Step B: Now write the root document manifest (triggers onSnapshot on all clients)
         // Subcollection is guaranteed to be fully populated before this snapshot fires.
-        const manifestFiles = toManifest(targetWorkingFiles);
+        const manifestFiles = toManifest(sanitizedWorking);
         await setDoc(doc(db, 'projects', projectId), {
           master_project_files: manifestFiles,
           project_files: manifestFiles,
@@ -1694,7 +1727,42 @@ export const IDEWorkspacePage = () => {
     const inviteUrl = `${window.location.origin}/invite/${projectId}?role=${role}&email=${encodeURIComponent(email.trim())}&title=${encodeURIComponent(projTitle)}&owner=${encodeURIComponent(projOwner)}`;
 
     try {
-      // 1. Stage in Firebase Queue and dispatch
+      const cleanEmail = email.trim().toLowerCase();
+
+      // 1. Direct Firestore project & user catalog update by Owner (instant cloud durability)
+      if (isProjectOwner) {
+        try {
+          const projDocRef = doc(db, 'projects', projectId);
+          await setDoc(projDocRef, {
+            collaborators: {
+              [cleanEmail]: role
+            },
+            memberEmails: arrayUnion(cleanEmail),
+            collaboratorEmails: arrayUnion(cleanEmail),
+            rosterEmails: arrayUnion(cleanEmail),
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+
+          const collabDocId = cleanEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_');
+          await setDoc(doc(db, 'users', collabDocId), {
+            info: { email: cleanEmail },
+            projects: {
+              [projectId]: {
+                projectId,
+                title: projTitle,
+                languageEnv: projectData?.languageEnv || 'PYTHON_3.11',
+                userRole: role,
+                ownerEmail: projOwner,
+                updatedAt: new Date().toISOString()
+              }
+            }
+          }, { merge: true });
+        } catch (fsInviteErr) {
+          console.warn('Direct Firestore teammate invite notice:', fsInviteErr);
+        }
+      }
+
+      // 2. Stage in Firebase Queue and dispatch
       await stageAndDispatchInvitationEmail({
         to: email.trim(),
         ownerEmail: projOwner,
@@ -1705,7 +1773,7 @@ export const IDEWorkspacePage = () => {
         currentUser
       });
 
-      // 2. Register collaborator on backend API
+      // 3. Register collaborator on backend API
       const token = await getFirebaseIdToken();
       const res = await fetch(`/api/projects/${projectId}/invite`, {
         method: 'POST',
@@ -2601,11 +2669,36 @@ export const IDEWorkspacePage = () => {
         handleSelectFile(newFormattedFiles[0]);
       }
 
-      // 1. Persist MANIFEST-ONLY to Firestore parent document (no file content)
-      //    This prevents hitting the 1 MiB Firestore document size limit — the PRIMARY fix.
-      //    Full file content is stored exclusively in the subcollection (step 2).
+      // 1. Persist individual files WITH FULL CONTENT in subcollection first (blocking)
+      const sanitizedMerged = mergedFiles.map(sanitizeFirestoreFile).filter(Boolean);
       try {
-        const manifestFiles = toManifest(mergedFiles);
+        const chunkPromises = sanitizedMerged.map(f => {
+          if (f && (f.fileId || f.filePath)) {
+            const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+            return setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
+              fileId: String(fileDocId),
+              projectId: String(projectId),
+              filePath: String(f.filePath),
+              fileName: String(f.fileName),
+              content: String(f.content || ''),
+              fileType: String(f.fileType || 'plaintext'),
+              isBinary: Boolean(f.isBinary),
+              size: Number(f.size || (typeof f.content === 'string' ? f.content.length : 0)),
+              updatedAt: timestamp,
+              lastModifiedBy: userEmail
+            }, { merge: true });
+          }
+          return Promise.resolve();
+        });
+        await Promise.allSettled(chunkPromises);
+      } catch (subErr) {
+        console.warn('Subcollection sync notice:', subErr);
+      }
+
+      // 2. Persist MANIFEST to Firestore parent document
+      //    Subcollection is guaranteed to be fully written before this onSnapshot fires.
+      try {
+        const manifestFiles = toManifest(sanitizedMerged);
         const payload = {
           working_files: manifestFiles,
           ...(isProjectOwner ? {
@@ -2624,31 +2717,6 @@ export const IDEWorkspacePage = () => {
         await setDoc(doc(db, 'projects', projectId), payload, { merge: true });
       } catch (fsErr) {
         console.warn('Parent project document update notice:', fsErr);
-      }
-
-      // 2. Persist individual files WITH FULL CONTENT in subcollection (chunked for resilience)
-      try {
-        const chunkPromises = mergedFiles.map(f => {
-          if (f && (f.fileId || f.filePath)) {
-            const fileDocId = f.fileId || `file_${projectId}_${f.filePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-            return setDoc(doc(db, 'projects', projectId, 'files', fileDocId), {
-              fileId: String(fileDocId),
-              projectId: String(projectId),
-              filePath: String(f.filePath),
-              fileName: String(f.fileName),
-              content: String(f.content || ''),
-              fileType: String(f.fileType || 'plaintext'),
-              isBinary: Boolean(f.isBinary),
-              size: Number(f.size || 0),
-              updatedAt: timestamp,
-              lastModifiedBy: userEmail
-            }, { merge: true });
-          }
-          return Promise.resolve();
-        });
-        await Promise.allSettled(chunkPromises);
-      } catch (subErr) {
-        console.warn('Subcollection sync notice:', subErr);
       }
 
       // 3. Persist to Backend REST API (Updates backend in-memory cache and adminDb)

@@ -1151,21 +1151,26 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
         if (projectSnap.exists) {
           const projectData = projectSnap.data();
           projectTitle = reqTitle || projectData.title || projectTitle;
+          const cleanEmailNorm = email.trim().toLowerCase();
           updatedCollaborators = {
             ...projectData.collaborators,
-            [email]: safeRole
+            [cleanEmailNorm]: safeRole
           };
 
-          await projectDocRef.update({
+          await projectDocRef.set({
             collaborators: updatedCollaborators,
+            memberEmails: FieldValue.arrayUnion(cleanEmailNorm),
+            collaboratorEmails: FieldValue.arrayUnion(cleanEmailNorm),
+            rosterEmails: FieldValue.arrayUnion(cleanEmailNorm),
             updatedAt: new Date().toISOString()
-          });
+          }, { merge: true });
 
           // Add copy/reference of project to collaborator's user document (Requirement 2 Fix)
           try {
-            const collabDocId = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
+            const collabDocId = cleanEmailNorm.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
             const userRef = adminDb.collection('users').doc(collabDocId);
             await userRef.set({
+              info: { email: cleanEmailNorm },
               projects: {
                 [projectId]: {
                   projectId,
@@ -1188,9 +1193,16 @@ router.post('/:id/invite', verifyToken, async (req, res) => {
 
     if (inMemoryProjectStore.has(projectId)) {
       const p = inMemoryProjectStore.get(projectId);
+      const cleanEmailNorm = email.trim().toLowerCase();
       if (!p.collaborators) p.collaborators = {};
-      p.collaborators[email] = safeRole;
+      p.collaborators[cleanEmailNorm] = safeRole;
+      const allCollabs = Object.keys(p.collaborators).map(e => e.toLowerCase());
+      const pOwner = (p.ownerEmail || ownerEmail).toLowerCase();
+      p.memberEmails = Array.from(new Set([pOwner, ...allCollabs].filter(Boolean)));
+      p.collaboratorEmails = allCollabs.filter(e => e !== pOwner);
+      p.rosterEmails = p.memberEmails;
       projectTitle = reqTitle || p.title || projectTitle;
+      persistStoreToDisk();
     }
 
     const domain = resolveAppDomain(req);
@@ -1351,7 +1363,9 @@ router.get('/:projectId', verifyTokenOptional, async (req, res) => {
               if (Array.isArray(projData.working_files) && projData.working_files.length > 0) {
                 projData.working_files = projData.working_files.map(wf => {
                   const sub = subFilesMap.get(wf.filePath || wf.fileName);
-                  return sub ? { ...wf, content: sub.content !== undefined ? sub.content : (wf.content || ''), _manifestOnly: undefined } : wf;
+                  const base = { ...wf };
+                  delete base._manifestOnly;
+                  return sub ? { ...base, content: sub.content !== undefined ? sub.content : (base.content || '') } : base;
                 });
                 // FIX: Recover subcollection files present in any Firestore array but missing
                 // from working_files (race condition: root doc updated before subcollection write).
@@ -1365,18 +1379,26 @@ router.get('/:projectId', verifyTokenOptional, async (req, res) => {
                 subFilesMap.forEach((fd) => {
                   const key = fd.filePath || fd.fileName;
                   if (key && allKnownPaths.has(key) && !workingPaths.has(key)) {
-                    projData.working_files.push(fd);
+                    const cleanFd = { ...fd };
+                    delete cleanFd._manifestOnly;
+                    projData.working_files.push(cleanFd);
                   }
                 });
               } else if (subFilesMap.size > 0) {
-                projData.working_files = Array.from(subFilesMap.values());
+                projData.working_files = Array.from(subFilesMap.values()).map(fd => {
+                  const cleanFd = { ...fd };
+                  delete cleanFd._manifestOnly;
+                  return cleanFd;
+                });
               }
 
               // Hydrate master_project_files
               if (Array.isArray(projData.master_project_files) && projData.master_project_files.length > 0) {
                 projData.master_project_files = projData.master_project_files.map(mf => {
                   const sub = subFilesMap.get(mf.filePath || mf.fileName);
-                  return sub ? { ...mf, content: sub.content !== undefined ? sub.content : (mf.content || ''), _manifestOnly: undefined } : mf;
+                  const base = { ...mf };
+                  delete base._manifestOnly;
+                  return sub ? { ...base, content: sub.content !== undefined ? sub.content : (base.content || '') } : base;
                 });
               } else if (subFilesMap.size > 0) {
                 projData.master_project_files = projData.working_files;
@@ -1386,7 +1408,9 @@ router.get('/:projectId', verifyTokenOptional, async (req, res) => {
               if (Array.isArray(projData.project_files) && projData.project_files.length > 0) {
                 projData.project_files = projData.project_files.map(pf => {
                   const sub = subFilesMap.get(pf.filePath || pf.fileName);
-                  return sub ? { ...pf, content: sub.content !== undefined ? sub.content : (pf.content || ''), _manifestOnly: undefined } : pf;
+                  const base = { ...pf };
+                  delete base._manifestOnly;
+                  return sub ? { ...base, content: sub.content !== undefined ? sub.content : (base.content || '') } : base;
                 });
               } else if (subFilesMap.size > 0) {
                 projData.project_files = projData.master_project_files;

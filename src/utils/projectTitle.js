@@ -78,13 +78,19 @@ export const resolveProjectUserRoleAndMembership = (p, userEmail, uid, displayNa
     }
   }
 
-  // 3. Team Members / Invitations / Raw text input checks
+  // 3. Team Members / Invitations / Rosters / Raw text input checks
   if (!collabRole) {
     if (typeof p.teamMembersInput === 'string' && p.teamMembersInput.toLowerCase().includes(emailNorm)) {
       collabRole = 'EDITOR';
     } else if (Array.isArray(p.teamMembers) && p.teamMembers.some(m => String(m).toLowerCase().includes(emailNorm))) {
       collabRole = 'EDITOR';
     } else if (Array.isArray(p.members) && p.members.some(m => (typeof m === 'string' ? m : m?.email || '').toLowerCase() === emailNorm)) {
+      collabRole = 'EDITOR';
+    } else if (Array.isArray(p.memberEmails) && p.memberEmails.some(e => String(e).trim().toLowerCase() === emailNorm)) {
+      collabRole = 'EDITOR';
+    } else if (Array.isArray(p.collaboratorEmails) && p.collaboratorEmails.some(e => String(e).trim().toLowerCase() === emailNorm)) {
+      collabRole = 'EDITOR';
+    } else if (Array.isArray(p.rosterEmails) && p.rosterEmails.some(e => String(e).trim().toLowerCase() === emailNorm)) {
       collabRole = 'EDITOR';
     } else if (p.invitations && typeof p.invitations === 'object') {
       const invRole = p.invitations[emailNorm] || (userEmail && p.invitations[userEmail]);
@@ -107,9 +113,11 @@ export const resolveProjectUserRoleAndMembership = (p, userEmail, uid, displayNa
     }
   }
 
-  // 5. If this project came directly from the authenticated user's personal Firestore document catalog:
-  if (!collabRole && p._fromUserCatalog) {
-    collabRole = p.userRole || 'EDITOR';
+  // 5. Explicit userRole or user catalog provenance
+  if (!collabRole) {
+    if (p._fromUserCatalog || (p.userRole && p.userRole !== 'NONE') || (p.role && p.role !== 'NONE')) {
+      collabRole = p.userRole || p.role || 'EDITOR';
+    }
   }
 
   const isMember = Boolean(isOwner || collabRole);
