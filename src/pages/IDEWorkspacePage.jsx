@@ -500,8 +500,12 @@ export const IDEWorkspacePage = () => {
           // fork changes that the server has not yet received.
           if (isMasterSynchronized && !(hasUnsavedForkChangesRef.current && docOwnerEmail && docOwnerEmail !== userEmail)) {
             hasUnsavedForkChangesRef.current = false;
-            isLocalDirtyRef.current = false;
-            localMutationTimestampRef.current = 0;
+            // FIX: Do NOT reset isLocalDirtyRef or localMutationTimestampRef here.
+            // Resetting localMutationTimestampRef to 0 was destroying the 30-second
+            // edit-immunity window for the owner right after they click Save & Sync
+            // (the snapshot fires BEFORE the 30s window expires, clearing the timestamp
+            // and allowing the very next snapshot to overwrite the owner's editor state).
+            // Only clear the fork-changes flag here; let the mutation window expire naturally.
           }
 
           // 4. Update working files state with strict mutation protection
@@ -546,8 +550,14 @@ export const IDEWorkspacePage = () => {
               setOpenFiles(prev => prev.map(of =>
                 (of.filePath === matching.filePath || (matching.fileId && of.fileId === matching.fileId)) ? { ...of, fileName: matching.fileName, content: matching.content } : of
               ));
-              // Update editor text if Master is synchronized or user is not typing dirty in this file
-              const isUserActivelyEditing = !isMasterSynchronized && (
+              // FIX: Update editor text ONLY if the user is NOT actively editing.
+              // Previously this was gated by !isMasterSynchronized, so after Save & Sync
+              // (which sets pendingFork=false → isMasterSynchronized=true permanently),
+              // isUserActivelyEditing was ALWAYS false and every Firestore snapshot
+              // would overwrite the collaborator's editor content — erasing typed text
+              // and jumping the cursor to the end. The check is now based purely on
+              // whether the user has unsaved local edits, independent of master sync state.
+              const isUserActivelyEditing = (
                 isLocalDirtyRef.current ||
                 (currentContentRef.current !== savedContentRef.current) ||
                 ((Date.now() - localMutationTimestampRef.current) < 30000)

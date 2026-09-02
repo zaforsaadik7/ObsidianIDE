@@ -733,20 +733,11 @@ router.post('/update-files', verifyToken, async (req, res) => {
         const payloadWorking = safeServerFilesPayload(filesToPersist || []);
         const payloadMaster = safeServerFilesPayload(master_project_files || filesToPersist || []);
 
-        const payload = {
-          working_files: payloadWorking,
-          ...(explicitPendingFork !== null ? { pendingFork: explicitPendingFork } : {}),
-          ...(isOwner || (!memProj.master_project_files && master_project_files) ? {
-            master_project_files: payloadMaster,
-            project_files: payloadMaster
-          } : {}),
-          updatedAt: timestamp,
-          lastWorkingModifiedBy: userEmail || 'developer@obsidian.io',
-          lastModifiedBy: userEmail || 'developer@obsidian.io'
-        };
-        await projRef.set(payload, { merge: true });
-
-        // Update individual file docs safely with FULL content in chunks of 400
+        // FIX: Write subcollection FIRST (blocking), then root doc manifest.
+        // The root-doc write triggers onSnapshot on all clients. Writing it first
+        // caused a race condition where collaborators refreshing would hydrate from
+        // an empty/incomplete subcollection, silently dropping newly-saved files.
+        // Step A: Write subcollection file docs first
         const chunkSize = 400;
         for (let i = 0; i < filesToPersist.length; i += chunkSize) {
           const chunk = filesToPersist.slice(i, i + chunkSize);
@@ -775,6 +766,21 @@ router.post('/update-files', verifyToken, async (req, res) => {
         // Remove subcollection docs that are no longer in the active working set
         // (deleted files/folders must stay deleted, not resurrect on next hydration)
         await pruneStaleFileDocs(projRef, projectId, filesToPersist);
+
+        // Step B: Write root document manifest (triggers onSnapshot on all clients).
+        // Subcollection is guaranteed to be fully populated before this fires.
+        const payload = {
+          working_files: payloadWorking,
+          ...(explicitPendingFork !== null ? { pendingFork: explicitPendingFork } : {}),
+          ...(isOwner || (!memProj.master_project_files && master_project_files) ? {
+            master_project_files: payloadMaster,
+            project_files: payloadMaster
+          } : {}),
+          updatedAt: timestamp,
+          lastWorkingModifiedBy: userEmail || 'developer@obsidian.io',
+          lastModifiedBy: userEmail || 'developer@obsidian.io'
+        };
+        await projRef.set(payload, { merge: true });
       } catch (dbErr) {
         console.warn('AdminDB update-files notice:', dbErr.message);
       }
@@ -1346,6 +1352,21 @@ router.get('/:projectId', verifyTokenOptional, async (req, res) => {
                 projData.working_files = projData.working_files.map(wf => {
                   const sub = subFilesMap.get(wf.filePath || wf.fileName);
                   return sub ? { ...wf, content: sub.content !== undefined ? sub.content : (wf.content || ''), _manifestOnly: undefined } : wf;
+                });
+                // FIX: Recover subcollection files present in any Firestore array but missing
+                // from working_files (race condition: root doc updated before subcollection write).
+                // Scoped to known paths to prevent resurrecting deleted files.
+                const allKnownPaths = new Set([
+                  ...(projData.working_files || []).map(f => f?.filePath || f?.fileName),
+                  ...(projData.master_project_files || []).map(f => f?.filePath || f?.fileName),
+                  ...(projData.project_files || []).map(f => f?.filePath || f?.fileName),
+                ].filter(Boolean));
+                const workingPaths = new Set(projData.working_files.map(f => f.filePath || f.fileName));
+                subFilesMap.forEach((fd) => {
+                  const key = fd.filePath || fd.fileName;
+                  if (key && allKnownPaths.has(key) && !workingPaths.has(key)) {
+                    projData.working_files.push(fd);
+                  }
                 });
               } else if (subFilesMap.size > 0) {
                 projData.working_files = Array.from(subFilesMap.values());
