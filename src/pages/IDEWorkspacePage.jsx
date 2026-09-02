@@ -185,9 +185,9 @@ export const IDEWorkspacePage = () => {
   const localMutationTimestampRef = useRef(0);
   // Hard immunity flag: when true, onSnapshot and syncFromServer will NOT overwrite local files state.
   const isImportingRef = useRef(false);
-  // NOTE: Do NOT set localFilesRef/localMasterRef on every render — only in handlers.
   const localFilesRef = useRef(files);
   const localMasterRef = useRef(masterFiles);
+  const initialHydrationDoneRef = useRef(false);
 
   // Helper to ensure every file object is 100% valid for Firestore (NO undefined keys anywhere)
   const sanitizeFirestoreFile = useCallback((f) => {
@@ -384,10 +384,11 @@ export const IDEWorkspacePage = () => {
             }));
 
           // ── SUBCOLLECTION HYDRATION ──
-          // If working files are manifests (no content) or empty, hydrate from subcollection
-          const needsHydration = working.length > 0 && working.some(f => f._manifestOnly || (f.filePath && f.content === undefined && !f.isBinary));
+          // On initial workspace mount or when working files are manifests, hydrate from subcollection
+          const needsHydration = !initialHydrationDoneRef.current || working.length === 0 || working.some(f => f._manifestOnly || (f.filePath && f.content === undefined && !f.isBinary));
           
-          if (needsHydration || (!working || working.length === 0)) {
+          if (needsHydration) {
+            initialHydrationDoneRef.current = true;
             // First, render the working manifest immediately so file tree / folders show up instantly
             if (working.length > 0 && (!localFilesRef.current || localFilesRef.current.length <= 1 || isMasterSynchronized)) {
               setFiles(working);
@@ -483,34 +484,24 @@ export const IDEWorkspacePage = () => {
                 });
 
                 // Merge subcollection content into manifest entries (cleaning any manifest flags)
-                const manifests = working.length > 0 ? working : [];
+                const manifests = (working && working.length > 0) ? working : [];
                 const hydrated = manifests.map(f => {
-                  const sub = contentMap.get(f.filePath);
+                  const pathKey = f.filePath || f.fileName;
+                  const sub = contentMap.get(pathKey);
                   const base = { ...f };
                   delete base._manifestOnly;
                   return sub ? { ...base, ...sub, content: sub.content !== undefined ? sub.content : '' } : base;
                 });
 
-                // FIX: Include subcollection files that are NOT referenced in the current
-                // manifest but ARE present in any of the three canonical Firestore arrays.
-                // This catches newly-created files that were written to the subcollection
-                // before the root-doc manifest was updated (race condition), or that appear
-                // in master/project_files but were temporarily absent from working_files.
-                // Scoping to "known-by-Firestore" paths prevents resurrecting deleted files
-                // that still have stale subcollection documents.
-                if (data.pendingFork !== true) {
-                  const allKnownPaths = new Set([
-                    ...(data.working_files || []).map(f => f?.filePath),
-                    ...(data.master_project_files || []).map(f => f?.filePath),
-                    ...(data.project_files || []).map(f => f?.filePath),
-                  ].filter(Boolean));
-                  const manifestPaths = new Set(manifests.map(f => f.filePath));
-                  contentMap.forEach((fd) => {
-                    if (fd.filePath && allKnownPaths.has(fd.filePath) && !manifestPaths.has(fd.filePath)) {
-                      hydrated.push(fd);
-                    }
-                  });
-                }
+                // Merge all files present in the subcollection that were not in the manifest
+                const hydratedPaths = new Set(hydrated.map(f => f.filePath || f.fileName));
+                contentMap.forEach((fd, pathKey) => {
+                  if (pathKey && !hydratedPaths.has(pathKey) && !hydratedPaths.has(fd.filePath) && !hydratedPaths.has(fd.fileName)) {
+                    const cleanFd = { ...fd };
+                    delete cleanFd._manifestOnly;
+                    hydrated.push(cleanFd);
+                  }
+                });
 
                 if (hydrated.length > 0) {
                   applyHydratedState(hydrated);
@@ -1478,15 +1469,17 @@ export const IDEWorkspacePage = () => {
       const userEmail = (currentUser?.email || 'owner@obsidian.io').trim().toLowerCase();
       const timestamp = new Date().toISOString();
 
-      // Ensure active editor buffer is included
-      let targetWorkingFiles = files;
+      // Ensure latest local file list and active editor buffer are included
+      const currentFiles = (localFilesRef.current && localFilesRef.current.length > 0) ? localFilesRef.current : files;
+      let targetWorkingFiles = currentFiles;
       if (activeFile && currentContent !== savedContent) {
-        targetWorkingFiles = files.map(f =>
+        targetWorkingFiles = currentFiles.map(f =>
           (f.fileId === activeFile.fileId || f.filePath === activeFile.filePath)
             ? { ...f, content: currentContent, updatedAt: timestamp, lastModifiedBy: userEmail }
             : f
         );
         setFiles(targetWorkingFiles);
+        localFilesRef.current = targetWorkingFiles;
         setSavedContent(currentContent);
       }
 
@@ -1518,6 +1511,19 @@ export const IDEWorkspacePage = () => {
         // Step B: Now write the root document manifest (triggers onSnapshot on all clients)
         // Subcollection is guaranteed to be fully populated before this snapshot fires.
         const manifestFiles = toManifest(sanitizedWorking);
+        const activeCollabs = { ...(liveProjectData?.collaborators || projectData?.collaborators || {}) };
+        if (Array.isArray(remoteCollaborators)) {
+          remoteCollaborators.forEach(rc => {
+            const rcEmail = (rc.email || rc.userEmail || '').trim().toLowerCase();
+            if (rcEmail && rcEmail !== userEmail) {
+              activeCollabs[rcEmail] = rc.role || 'EDITOR';
+            }
+          });
+        }
+        const allCollabEmails = Object.keys(activeCollabs).map(e => e.toLowerCase());
+        const memberEmails = Array.from(new Set([userEmail, ...allCollabEmails].filter(Boolean)));
+        const collaboratorEmails = allCollabEmails.filter(e => e !== userEmail);
+
         await setDoc(doc(db, 'projects', projectId), {
           master_project_files: manifestFiles,
           project_files: manifestFiles,
@@ -1527,6 +1533,10 @@ export const IDEWorkspacePage = () => {
           lastWorkingModifiedBy: userEmail,
           masterLastSyncedAt: timestamp,
           masterLastSyncedBy: userEmail,
+          collaborators: activeCollabs,
+          memberEmails,
+          collaboratorEmails,
+          rosterEmails: memberEmails,
           updatedAt: timestamp
         }, { merge: true });
 

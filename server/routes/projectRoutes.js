@@ -343,7 +343,7 @@ router.get('/', verifyToken, async (req, res) => {
         }
       }
 
-      // 3. Team members / Text / History check
+      // 3. Team members / Rosters / Text / History check
       if (!collabRole) {
         if (typeof p.teamMembersInput === 'string' && p.teamMembersInput.toLowerCase().includes(emailNorm)) {
           collabRole = 'EDITOR';
@@ -351,10 +351,18 @@ router.get('/', verifyToken, async (req, res) => {
           collabRole = 'EDITOR';
         } else if (Array.isArray(p.members) && p.members.some(m => (typeof m === 'string' ? m : m?.email || '').toLowerCase() === emailNorm)) {
           collabRole = 'EDITOR';
+        } else if (Array.isArray(p.memberEmails) && p.memberEmails.some(e => String(e).trim().toLowerCase() === emailNorm)) {
+          collabRole = 'EDITOR';
+        } else if (Array.isArray(p.collaboratorEmails) && p.collaboratorEmails.some(e => String(e).trim().toLowerCase() === emailNorm)) {
+          collabRole = 'EDITOR';
+        } else if (Array.isArray(p.rosterEmails) && p.rosterEmails.some(e => String(e).trim().toLowerCase() === emailNorm)) {
+          collabRole = 'EDITOR';
         } else if ((p.lastWorkingModifiedBy || '').toLowerCase() === emailNorm || (p.masterLastSyncedBy || '').toLowerCase() === emailNorm) {
           collabRole = 'EDITOR';
         } else if (Array.isArray(p.working_files) && p.working_files.some(f => (f?.lastModifiedBy || '').toLowerCase() === emailNorm)) {
           collabRole = 'EDITOR';
+        } else if (p.userRole && p.userRole !== 'NONE') {
+          collabRole = p.userRole;
         }
       }
 
@@ -388,6 +396,18 @@ router.get('/', verifyToken, async (req, res) => {
     // 2. From Firestore Admin SDK (if configured)
     if (adminDb) {
       try {
+        // Query user's personal profile catalog first
+        const userDocId = emailNorm.split('@')[0].replace(/[^a-z0-9_]/g, '_');
+        const userSnap = await adminDb.collection('users').doc(userDocId).get();
+        if (userSnap.exists) {
+          const uData = userSnap.data();
+          if (uData && uData.projects) {
+            Object.entries(uData.projects).forEach(([pid, p]) => {
+              if (p) addOrMergeProject({ ...p, _fromUserCatalog: true }, pid);
+            });
+          }
+        }
+
         const querySnapshot = await adminDb.collection('projects').get();
         querySnapshot.forEach((docSnap) => {
           const data = docSnap.data();
@@ -453,6 +473,35 @@ router.post('/sync-catalog', verifyTokenOptional, async (req, res) => {
             rosterEmails: memberEmails
           });
           addedCount++;
+
+          if (adminDb) {
+            try {
+              const projDocRef = adminDb.collection('projects').doc(pid);
+              projDocRef.set({
+                collaborators: mergedCollabs,
+                memberEmails,
+                collaboratorEmails,
+                rosterEmails: memberEmails,
+                updatedAt: new Date().toISOString()
+              }, { merge: true }).catch(() => {});
+
+              if (callerEmail) {
+                const collabDocId = callerEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_');
+                adminDb.collection('users').doc(collabDocId).set({
+                  info: { email: callerEmail },
+                  projects: {
+                    [pid]: {
+                      projectId: pid,
+                      title: p.title || existing.title || pid,
+                      userRole: p.userRole || 'EDITOR',
+                      ownerEmail: ownerEmail,
+                      updatedAt: new Date().toISOString()
+                    }
+                  }
+                }, { merge: true }).catch(() => {});
+              }
+            } catch (fsSyncErr) {}
+          }
         }
       });
       persistStoreToDisk();
@@ -1362,23 +1411,17 @@ router.get('/:projectId', verifyTokenOptional, async (req, res) => {
               // Hydrate working_files
               if (Array.isArray(projData.working_files) && projData.working_files.length > 0) {
                 projData.working_files = projData.working_files.map(wf => {
-                  const sub = subFilesMap.get(wf.filePath || wf.fileName);
+                  const pathKey = wf.filePath || wf.fileName;
+                  const sub = subFilesMap.get(pathKey);
                   const base = { ...wf };
                   delete base._manifestOnly;
                   return sub ? { ...base, content: sub.content !== undefined ? sub.content : (base.content || '') } : base;
                 });
-                // FIX: Recover subcollection files present in any Firestore array but missing
-                // from working_files (race condition: root doc updated before subcollection write).
-                // Scoped to known paths to prevent resurrecting deleted files.
-                const allKnownPaths = new Set([
-                  ...(projData.working_files || []).map(f => f?.filePath || f?.fileName),
-                  ...(projData.master_project_files || []).map(f => f?.filePath || f?.fileName),
-                  ...(projData.project_files || []).map(f => f?.filePath || f?.fileName),
-                ].filter(Boolean));
+                // Merge all files present in the subcollection
                 const workingPaths = new Set(projData.working_files.map(f => f.filePath || f.fileName));
-                subFilesMap.forEach((fd) => {
-                  const key = fd.filePath || fd.fileName;
-                  if (key && allKnownPaths.has(key) && !workingPaths.has(key)) {
+                subFilesMap.forEach((fd, pathKey) => {
+                  const key = fd.filePath || fd.fileName || pathKey;
+                  if (key && !workingPaths.has(key) && !workingPaths.has(fd.filePath) && !workingPaths.has(fd.fileName)) {
                     const cleanFd = { ...fd };
                     delete cleanFd._manifestOnly;
                     projData.working_files.push(cleanFd);
@@ -1395,10 +1438,20 @@ router.get('/:projectId', verifyTokenOptional, async (req, res) => {
               // Hydrate master_project_files
               if (Array.isArray(projData.master_project_files) && projData.master_project_files.length > 0) {
                 projData.master_project_files = projData.master_project_files.map(mf => {
-                  const sub = subFilesMap.get(mf.filePath || mf.fileName);
+                  const pathKey = mf.filePath || mf.fileName;
+                  const sub = subFilesMap.get(pathKey);
                   const base = { ...mf };
                   delete base._manifestOnly;
                   return sub ? { ...base, content: sub.content !== undefined ? sub.content : (base.content || '') } : base;
+                });
+                const masterPaths = new Set(projData.master_project_files.map(f => f.filePath || f.fileName));
+                subFilesMap.forEach((fd, pathKey) => {
+                  const key = fd.filePath || fd.fileName || pathKey;
+                  if (key && !masterPaths.has(key) && !masterPaths.has(fd.filePath) && !masterPaths.has(fd.fileName)) {
+                    const cleanFd = { ...fd };
+                    delete cleanFd._manifestOnly;
+                    projData.master_project_files.push(cleanFd);
+                  }
                 });
               } else if (subFilesMap.size > 0) {
                 projData.master_project_files = projData.working_files;
@@ -1407,10 +1460,20 @@ router.get('/:projectId', verifyTokenOptional, async (req, res) => {
               // Hydrate project_files
               if (Array.isArray(projData.project_files) && projData.project_files.length > 0) {
                 projData.project_files = projData.project_files.map(pf => {
-                  const sub = subFilesMap.get(pf.filePath || pf.fileName);
+                  const pathKey = pf.filePath || pf.fileName;
+                  const sub = subFilesMap.get(pathKey);
                   const base = { ...pf };
                   delete base._manifestOnly;
                   return sub ? { ...base, content: sub.content !== undefined ? sub.content : (base.content || '') } : base;
+                });
+                const projectPaths = new Set(projData.project_files.map(f => f.filePath || f.fileName));
+                subFilesMap.forEach((fd, pathKey) => {
+                  const key = fd.filePath || fd.fileName || pathKey;
+                  if (key && !projectPaths.has(key) && !projectPaths.has(fd.filePath) && !projectPaths.has(fd.fileName)) {
+                    const cleanFd = { ...fd };
+                    delete cleanFd._manifestOnly;
+                    projData.project_files.push(cleanFd);
+                  }
                 });
               } else if (subFilesMap.size > 0) {
                 projData.project_files = projData.master_project_files;

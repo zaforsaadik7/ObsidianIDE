@@ -166,7 +166,7 @@ export const DashboardPage = () => {
         try {
           const pSnap = await getDoc(doc(db, 'projects', pid));
           if (pSnap.exists()) {
-            upsertProject(pSnap.data(), pSnap.id);
+            upsertProject({ ...pSnap.data(), _fromUserCatalog: true }, pSnap.id);
           }
         } catch (pGetErr) {}
       }
